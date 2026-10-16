@@ -1,0 +1,109 @@
+# Every merge to `main` runs the full checks on macOS and Windows, then builds
+# the desktop app and boots it, so a platform break shows the same day. It
+# reports and blocks nothing: branch protection requires only CI's Linux
+# `Check`, and pull requests do not run this workflow.
+#
+#   gh workflow run post-merge.yml --ref <branch>   (once this file is on main)
+#   gh run watch && gh run view --log-failed
+name: Post-merge
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: post-merge-${{ github.sha }}
+
+jobs:
+  check:
+    name: Check (${{ matrix.name }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: macOS arm64
+            runner: macos-latest
+          - name: Windows x64
+            runner: windows-latest
+    steps:
+      # Effect's vendored source is for agents to read; no check needs it.
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+
+      - name: Setup Vite+
+        if: runner.os != 'Windows'
+        uses: ./.github/actions/setup-ci-deps
+
+      # setup-vp's own cache restores a Linux-shaped store on Windows, which is
+      # slower than no cache (T3 Code's `.github/workflows/windows-tests.yml`).
+      # Cache pnpm's Windows store directly.
+      - name: Setup Vite+ (Windows)
+        if: runner.os == 'Windows'
+        uses: voidzero-dev/setup-vp@v1
+        with:
+          node-version-file: package.json
+          cache: false
+          run-install: false
+
+      - name: Resolve package store path (Windows)
+        if: runner.os == 'Windows'
+        id: store
+        shell: pwsh
+        run: '"path=$(vp pm cache dir)" >> $env:GITHUB_OUTPUT'
+
+      - name: Cache package store (Windows)
+        if: runner.os == 'Windows'
+        uses: actions/cache@v6
+        with:
+          path: ${{ steps.store.outputs.path }}
+          key: post-merge-packages-v1-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
+
+      - name: Install (Windows)
+        if: runner.os == 'Windows'
+        run: vp install
+
+      # Each check runs even when an earlier one failed, so one run reports
+      # every break.
+      - name: Format
+        if: ${{ !cancelled() }}
+        run: vp run fmt:check
+
+      - name: Lint
+        if: ${{ !cancelled() }}
+        run: vp run lint
+
+      - name: Typecheck
+        if: ${{ !cancelled() }}
+        run: vp run typecheck
+
+      - name: Unused code
+        if: ${{ !cancelled() }}
+        run: vp run knip:check
+
+      - name: Test
+        if: ${{ !cancelled() }}
+        run: vp run test
+
+      - name: Icons are current
+        if: ${{ !cancelled() }}
+        run: vp run icons:check
+
+      - name: Build
+        if: ${{ !cancelled() }}
+        run: vp run build
+
+      - name: Smoke boot
+        if: ${{ !cancelled() }}
+        run: vp run smoke:desktop
