@@ -8,6 +8,7 @@ const generatedAndVendored = [
   "node_modules",
   "pnpm-lock.yaml",
   "*.tsbuildinfo",
+  "**/routeTree.gen.ts",
 ];
 
 export default defineConfig({

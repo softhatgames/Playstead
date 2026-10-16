@@ -11,9 +11,13 @@
       // Keep the vendored Effect source out of the root project.
       "project": ["*.{js,mjs,cjs,ts,mts,cts}"],
     },
+    "apps/server": {
+      // Run by the development runner and, later, by the desktop app.
+      "entry": ["src/bin.ts!"],
+    },
     "scripts": {
       // Run directly by the root sync:repos script.
-      "entry": ["sync-reference-repos.ts"],
+      "entry": ["sync-reference-repos.ts", "dev-runner.ts"],
     },
     "oxlint-plugin-playstead": {
       // Loaded by oxlint through jsPlugins in the root vite.config.ts.

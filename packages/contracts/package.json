@@ -2,5 +2,38 @@
   "name": "@playstead/contracts",
   "private": true,
   "description": "Effect Schema contracts for everything that crosses a process boundary: the RPC contract, orchestration commands and events, settings and the desktop bridge.",
-  "type": "module"
+  "type": "module",
+  "exports": {
+    "./auth": {
+      "types": "./src/auth.ts",
+      "import": "./src/auth.ts"
+    },
+    "./baseSchemas": {
+      "types": "./src/baseSchemas.ts",
+      "import": "./src/baseSchemas.ts"
+    },
+    "./environment": {
+      "types": "./src/environment.ts",
+      "import": "./src/environment.ts"
+    },
+    "./environmentHttp": {
+      "types": "./src/environmentHttp.ts",
+      "import": "./src/environmentHttp.ts"
+    },
+    "./rpc": {
+      "types": "./src/rpc.ts",
+      "import": "./src/rpc.ts"
+    },
+    "./server": {
+      "types": "./src/server.ts",
+      "import": "./src/server.ts"
+    }
+  },
+  "scripts": {
+    "typecheck": "tsc-rs --noEmit"
+  },
+  "dependencies": {
+    "@playstead/shared": "workspace:*",
+    "effect": "catalog:"
+  }
 }

@@ -4,6 +4,7 @@
     "module": "Preserve",
     "moduleResolution": "Bundler",
     "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "jsx": "react-jsx",
     "plugins": [
       {
         "name": "@effect/language-service",
