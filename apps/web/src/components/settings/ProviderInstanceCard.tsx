@@ -23,9 +23,9 @@ export interface ProviderInstanceCardProps {
 
 /**
  * One provider instance, after T3 Code's `ProviderInstanceCard.tsx` at
- * 2577baf: the status dot, the summary, the version, the compatibility
- * warning, **Binary path** and a refresh. Sign-in and models join the summary
- * and the card with their tickets.
+ * 2577baf: the status dot, the summary (which says whether the provider is
+ * signed in), the version, the compatibility warning, **Binary path** and a
+ * refresh.
  */
 export function ProviderInstanceCard(props: ProviderInstanceCardProps) {
   const { provider } = props;

@@ -27,10 +27,36 @@ export const ServerProviderCompatibilityAdvisory = Schema.Struct({
 });
 export type ServerProviderCompatibilityAdvisory = typeof ServerProviderCompatibilityAdvisory.Type;
 
+const ServerProviderAuthStatus = Schema.Literals([
+  "authenticated",
+  "unauthenticated",
+  "unknown",
+]);
+
+/**
+ * Whether the provider's CLI is signed in, as T3 Code's `ServerProviderAuth`
+ * at 2577baf without its sign-in actions: `type` is the account kind the
+ * provider reports and `label` names it for people.
+ */
+export const ServerProviderAuth = Schema.Struct({
+  status: ServerProviderAuthStatus,
+  type: Schema.optionalKey(TrimmedNonEmptyString),
+  label: Schema.optionalKey(TrimmedNonEmptyString),
+});
+export type ServerProviderAuth = typeof ServerProviderAuth.Type;
+
+/** A model the provider runs, as T3 Code's `ServerProviderModel` without custom models or capabilities. */
+export const ServerProviderModel = Schema.Struct({
+  slug: TrimmedNonEmptyString,
+  name: TrimmedNonEmptyString,
+  isDefault: Schema.optionalKey(Schema.Boolean),
+});
+export type ServerProviderModel = typeof ServerProviderModel.Type;
+
 /**
  * A provider instance's status, trimmed from T3 Code's `ServerProvider` at
- * 2577baf to what discovery finds: whether it is installed, its version and
- * the compatibility advisory. Sign-in and models join it with their tickets.
+ * 2577baf: whether it is installed, its version, whether it is signed in, its
+ * models and the compatibility advisory.
  */
 export const ServerProvider = Schema.Struct({
   instanceId: ProviderInstanceId,
@@ -39,8 +65,10 @@ export const ServerProvider = Schema.Struct({
   installed: Schema.Boolean,
   version: Schema.NullOr(TrimmedNonEmptyString),
   status: ServerProviderState,
+  auth: ServerProviderAuth,
   checkedAt: Schema.String,
   message: Schema.optionalKey(TrimmedNonEmptyString),
+  models: Schema.Array(ServerProviderModel),
   compatibilityAdvisory: Schema.optionalKey(ServerProviderCompatibilityAdvisory),
 });
 export type ServerProvider = typeof ServerProvider.Type;

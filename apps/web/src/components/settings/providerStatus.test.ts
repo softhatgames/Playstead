@@ -14,7 +14,9 @@ const codex = (overrides: Partial<ServerProvider>): ServerProvider => ({
   installed: true,
   version: "0.160.0",
   status: "ready",
+  auth: { status: "unknown" },
   checkedAt: "2026-10-16T12:00:00.000Z",
+  models: [],
   ...overrides,
 });
 
@@ -41,6 +43,33 @@ describe("getProviderSummary", () => {
     assert.strictEqual(
       getProviderSummary(codex({ status: "error", message: "probe failed" })).headline,
       "Unavailable",
+    );
+  });
+
+  it("says a signed-out provider is not authenticated, with the server's hint", () => {
+    assert.deepStrictEqual(
+      getProviderSummary(
+        codex({
+          status: "error",
+          auth: { status: "unauthenticated" },
+          message: "Claude Code is not authenticated. Run `claude auth login` and try again.",
+        }),
+      ),
+      {
+        headline: "Not authenticated",
+        detail: "Claude Code is not authenticated. Run `claude auth login` and try again.",
+      },
+    );
+  });
+
+  it("says a signed-in provider is authenticated, naming the account", () => {
+    assert.deepStrictEqual(
+      getProviderSummary(
+        codex({
+          auth: { status: "authenticated", type: "max", label: "Claude Max Subscription" },
+        }),
+      ),
+      { headline: "Authenticated · Claude Max Subscription", detail: null },
     );
   });
 
