@@ -2,11 +2,9 @@
 
 Playstead is a workspace for making games with coding agents on the person's own computer. It is being rebuilt from scratch: there is no application code yet, and the design is being decided before any is written. The first version is archived, read-only, at [softhatgames/playstead-v0](https://github.com/softhatgames/playstead-v0); its tag `v0` holds its code, documents and decisions.
 
-## Standing decisions
+## Following T3 Code
 
-- **T3 Code is the reference for working with coding agents.** Follow [T3 Code](https://github.com/pingdotgg/t3code) for providers, sessions, permissions, sandboxes and the providers supported. Playstead adds game development on top.
-- **Inspired, never copied.** Study T3 Code, then write Playstead's own code from what you learned. Cite the T3 Code path and commit an idea came from.
-- **T3 Code's terms** name every coding-agent concept. Playstead adds its own terms for making games, without redefining a T3 Code term.
+Playstead follows [T3 Code](https://github.com/pingdotgg/t3code) for working with coding agents and for parts of the app around them, inspired by it and never copying its code. Read [docs/t3-code.md](docs/t3-code.md) before deciding or building anything about providers, permissions, architecture or the interface, or naming a concept: it holds the rules, the parts followed and the weekly review.
 
 ## Where things are
 
