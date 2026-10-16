@@ -12,7 +12,9 @@ import * as ServerConfig from "./config.ts";
 import * as ServerEnvironment from "./environment/ServerEnvironment.ts";
 import * as ServerHttp from "./http.ts";
 import * as SqlitePersistence from "./persistence/Sqlite.ts";
+import * as ProviderRegistry from "./provider/ProviderRegistry.ts";
 import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
+import * as ServerSettings from "./serverSettings.ts";
 import * as ServerRuntimeStartup from "./serverRuntimeStartup.ts";
 import * as Ws from "./ws.ts";
 
@@ -71,6 +73,7 @@ const layerStartupPairingLink = Layer.effectDiscard(
 const layerRuntimeServices = Layer.mergeAll(
   EnvironmentAuth.layer,
   ServerLifecycleEvents.layer,
+  ProviderRegistry.layer.pipe(Layer.provideMerge(ServerSettings.layer)),
 ).pipe(
   Layer.provideMerge(ServerEnvironment.layer),
   Layer.provideMerge(ServerSecretStore.layer),

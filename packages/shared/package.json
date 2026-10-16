@@ -11,9 +11,17 @@
       "types": "./src/devProxy.ts",
       "import": "./src/devProxy.ts"
     },
+    "./hostProcess": {
+      "types": "./src/hostProcess.ts",
+      "import": "./src/hostProcess.ts"
+    },
     "./identity": {
       "types": "./src/identity.ts",
       "import": "./src/identity.ts"
+    },
+    "./shell": {
+      "types": "./src/shell.ts",
+      "import": "./src/shell.ts"
     }
   },
   "scripts": {
