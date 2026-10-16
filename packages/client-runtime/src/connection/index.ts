@@ -6,4 +6,4 @@ export {
   type LocalCredential,
   makeLocalConnection,
 } from "./local.ts";
-export { ConnectionTransientError } from "../rpc/session.ts";
+export { ConnectionTransientError, type WsRpcClient } from "../rpc/session.ts";

@@ -1,8 +1,13 @@
 import { AuthWebSocketTicketResult, WEBSOCKET_TICKET_QUERY_PARAM } from "@playstead/contracts/auth";
-import type { ServerConfig, ServerLifecycleStreamEvent } from "@playstead/contracts/server";
+import type {
+  ServerConfig,
+  ServerConfigStreamEvent,
+  ServerLifecycleStreamEvent,
+} from "@playstead/contracts/server";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Random from "effect/Random";
+import * as Ref from "effect/Ref";
 import type * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
@@ -11,7 +16,12 @@ import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import type * as Socket from "effect/socket/Socket";
 
-import { ConnectionTransientError, connectRpcSession, type RpcSession } from "../rpc/session.ts";
+import {
+  ConnectionTransientError,
+  connectRpcSession,
+  type RpcSession,
+  type WsRpcClient,
+} from "../rpc/session.ts";
 
 /**
  * How the client proves who it is. A browser's session cookie goes with the
@@ -45,7 +55,26 @@ export interface ConnectionState {
 export interface LocalConnection {
   readonly state: SubscriptionRef.SubscriptionRef<ConnectionState>;
   readonly changes: Stream.Stream<ConnectionState>;
+  /** Calls the server over the open session; fails while there is none. */
+  readonly request: <A, E>(
+    call: (client: WsRpcClient) => Effect.Effect<A, E>,
+  ) => Effect.Effect<A, E | ConnectionTransientError>;
 }
+
+/** The config stream keeps the server's status, provider statuses and settings current. */
+const applyConfigEvent = (
+  config: ServerConfig | undefined,
+  event: ServerConfigStreamEvent,
+): ServerConfig | undefined => {
+  switch (event.type) {
+    case "snapshot":
+      return event.config;
+    case "providerStatuses":
+      return config && { ...config, providers: event.payload.providers };
+    case "settingsUpdated":
+      return config && { ...config, settings: event.payload.settings };
+  }
+};
 
 const initialState: ConnectionState = {
   phase: "connecting",
@@ -115,9 +144,12 @@ export const makeLocalConnection = Effect.fn("makeLocalConnection")(function* (
   Scope.Scope | Socket.WebSocketConstructor | HttpClient.HttpClient
 > {
   const state = yield* SubscriptionRef.make(initialState);
+  const currentClient = yield* Ref.make<WsRpcClient | undefined>(undefined);
 
   const runSession = (session: RpcSession) =>
     Effect.gen(function* () {
+      // Before the state says connected, so a request made on that news goes through.
+      yield* Ref.set(currentClient, session.client);
       yield* SubscriptionRef.update(state, (current): ConnectionState => ({
         ...current,
         phase: "connected",
@@ -134,7 +166,22 @@ export const makeLocalConnection = Effect.fn("makeLocalConnection")(function* (
             new ConnectionTransientError({ detail: `Lifecycle stream failed: ${error.message}` }),
         ),
       );
-      return yield* Effect.raceFirst(session.closed, Effect.andThen(lifecycle, session.closed));
+      const config = session.client.subscribeServerConfig({}).pipe(
+        Stream.runForEach((event) =>
+          SubscriptionRef.update(state, (current) => ({
+            ...current,
+            config: applyConfigEvent(current.config, event),
+          })),
+        ),
+        Effect.mapError(
+          (error) =>
+            new ConnectionTransientError({ detail: `Config stream failed: ${error.message}` }),
+        ),
+      );
+      const streams = Effect.all([lifecycle, config], { concurrency: "unbounded" });
+      return yield* Effect.raceFirst(session.closed, Effect.andThen(streams, session.closed)).pipe(
+        Effect.ensuring(Ref.set(currentClient, undefined)),
+      );
     });
 
   const attempt = Effect.scoped(
@@ -166,5 +213,14 @@ export const makeLocalConnection = Effect.fn("makeLocalConnection")(function* (
 
   yield* Effect.forkScoped(supervise);
 
-  return { state, changes: SubscriptionRef.changes(state) };
+  const request = <A, E>(call: (client: WsRpcClient) => Effect.Effect<A, E>) =>
+    Effect.flatMap(
+      Ref.get(currentClient),
+      (client): Effect.Effect<A, E | ConnectionTransientError> =>
+        client === undefined
+          ? Effect.fail(new ConnectionTransientError({ detail: "Not connected to the server." }))
+          : call(client),
+    );
+
+  return { state, changes: SubscriptionRef.changes(state), request };
 });

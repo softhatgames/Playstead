@@ -33,6 +33,7 @@ export interface ServerDerivedPaths {
   readonly dbPath: string;
   readonly environmentIdPath: string;
   readonly secretsDir: string;
+  readonly settingsPath: string;
 }
 
 export class ServerConfig extends Context.Service<
@@ -73,6 +74,7 @@ export const deriveServerPaths = Effect.fn("deriveServerPaths")(function* (
     dbPath: join(stateDir, "state.sqlite"),
     environmentIdPath: join(stateDir, "environment-id"),
     secretsDir: join(stateDir, "secrets"),
+    settingsPath: join(stateDir, "settings.json"),
   } satisfies ServerDerivedPaths;
 });
 

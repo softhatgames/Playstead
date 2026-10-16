@@ -39,6 +39,31 @@ describe("dev runner environment", () => {
     });
   });
 
+  it("passes where Codex and Claude keep the person's sign-in, but no API key", () => {
+    const env = createDevRunnerEnv({
+      baseEnv: {
+        PATH: "/usr/bin",
+        CODEX_HOME: "/Users/person/.codex-work",
+        CLAUDE_CONFIG_DIR: "/Users/person/.claude-work",
+        ANTHROPIC_API_KEY: "sk-ant-not-meant-for-playstead",
+        OPENAI_API_KEY: "sk-not-meant-for-playstead",
+        CODEX_API_KEY: "sk-not-meant-for-playstead",
+      },
+      serverPort: 14773,
+      webPort: 5833,
+      playsteadHome: undefined,
+    });
+
+    assert.deepStrictEqual(env, {
+      PATH: "/usr/bin",
+      CODEX_HOME: "/Users/person/.codex-work",
+      CLAUDE_CONFIG_DIR: "/Users/person/.claude-work",
+      PLAYSTEAD_PORT: "14773",
+      PLAYSTEAD_WEB_PORT: "5833",
+      PLAYSTEAD_DEV_URL: "http://localhost:5833/",
+    });
+  });
+
   it("keeps Windows variables in the case Windows gave them", () => {
     const env = createDevRunnerEnv({
       baseEnv: {
