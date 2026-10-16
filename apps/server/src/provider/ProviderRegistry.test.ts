@@ -131,6 +131,7 @@ describe("ProviderRegistry", () => {
           installed: false,
           version: null,
           status: "error",
+          auth: { status: "unknown" },
           message: "Claude Agent CLI (`claude`) was not found on PATH.",
         });
         assert.notProperty(providerById(providers, "codex"), "compatibilityAdvisory");
@@ -224,6 +225,136 @@ describe("ProviderRegistry", () => {
           installed: true,
           version: "0.161.0",
           status: "ready",
+        });
+      }).pipe(Effect.scoped),
+    );
+
+    it.effect("reads a signed-in Codex's account and models over its app-server", () =>
+      Effect.gen(function* () {
+        const bin = yield* makeTempDirectory("playstead-bin-");
+        yield* writeFakeCodex({
+          directory: bin,
+          version: "0.163.0",
+          account: { type: "chatgpt", email: "person@example.com", planType: "plus" },
+          // More than one page: the fake answers two models at a time.
+          models: [
+            { model: "gpt-6.1-sol", displayName: "GPT-6.1-Sol", isDefault: true },
+            { model: "gpt-6-astra", displayName: "GPT-6-Astra" },
+            { model: "gpt-6-luna", displayName: "GPT-6-Luna" },
+          ],
+        });
+        const { registry } = yield* startRegistry([bin]);
+
+        const providers = yield* registry.refresh("codex");
+
+        assert.deepInclude(providerById(providers, "codex"), {
+          installed: true,
+          version: "0.163.0",
+          status: "ready",
+          auth: {
+            status: "authenticated",
+            type: "chatgpt",
+            label: "ChatGPT Plus Subscription",
+            email: "person@example.com",
+          },
+          models: [
+            { slug: "gpt-6.1-sol", name: "GPT-6.1-Sol", isDefault: true },
+            { slug: "gpt-6-astra", name: "GPT-6-Astra" },
+            { slug: "gpt-6-luna", name: "GPT-6-Luna" },
+          ],
+        });
+        assert.notProperty(providerById(providers, "codex"), "message");
+      }).pipe(Effect.scoped),
+    );
+
+    it.effect("labels a Codex signed in with an API key, without an e-mail", () =>
+      Effect.gen(function* () {
+        const bin = yield* makeTempDirectory("playstead-bin-");
+        yield* writeFakeCodex({ directory: bin, version: "0.163.0", account: { type: "apiKey" } });
+        const { registry } = yield* startRegistry([bin]);
+
+        const providers = yield* registry.refresh("codex");
+
+        assert.deepInclude(providerById(providers, "codex"), {
+          status: "ready",
+          auth: { status: "authenticated", type: "apiKey", label: "OpenAI API Key" },
+        });
+      }).pipe(Effect.scoped),
+    );
+
+    it.effect("says a signed-out Codex needs `codex login`, with no models", () =>
+      Effect.gen(function* () {
+        const bin = yield* makeTempDirectory("playstead-bin-");
+        yield* writeFakeCodex({ directory: bin, version: "0.163.0", account: null });
+        const { registry } = yield* startRegistry([bin]);
+
+        const providers = yield* registry.refresh("codex");
+
+        assert.deepInclude(providerById(providers, "codex"), {
+          installed: true,
+          version: "0.163.0",
+          status: "error",
+          auth: { status: "unauthenticated" },
+          message: "Codex CLI is not authenticated. Run `codex login` and try again.",
+          models: [],
+        });
+      }).pipe(Effect.scoped),
+    );
+
+    it.effect("reports a signed-in Claude with its plan and the models its version runs", () =>
+      Effect.gen(function* () {
+        const bin = yield* makeTempDirectory("playstead-bin-");
+        yield* writeFakeClaude({ directory: bin, version: "2.1.301", signedIn: true });
+        const { registry } = yield* startRegistry([bin]);
+
+        const providers = yield* registry.refresh("claudeAgent");
+
+        assert.deepInclude(providerById(providers, "claudeAgent"), {
+          installed: true,
+          status: "ready",
+          auth: { status: "authenticated", type: "max", label: "Claude Max Subscription" },
+          models: [
+            { slug: "claude-opus-5-5", name: "Claude Opus 5.5" },
+            { slug: "claude-sonnet-5-5", name: "Claude Sonnet 5.5" },
+            { slug: "claude-fable-5-1", name: "Claude Fable 5.1", isDefault: true },
+            { slug: "claude-haiku-5-5", name: "Claude Haiku 5.5" },
+          ],
+        });
+        assert.notProperty(providerById(providers, "claudeAgent"), "message");
+      }).pipe(Effect.scoped),
+    );
+
+    it.effect("reports a signed-out Claude with the hint to run claude auth login", () =>
+      Effect.gen(function* () {
+        const bin = yield* makeTempDirectory("playstead-bin-");
+        yield* writeFakeClaude({ directory: bin, version: "2.1.301", signedIn: false });
+        const { registry } = yield* startRegistry([bin]);
+
+        const providers = yield* registry.refresh("claudeAgent");
+
+        assert.deepInclude(providerById(providers, "claudeAgent"), {
+          installed: true,
+          version: "2.1.301",
+          status: "error",
+          auth: { status: "unauthenticated" },
+          message: "Claude Code is not authenticated. Run `claude auth login` and try again.",
+        });
+      }).pipe(Effect.scoped),
+    );
+
+    it.effect("offers only the Claude models an older version runs", () =>
+      Effect.gen(function* () {
+        const bin = yield* makeTempDirectory("playstead-bin-");
+        yield* writeFakeClaude({ directory: bin, version: "2.1.280", signedIn: true });
+        const { registry } = yield* startRegistry([bin]);
+
+        const providers = yield* registry.refresh("claudeAgent");
+
+        assert.deepInclude(providerById(providers, "claudeAgent"), {
+          models: [
+            { slug: "claude-opus-5-5", name: "Claude Opus 5.5" },
+            { slug: "claude-fable-5-1", name: "Claude Fable 5.1", isDefault: true },
+          ],
         });
       }).pipe(Effect.scoped),
     );

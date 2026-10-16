@@ -41,12 +41,12 @@ const COMPATIBILITY_POLICIES: Record<ProviderDriverKind, CompatibilityPolicy> = 
 
 type Version = readonly [number, number, number];
 
-const parseStableVersion = (value: string): Version | undefined => {
+export const parseStableVersion = (value: string): Version | undefined => {
   const match = /^(\d+)\.(\d+)\.(\d+)$/.exec(value);
   return match ? [Number(match[1]), Number(match[2]), Number(match[3])] : undefined;
 };
 
-const compareVersions = (left: Version, right: Version) =>
+export const compareVersions = (left: Version, right: Version) =>
   left[0] - right[0] || left[1] - right[1] || left[2] - right[2];
 
 /** The ranges above use only `>=` and `<` comparators, joined by spaces. */
