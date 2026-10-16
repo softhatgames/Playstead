@@ -288,6 +288,7 @@ const event = <Type extends string, Payload extends Schema.Top>(type: Type, payl
 export const OrchestrationV2DomainEvent = Schema.Union([
   event("thread.created", OrchestrationV2AppThread),
   event("thread.metadata-updated", OrchestrationV2AppThread),
+  event("thread.model-selection-updated", OrchestrationV2AppThread),
   event("run.created", OrchestrationV2Run),
   event("run.updated", OrchestrationV2Run),
   event("run-attempt.created", OrchestrationV2RunAttempt),
@@ -397,7 +398,8 @@ export type OrchestrationV2ThreadStreamItem = typeof OrchestrationV2ThreadStream
 /**
  * The commands a client sends, trimmed from T3 Code's `OrchestrationV2Command`.
  * A thread is created with its project, provider instance and model, always in
- * Full access and the default interaction mode. A message is plain text; the
+ * Full access and the default interaction mode. Its model can change to
+ * another of the same provider instance's. A message is plain text; the
  * first one's `titleSeed` titles the thread.
  */
 export const OrchestrationV2Command = Schema.Union([
@@ -407,6 +409,12 @@ export const OrchestrationV2Command = Schema.Union([
     threadId: ThreadId,
     projectId: ProjectId,
     title: TrimmedNonEmptyString,
+    modelSelection: ModelSelection,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("thread.model-selection.set"),
+    commandId: CommandId,
+    threadId: ThreadId,
     modelSelection: ModelSelection,
   }),
   Schema.Struct({

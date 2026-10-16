@@ -21,7 +21,7 @@ import {
  * `makeReplayQueryRunner` and `recordClaudeAgentSdkReplayTranscript`).
  *
  * A recording is the frames the adapter sent (`query.open` with the options
- * it decides, then each `prompt.offer`) and every message Claude Code sent
+ * it decides, then each `query.set_model` and `prompt.offer`) and every message Claude Code sent
  * back, in order. A replay compares each frame the adapter sends with the
  * next recorded one, strictly, and plays Claude's messages up to the next
  * frame it expects. `assertComplete` fails unless the whole recording was
@@ -159,6 +159,8 @@ export const makeClaudeReplay = Effect.fn("makeClaudeReplay")(function* (
           ).pipe(Stream.mapError(asRunnerError)),
           offer: (message: SDKUserMessage) =>
             expectOutbound({ type: "prompt.offer", message }).pipe(Effect.mapError(asRunnerError)),
+          setModel: (model: string) =>
+            expectOutbound({ type: "query.set_model", model }).pipe(Effect.mapError(asRunnerError)),
         };
       }).pipe(
         Effect.mapError((cause) => new ClaudeAgentSdkQueryRunnerError({ method: "replay", cause })),
@@ -219,6 +221,16 @@ export const makeRecordingQueryRunner = (inner: ClaudeAgentSdkQueryRunner["Servi
                 }),
               ),
               session.offer(message),
+            ),
+          setModel: (model: string) =>
+            Effect.andThen(
+              Effect.sync(() =>
+                entries.push({
+                  type: "expect_outbound",
+                  frame: { type: "query.set_model", model },
+                }),
+              ),
+              session.setModel(model),
             ),
         };
       }),

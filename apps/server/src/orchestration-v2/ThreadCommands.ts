@@ -59,12 +59,16 @@ const reject = (command: OrchestrationV2Command, reason: string) =>
 
 /**
  * Decides a thread command's events and effects, without I/O. T3 Code at
- * 2577baf decides inside `OrchestratorV2`'s `dispatchThreadCreate` and
- * `dispatchMessage` (`apps/server/src/orchestration-v2/Orchestrator.ts`);
- * Playstead keeps the same events in the same order as a pure function.
+ * 2577baf decides inside `OrchestratorV2`'s `dispatchThreadCreate`,
+ * `dispatchThreadMutation` and `dispatchMessage`
+ * (`apps/server/src/orchestration-v2/Orchestrator.ts`); Playstead keeps the
+ * same events in the same order as a pure function.
  *
  * - `thread.create` makes a thread in Full access and the default
  *   interaction mode, for an existing project and an instance that can run it.
+ * - `thread.model-selection.set` changes the model the thread's next run
+ *   copies. Naming another instance is T3 Code's provider switch, which
+ *   Playstead refuses.
  * - `message.dispatch` starts a run at once. T3 Code queues a message sent
  *   while a run is active; Playstead has no queue and refuses it.
  */
@@ -103,6 +107,30 @@ export function decideThreadCommand(input: {
       };
       return Result.succeed({
         events: [{ type: "thread.created", threadId: thread.id, occurredAt: now, payload: thread }],
+        effects: [],
+      });
+    }
+    case "thread.model-selection.set": {
+      const projection = state.projection;
+      if (projection === undefined) {
+        return reject(command, `Thread ${command.threadId} does not exist.`);
+      }
+      const { thread } = projection;
+      if (command.modelSelection.instanceId !== thread.providerInstanceId) {
+        return reject(
+          command,
+          `Thread ${thread.id} runs on ${thread.providerInstanceId}. Choose one of its models; switching provider is not available yet.`,
+        );
+      }
+      return Result.succeed({
+        events: [
+          {
+            type: "thread.model-selection-updated",
+            threadId: thread.id,
+            occurredAt: now,
+            payload: { ...thread, modelSelection: command.modelSelection, updatedAt: now },
+          },
+        ],
         effects: [],
       });
     }
