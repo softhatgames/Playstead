@@ -1,4 +1,5 @@
 import { AuthWebSocketTicketResult, WEBSOCKET_TICKET_QUERY_PARAM } from "@playstead/contracts/auth";
+import type { OrchestrationV2ShellSnapshot } from "@playstead/contracts/orchestrationV2";
 import type {
   ServerConfig,
   ServerConfigStreamEvent,
@@ -16,6 +17,7 @@ import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import type * as Socket from "effect/socket/Socket";
 
+import { applyShellStreamItem } from "../state/shell.ts";
 import {
   ConnectionTransientError,
   connectRpcSession,
@@ -50,6 +52,8 @@ export interface ConnectionState {
   readonly config: ServerConfig | undefined;
   /** The environment's latest lifecycle event. */
   readonly lifecycle: ServerLifecycleStreamEvent | undefined;
+  /** The sidebar's shell: the environment's projects, current while connected. */
+  readonly shell: OrchestrationV2ShellSnapshot | undefined;
 }
 
 export interface LocalConnection {
@@ -82,6 +86,7 @@ const initialState: ConnectionState = {
   lastError: undefined,
   config: undefined,
   lifecycle: undefined,
+  shell: undefined,
 };
 
 /** Jittered within [cap/2, cap], where cap doubles from 2 s up to 5 minutes. */
@@ -178,7 +183,19 @@ export const makeLocalConnection = Effect.fn("makeLocalConnection")(function* (
             new ConnectionTransientError({ detail: `Config stream failed: ${error.message}` }),
         ),
       );
-      const streams = Effect.all([lifecycle, config], { concurrency: "unbounded" });
+      const shell = session.client["orchestration.subscribeShell"]({}).pipe(
+        Stream.runForEach((item) =>
+          SubscriptionRef.update(state, (current) => ({
+            ...current,
+            shell: applyShellStreamItem(current.shell, item),
+          })),
+        ),
+        Effect.mapError(
+          (error) =>
+            new ConnectionTransientError({ detail: `Shell stream failed: ${error.message}` }),
+        ),
+      );
+      const streams = Effect.all([lifecycle, config, shell], { concurrency: "unbounded" });
       return yield* Effect.raceFirst(session.closed, Effect.andThen(streams, session.closed)).pipe(
         Effect.ensuring(Ref.set(currentClient, undefined)),
       );

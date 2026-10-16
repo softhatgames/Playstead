@@ -32,3 +32,16 @@ export type EnvironmentId = typeof EnvironmentId.Type;
 
 export const AuthSessionId = makeEntityId("AuthSessionId");
 export type AuthSessionId = typeof AuthSessionId.Type;
+
+/** An ISO 8601 date and time, as T3 Code's `IsoDateTime` keeps it: a plain string. */
+export const IsoDateTime = Schema.String;
+export type IsoDateTime = typeof IsoDateTime.Type;
+
+export const ProjectId = makeEntityId("ProjectId");
+export type ProjectId = typeof ProjectId.Type;
+
+export const CommandId = makeEntityId("CommandId");
+export type CommandId = typeof CommandId.Type;
+
+export const EventId = makeEntityId("EventId");
+export type EventId = typeof EventId.Type;

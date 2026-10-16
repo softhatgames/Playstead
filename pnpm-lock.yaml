@@ -229,9 +229,19 @@ importers:
       '@playstead/contracts':
         specifier: workspace:*
         version: link:../contracts
+      '@playstead/shared':
+        specifier: workspace:*
+        version: link:../shared
       effect:
         specifier: 4.0.5
         version: 4.0.5
+    devDependencies:
+      '@effect/vitest':
+        specifier: 4.0.5
+        version: 4.0.5(patch_hash=08fdcec941923d8a7a36c4487e75a967e4662cccbf57fe54fce0bae91e5c2e02)(@opentelemetry/api@1.9.1)(@types/node@24.12.4)(@vitest/ui@5.0.1(vitest@5.0.1))(effect@4.0.5)(jiti@2.7.0)(typescript@7.0.2)(yaml@2.9.1)
+      vite-plus:
+        specifier: 1.0.0
+        version: 1.0.0(@opentelemetry/api@1.9.1)(@types/node@24.12.4)(@vitest/ui@5.0.1)(jiti@2.7.0)(typescript@7.0.2)(yaml@2.9.1)
 
   packages/contracts:
     dependencies:

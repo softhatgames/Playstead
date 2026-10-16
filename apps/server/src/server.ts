@@ -11,11 +11,14 @@ import * as ServerSecretStore from "./auth/ServerSecretStore.ts";
 import * as ServerConfig from "./config.ts";
 import * as ServerEnvironment from "./environment/ServerEnvironment.ts";
 import * as ServerHttp from "./http.ts";
+import * as OrchestrationRuntime from "./orchestration-v2/runtimeLayer.ts";
 import * as SqlitePersistence from "./persistence/Sqlite.ts";
+import * as ProjectService from "./project/ProjectService.ts";
 import * as ProviderRegistry from "./provider/ProviderRegistry.ts";
 import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
 import * as ServerSettings from "./serverSettings.ts";
 import * as ServerRuntimeStartup from "./serverRuntimeStartup.ts";
+import * as WorkspacePaths from "./workspace/WorkspacePaths.ts";
 import * as Ws from "./ws.ts";
 
 /**
@@ -74,6 +77,10 @@ const layerRuntimeServices = Layer.mergeAll(
   EnvironmentAuth.layer,
   ServerLifecycleEvents.layer,
   ProviderRegistry.layer.pipe(Layer.provideMerge(ServerSettings.layer)),
+  ProjectService.layer.pipe(
+    Layer.provideMerge(OrchestrationRuntime.layer),
+    Layer.provide(WorkspacePaths.layer),
+  ),
 ).pipe(
   Layer.provideMerge(ServerEnvironment.layer),
   Layer.provideMerge(ServerSecretStore.layer),

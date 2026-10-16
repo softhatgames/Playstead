@@ -2,12 +2,16 @@ import * as Effect from "effect/Effect";
 import * as Migrator from "effect/sql/Migrator";
 
 import Migration0001 from "./Migrations/001_Initial.ts";
+import Migration0002 from "./Migrations/002_Projects.ts";
 
 /**
  * Every migration, in order. A new one is a new file `NNN_Name.ts` and an entry
  * here; a released migration is never edited.
  */
-const migrationEntries = [[1, "Initial", Migration0001]] as const;
+const migrationEntries = [
+  [1, "Initial", Migration0001],
+  [2, "Projects", Migration0002],
+] as const;
 
 const run = Migrator.make({});
 

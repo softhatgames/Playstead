@@ -4,6 +4,10 @@
   "description": "Effect Schema contracts for everything that crosses a process boundary: the RPC contract, orchestration commands and events, settings and the desktop bridge.",
   "type": "module",
   "exports": {
+    "./applicationEvent": {
+      "types": "./src/applicationEvent.ts",
+      "import": "./src/applicationEvent.ts"
+    },
     "./auth": {
       "types": "./src/auth.ts",
       "import": "./src/auth.ts"
@@ -24,17 +28,33 @@
       "types": "./src/environmentHttp.ts",
       "import": "./src/environmentHttp.ts"
     },
+    "./filesystem": {
+      "types": "./src/filesystem.ts",
+      "import": "./src/filesystem.ts"
+    },
     "./ipc": {
       "types": "./src/ipc.ts",
       "import": "./src/ipc.ts"
     },
-    "./rpc": {
-      "types": "./src/rpc.ts",
-      "import": "./src/rpc.ts"
+    "./orchestrationProject": {
+      "types": "./src/orchestrationProject.ts",
+      "import": "./src/orchestrationProject.ts"
+    },
+    "./orchestrationV2": {
+      "types": "./src/orchestrationV2.ts",
+      "import": "./src/orchestrationV2.ts"
+    },
+    "./project": {
+      "types": "./src/project.ts",
+      "import": "./src/project.ts"
     },
     "./providerInstance": {
       "types": "./src/providerInstance.ts",
       "import": "./src/providerInstance.ts"
+    },
+    "./rpc": {
+      "types": "./src/rpc.ts",
+      "import": "./src/rpc.ts"
     },
     "./server": {
       "types": "./src/server.ts",
