@@ -22,6 +22,7 @@ const applyEvent = (
   switch (event.type) {
     case "thread.created":
     case "thread.metadata-updated":
+    case "thread.model-selection-updated":
       return { ...projection, thread: event.payload, updatedAt: event.payload.updatedAt };
     case "run.created":
     case "run.updated":

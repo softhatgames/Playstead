@@ -51,8 +51,11 @@ import { resolveClaudeSdkExecutablePath } from "../../provider/Drivers/ClaudeExe
  * - A file write is a `file_change` item carrying the file's name and the
  *   content the Write tool was given, which T3 Code's item leaves out.
  *
+ * - A turn whose model differs from the query's changes it first with the
+ *   SDK's `setModel`, as T3 Code does when the selection can change live.
+ *
  * Absent until their tickets: `canUseTool` and `AskUserQuestion` (#25),
- * interrupt (#24), model changes (#23), resuming a session (#26); and, as in
+ * interrupt (#24), resuming a session (#26); and, as in
  * the slice as a whole, thinking, MCP, subagents, attachments and usage.
  */
 
@@ -77,6 +80,8 @@ export interface ClaudeAgentSdkQuerySession {
   /** Claude Code's messages until the query ends. */
   readonly messages: Stream.Stream<SDKMessage, ClaudeAgentSdkQueryRunnerError>;
   readonly offer: (message: SDKUserMessage) => Effect.Effect<void, ClaudeAgentSdkQueryRunnerError>;
+  /** Changes the model for the query's next turns. */
+  readonly setModel: (model: string) => Effect.Effect<void, ClaudeAgentSdkQueryRunnerError>;
 }
 
 /**
@@ -135,6 +140,11 @@ export const layerQueryRunner: Layer.Layer<ClaudeAgentSdkQueryRunner, never, Cry
                 runnerError("messages"),
               ),
               offer: (message) => Queue.offer(prompts, message).pipe(Effect.asVoid),
+              setModel: (model) =>
+                Effect.tryPromise({
+                  try: () => queryRuntime.setModel(model),
+                  catch: runnerError("setModel"),
+                }),
             };
           }),
       });
@@ -289,6 +299,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (input
       const session = yield* runner.open({ options, threadId: open.threadId });
       const events = yield* PubSub.unbounded<ProviderAdapterV2Event>();
       const live = yield* Ref.make(true);
+      const model = yield* Ref.make(open.modelSelection.model);
       const activeTurn = yield* Ref.make<ActiveTurn | undefined>(undefined);
       const createdAt = yield* nowIso;
 
@@ -634,6 +645,11 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (input
             }
             if (!(yield* Ref.get(live))) {
               return yield* adapterError("start-turn")("Claude Code is no longer running.");
+            }
+            const nextModel = turnInput.modelSelection.model;
+            if ((yield* Ref.get(model)) !== nextModel) {
+              yield* session.setModel(nextModel).pipe(Effect.mapError(adapterError("start-turn")));
+              yield* Ref.set(model, nextModel);
             }
             yield* Ref.set(activeTurn, {
               input: turnInput,

@@ -7,13 +7,12 @@ import type { ModelPickerEntry } from "./composer.logic.ts";
 /**
  * T3 Code's model picker (`apps/web/src/components/chat/ProviderModelPicker.tsx`
  * and `ModelPickerContent.tsx` at 2577baf), trimmed: a popover listing each
- * provider's models. Changing a started thread's model is #23's, so once the
- * thread has started the picker only shows its model.
+ * provider's models. Once a thread has started it lists only its provider's.
  */
 export function ProviderModelPicker(props: {
   readonly entries: ReadonlyArray<ModelPickerEntry>;
   readonly selection: ModelSelection | undefined;
-  readonly onSelect?: (selection: ModelSelection) => void;
+  readonly onSelect: (selection: ModelSelection) => void;
 }) {
   const [open, setOpen] = useState(false);
   const container = useRef<HTMLDivElement | null>(null);
@@ -27,7 +26,7 @@ export function ProviderModelPicker(props: {
     selectedEntry === undefined
       ? "No provider available"
       : `${selectedEntry.displayName} · ${selectedModel?.name ?? props.selection?.model}`;
-  const choosable = props.onSelect !== undefined && props.entries.length > 0;
+  const choosable = props.entries.length > 0;
 
   useEffect(() => {
     if (!open) return;
@@ -73,7 +72,7 @@ export function ProviderModelPicker(props: {
                     role="option"
                     aria-selected={selected}
                     onClick={() => {
-                      props.onSelect?.({ instanceId: entry.instanceId, model: model.slug });
+                      props.onSelect({ instanceId: entry.instanceId, model: model.slug });
                       setOpen(false);
                     }}
                     className={`block w-full rounded-md px-2 py-1 text-left text-sm ${

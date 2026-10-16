@@ -5,6 +5,11 @@ import { ArrowUpIcon } from "../icons.tsx";
 import type { ModelPickerEntry } from "./composer.logic.ts";
 import { ProviderModelPicker } from "./ProviderModelPicker.tsx";
 
+const errorMessage = (cause: unknown, fallback: string) =>
+  typeof cause === "object" && cause !== null && "message" in cause
+    ? String(cause.message)
+    : fallback;
+
 /**
  * The plain-text composer, after T3 Code's `ChatComposer.tsx` and
  * `ComposerPrimaryActions.tsx` at 2577baf without rich text, attachments,
@@ -14,8 +19,7 @@ import { ProviderModelPicker } from "./ProviderModelPicker.tsx";
 export function ChatComposer(props: {
   readonly entries: ReadonlyArray<ModelPickerEntry>;
   readonly selection: ModelSelection | undefined;
-  /** Absent once the thread has started: changing its model is #23's. */
-  readonly onSelectModel?: (selection: ModelSelection) => void;
+  readonly onSelectModel: (selection: ModelSelection) => void | Promise<void>;
   readonly working: boolean;
   readonly onSend: (text: string) => Promise<void>;
 }) {
@@ -33,13 +37,18 @@ export function ChatComposer(props: {
       await props.onSend(text);
       setText("");
     } catch (cause) {
-      setError(
-        typeof cause === "object" && cause !== null && "message" in cause
-          ? String(cause.message)
-          : "The message could not be sent.",
-      );
+      setError(errorMessage(cause, "The message could not be sent."));
     } finally {
       setSending(false);
+    }
+  };
+
+  const selectModel = async (selection: ModelSelection) => {
+    setError(undefined);
+    try {
+      await props.onSelectModel(selection);
+    } catch (cause) {
+      setError(errorMessage(cause, "The model could not be changed."));
     }
   };
 
@@ -71,7 +80,7 @@ export function ChatComposer(props: {
           <ProviderModelPicker
             entries={props.entries}
             selection={props.selection}
-            {...(props.onSelectModel === undefined ? {} : { onSelect: props.onSelectModel })}
+            onSelect={(selection) => void selectModel(selection)}
           />
           {props.working ? (
             <span className="px-2 text-xs text-neutral-500 dark:text-neutral-400">Working…</span>
