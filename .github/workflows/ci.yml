@@ -1,0 +1,51 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  # The one required pull request check: every check on one Linux runner.
+  check:
+    name: Check
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      # Effect's vendored source is for agents to read; no check needs it.
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+
+      - name: Setup Vite+
+        uses: ./.github/actions/setup-ci-deps
+
+      - name: Format
+        run: vp run fmt:check
+
+      - name: Lint
+        run: vp run lint
+
+      - name: Typecheck
+        run: vp run typecheck
+
+      - name: Unused code
+        run: vp run knip:check
+
+      - name: Test
+        run: vp run test
+
+      - name: Build
+        run: vp run build

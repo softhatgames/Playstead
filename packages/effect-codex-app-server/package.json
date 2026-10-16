@@ -1,0 +1,6 @@
+{
+  "name": "@playstead/effect-codex-app-server",
+  "private": true,
+  "description": "The protocol client for Codex's app-server: JSON-RPC over stdio, with a schema generated from Codex's own.",
+  "type": "module"
+}

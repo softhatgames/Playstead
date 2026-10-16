@@ -1,0 +1,6 @@
+{
+  "name": "@playstead/client-runtime",
+  "private": true,
+  "description": "The clients' connection and shared state: one connection owner per environment, reconnecting, RPC sessions and thread streams.",
+  "type": "module"
+}

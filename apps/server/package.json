@@ -1,0 +1,15 @@
+{
+  "name": "@playstead/server",
+  "version": "0.1.0",
+  "private": true,
+  "description": "The server: RPC, orchestration, persistence and providers.",
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc-rs --noEmit",
+    "test": "vp test run --passWithNoTests"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:",
+    "vite-plus": "catalog:"
+  }
+}

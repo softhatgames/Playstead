@@ -1,0 +1,6 @@
+{
+  "name": "@playstead/provider-core",
+  "private": true,
+  "description": "The driver, adapter and host interfaces that providers implement.",
+  "type": "module"
+}

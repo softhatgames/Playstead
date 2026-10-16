@@ -1,0 +1,6 @@
+{
+  "name": "@playstead/provider-testing",
+  "private": true,
+  "description": "The provider test kit: transcript reading, replay gates, temporary workspaces, fake CLIs and a test provider host.",
+  "type": "module"
+}

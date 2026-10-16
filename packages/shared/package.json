@@ -1,0 +1,19 @@
+{
+  "name": "@playstead/shared",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./identity": {
+      "types": "./src/identity.ts",
+      "import": "./src/identity.ts"
+    }
+  },
+  "scripts": {
+    "typecheck": "tsc-rs --noEmit",
+    "test": "vp test run --config ../../vite.config.ts --dir ."
+  },
+  "devDependencies": {
+    "@effect/vitest": "catalog:",
+    "vite-plus": "catalog:"
+  }
+}
