@@ -42,7 +42,7 @@ Steps:
    - **Provider behaviour to match:** provider protocol changes, workarounds, version support, permission and sandbox changes.
    - **Architecture to consider.**
    - **Interface to consider**, for the followed parts only.
-   - **Not relevant:** a count only.
+   - **Not relevant:** a count only, including changes under the paths [ARCHITECTURE.md](ARCHITECTURE.md#left-out) leaves out.
 4. Open one issue in softhatgames/playstead, titled `T3 Code review: <from, 7 characters>..<to, 7 characters>` and labelled `t3-review`. Summarise each group by theme, with what changed, why it matters to Playstead and links to the T3 Code commits. End with proposed follow-ups as a checklist for the founder. When nothing is relevant, say so and close the issue at once, so the next review starts from `to`.
 
 The review's only output is that issue; the founder decides what Playstead adopts.
