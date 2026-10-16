@@ -2,7 +2,7 @@ import { Link, createFileRoute } from "@tanstack/react-router";
 
 import { APP_DISPLAY_NAME } from "../branding.ts";
 import { EnvironmentStatus } from "../components/EnvironmentStatus.tsx";
-import { fetchSessionState } from "../environments/primary/auth.ts";
+import { fetchPrimarySessionState } from "../environments/primary/auth.ts";
 
 function HomeView() {
   const session = Route.useLoaderData();
@@ -26,6 +26,6 @@ function HomeView() {
 }
 
 export const Route = createFileRoute("/")({
-  loader: () => fetchSessionState(),
+  loader: () => fetchPrimarySessionState(),
   component: HomeView,
 });

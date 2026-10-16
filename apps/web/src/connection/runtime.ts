@@ -12,7 +12,8 @@ import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as Socket from "effect/socket/Socket";
 import { useSyncExternalStore } from "react";
 
-const runtime = ManagedRuntime.make(
+/** The page's Effect runtime: HTTP through fetch, sockets through the browser's WebSocket. */
+export const runtime = ManagedRuntime.make(
   Layer.mergeAll(FetchHttpClient.layer, Socket.layerWebSocketConstructorGlobal),
 );
 
