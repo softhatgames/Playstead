@@ -55,7 +55,7 @@ const unreachableClaude: ClaudeAgentSdkQueryRunner["Service"] = {
 
 /** Claude's whole final reply, the message the replay holds back below. */
 const FINAL_REPLY =
-  'Created `hello-claude.txt` in the current folder with the line "Hello from Claude in Playstead!"';
+  'Created `hello-claude.txt` in the current folder with the line "Hello from Claude in Playstead!" using the Write tool.';
 
 const isFinalReply = (frame: unknown) =>
   JSON.stringify(frame).includes(`"type":"text","text":${JSON.stringify(FINAL_REPLY)}`);

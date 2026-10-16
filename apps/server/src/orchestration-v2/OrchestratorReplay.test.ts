@@ -24,9 +24,14 @@ import {
  * Seam 1 over Playstead's recording of the signed-in Claude: the real
  * orchestrator, event sink, effect worker, Claude adapter, projections and
  * SQLite, with only `query()`, the clock and randomness stood in for.
- * `followedBy` are frames the adapter must send after the recorded turn.
+ * `followedBy` are frames the adapter must send after the recorded turn;
+ * `beforeTurn` are messages Claude sends right after the prompt, before
+ * the recorded turn's.
  */
-const replayFileCreate = (followedBy: ReadonlyArray<ProviderReplayEntry> = []) =>
+const replayFileCreate = (
+  followedBy: ReadonlyArray<ProviderReplayEntry> = [],
+  beforeTurn: ReadonlyArray<ProviderReplayEntry> = [],
+) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
@@ -47,7 +52,15 @@ const replayFileCreate = (followedBy: ReadonlyArray<ProviderReplayEntry> = []) =
     });
     replay = yield* makeClaudeReplay(
       materializeReplayWorkspace(
-        { ...recorded, entries: [...recorded.entries, ...followedBy] },
+        {
+          ...recorded,
+          entries: [
+            ...recorded.entries.slice(0, 2),
+            ...beforeTurn,
+            ...recorded.entries.slice(2),
+            ...followedBy,
+          ],
+        },
         path.join(harness.home, "empty-game"),
       ),
     );
@@ -92,6 +105,57 @@ describe("Chat with Claude in a thread", () => {
         const reply = projection.turnItems.findLast((item) => item.type === "assistant_message");
         assert.isDefined(reply);
         assert.isFalse(reply.type === "assistant_message" && reply.streaming);
+      }).pipe(Effect.scoped),
+    );
+
+    it.effect("a turn Claude Code runs by itself does not end the person's turn", () =>
+      Effect.gen(function* () {
+        // Claude Code's own turn after a background command finished, as
+        // Claude 2.1.301 sent it (seen by hand): its frames carry no
+        // prompt's uuid, and it ends with a result of its own.
+        const sessionId = "c4aedb90-2046-46ac-b9bb-bfc68d7d8381";
+        const ownTurn = "The background `sleep 15` finished with exit code 0.";
+        const { harness, replay } = yield* replayFileCreate(
+          [],
+          [
+            { type: "system", subtype: "init", session_id: sessionId },
+            {
+              type: "assistant",
+              message: {
+                id: "msg_background",
+                role: "assistant",
+                content: [{ type: "text", text: ownTurn }],
+              },
+              parent_tool_use_id: null,
+              session_id: sessionId,
+            },
+            {
+              type: "result",
+              subtype: "success",
+              is_error: false,
+              result: ownTurn,
+              result_index: 0,
+              terminal_reason: "completed",
+              session_id: sessionId,
+            },
+          ].map((frame) => ({ type: "emit_inbound" as const, frame })),
+        );
+
+        const { run } = yield* runFileCreateScenario(harness);
+
+        yield* replay.assertComplete;
+        assert.strictEqual(run.status, "completed");
+        const projection = Option.getOrThrow(
+          yield* harness.orchestrator.getThreadProjection(FILE_CREATE_IDS.threadId),
+        );
+        const replies = projection.turnItems.flatMap((item) =>
+          item.type === "assistant_message" ? [item.text] : [],
+        );
+        assert.notInclude(replies, ownTurn);
+        assert.deepStrictEqual(
+          projection.turnItems.filter((item) => item.type === "file_change").length,
+          1,
+        );
       }).pipe(Effect.scoped),
     );
 
@@ -151,6 +215,8 @@ describe("Chat with Claude in a thread", () => {
                 type: "user",
                 message: { role: "user", content: followUp },
                 parent_tool_use_id: null,
+                // Any uuid: the replay pairs it with the one the adapter sends.
+                uuid: "00000000-0000-4000-8000-000000000002",
               },
             },
           },

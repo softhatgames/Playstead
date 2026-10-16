@@ -1,10 +1,22 @@
 import { assert, describe, it } from "@effect/vitest";
-import { CommandId, MessageId, ProjectId, ThreadId } from "@playstead/contracts/baseSchemas";
+import {
+  CommandId,
+  MessageId,
+  ProjectId,
+  RunId,
+  ThreadId,
+  TurnItemId,
+} from "@playstead/contracts/baseSchemas";
+import type {
+  OrchestrationV2Run,
+  OrchestrationV2TurnItem,
+} from "@playstead/contracts/orchestrationV2";
 import type { ServerProvider } from "@playstead/contracts/server";
 
 import {
   buildSendCommands,
   defaultModelSelection,
+  deriveComposerAction,
   deriveModelPickerEntries,
 } from "./composer.logic.ts";
 
@@ -125,5 +137,60 @@ describe("buildSendCommands", () => {
         text: "Now add a jump",
       },
     ]);
+  });
+});
+
+describe("deriveComposerAction", () => {
+  const at = "2026-10-17T00:00:00.000Z";
+  const run = (id: string, status: OrchestrationV2Run["status"]): OrchestrationV2Run => ({
+    id: RunId.make(id),
+    threadId: ThreadId.make("thread:1"),
+    ordinal: 1,
+    providerInstanceId: "codex",
+    modelSelection: { instanceId: "codex", model: "gpt-fake" },
+    providerThreadId: null,
+    userMessageId: MessageId.make("message:1"),
+    rootNodeId: null,
+    activeAttemptId: null,
+    status,
+    requestedAt: at,
+    startedAt: null,
+    completedAt: null,
+  });
+  const interruptRequest = (runId: string): OrchestrationV2TurnItem => ({
+    id: TurnItemId.make(`item:${runId}:interrupt-request`),
+    threadId: ThreadId.make("thread:1"),
+    runId: RunId.make(runId),
+    nodeId: null,
+    providerThreadId: null,
+    providerTurnId: null,
+    ordinal: 2,
+    status: "completed",
+    title: "Interrupt requested",
+    startedAt: at,
+    completedAt: at,
+    updatedAt: at,
+    type: "run_interrupt_request",
+    message: "Interrupt requested",
+  });
+
+  it("offers sending while no run is active", () => {
+    assert.deepStrictEqual(deriveComposerAction([run("run:1", "interrupted")], []), {
+      kind: "send",
+    });
+  });
+
+  it("offers only Interrupt, for the active run, while one runs", () => {
+    assert.deepStrictEqual(
+      deriveComposerAction([run("run:1", "completed"), run("run:2", "starting")], []),
+      { kind: "interrupt", runId: RunId.make("run:2") },
+    );
+  });
+
+  it("shows the run stopping once Interrupt was pressed, until it has", () => {
+    assert.deepStrictEqual(
+      deriveComposerAction([run("run:2", "running")], [interruptRequest("run:2")]),
+      { kind: "interrupting" },
+    );
   });
 });

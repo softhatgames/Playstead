@@ -1,6 +1,18 @@
 import { deriveThreadTitleSeed } from "@playstead/client-runtime/operations/threadTitle";
-import type { CommandId, MessageId, ProjectId, ThreadId } from "@playstead/contracts/baseSchemas";
-import type { ModelSelection, OrchestrationV2Command } from "@playstead/contracts/orchestrationV2";
+import type {
+  CommandId,
+  MessageId,
+  ProjectId,
+  RunId,
+  ThreadId,
+} from "@playstead/contracts/baseSchemas";
+import {
+  ACTIVE_RUN_STATUSES,
+  type ModelSelection,
+  type OrchestrationV2Command,
+  type OrchestrationV2Run,
+  type OrchestrationV2TurnItem,
+} from "@playstead/contracts/orchestrationV2";
 import type { ProviderInstanceId } from "@playstead/contracts/providerInstance";
 import type { ServerProvider, ServerProviderModel } from "@playstead/contracts/server";
 
@@ -90,4 +102,26 @@ export function buildSendCommands(input: {
     },
     message,
   ];
+}
+
+export type ComposerAction =
+  | { readonly kind: "send" }
+  | { readonly kind: "interrupt"; readonly runId: RunId }
+  | { readonly kind: "interrupting" };
+
+/**
+ * The composer's one action (T3 Code's `ComposerPrimaryActions` at 2577baf,
+ * without the queue or steering): send while no run is active; while one
+ * is, only **Interrupt**, and once that is pressed, the run stopping.
+ */
+export function deriveComposerAction(
+  runs: ReadonlyArray<OrchestrationV2Run>,
+  turnItems: ReadonlyArray<OrchestrationV2TurnItem>,
+): ComposerAction {
+  const active = runs.findLast((run) => ACTIVE_RUN_STATUSES.has(run.status));
+  if (active === undefined) return { kind: "send" };
+  const requested = turnItems.some(
+    (item) => item.type === "run_interrupt_request" && item.runId === active.id,
+  );
+  return requested ? { kind: "interrupting" } : { kind: "interrupt", runId: active.id };
 }

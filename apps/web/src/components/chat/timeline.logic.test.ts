@@ -101,4 +101,41 @@ describe("deriveTimelineRows", () => {
       ],
     );
   });
+
+  it("shows an interrupt as T3 Code does: the request, the stopped work, then the run interrupted", () => {
+    const rows = deriveTimelineRows(
+      [
+        {
+          ...base("item:run", 1, "interrupted"),
+          type: "command_execution",
+          input: "sleep 30",
+        },
+        {
+          ...base("item:request", 2, "completed"),
+          type: "run_interrupt_request",
+          message: "Interrupt requested",
+        },
+        {
+          ...base("item:result", 3, "interrupted"),
+          type: "run_interrupt_result",
+          message: "Run interrupted by the person",
+          parentItemId: TurnItemId.make("item:request"),
+        },
+      ],
+      "/games/empty",
+    );
+
+    assert.deepStrictEqual(rows, [
+      {
+        kind: "work",
+        id: "item:run",
+        label: "Stopped sleep 30",
+        icon: "tool",
+        tone: "tool",
+        running: false,
+      },
+      { kind: "interrupt-request", id: "item:request", label: "Interrupt requested" },
+      { kind: "interrupted", id: "item:result", label: "Interrupted" },
+    ]);
+  });
 });

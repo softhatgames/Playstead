@@ -29,9 +29,9 @@ import type * as Stream from "effect/Stream";
  * provider's protocol stays behind its adapter; the orchestration core sees
  * only sessions, turns and the events below.
  *
- * Trimmed to starting turns. Steering, rollback and fork are absent; the
- * interrupt (#24), runtime-request answers (#25) and model changes (#23)
- * join this interface with their tickets.
+ * Trimmed to starting and interrupting turns. Steering, rollback and fork
+ * are absent; runtime-request answers (#25) join this interface with their
+ * ticket.
  */
 
 /** Every thread runs in Full access with the default interaction mode, in its project's folder. */
@@ -92,7 +92,7 @@ export class ProviderAdapterV2Error extends Schema.TaggedError<ProviderAdapterV2
   "ProviderAdapterV2Error",
   {
     driver: ProviderDriverKind,
-    operation: Schema.Literals(["open-session", "ensure-thread", "start-turn"]),
+    operation: Schema.Literals(["open-session", "ensure-thread", "start-turn", "interrupt-turn"]),
     detail: Schema.String,
     cause: Schema.optionalKey(Schema.Defect()),
   },
@@ -125,7 +125,25 @@ export interface ProviderAdapterV2SessionRuntime {
   readonly startTurn: (
     input: ProviderAdapterV2TurnInput,
   ) => Effect.Effect<void, ProviderAdapterV2Error>;
+  /**
+   * Asks the provider to stop the turn (T3 Code's `interruptTurn`). The turn
+   * still ends with its `turn.terminal`, normally `interrupted`; when the
+   * provider sends none within `INTERRUPT_TERMINAL_TIMEOUT`, the adapter ends
+   * the turn interrupted itself, so the session can run the next one. Does
+   * nothing when the turn has already ended. An adapter that has a question
+   * waiting on the person (#25) must release it here.
+   */
+  readonly interruptTurn: (input: {
+    readonly providerThread: OrchestrationV2ProviderThread;
+    readonly providerTurnId: ProviderTurnId;
+  }) => Effect.Effect<void, ProviderAdapterV2Error>;
 }
+
+/**
+ * How long an adapter waits for the provider to end an interrupted turn
+ * before ending it itself: T3 Code's adapters wait 10 seconds.
+ */
+export const INTERRUPT_TERMINAL_TIMEOUT = "10 seconds";
 
 export interface ProviderAdapterV2 {
   readonly instanceId: ProviderInstanceId;

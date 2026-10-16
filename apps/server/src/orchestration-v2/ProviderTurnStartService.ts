@@ -92,6 +92,8 @@ const unstartedRunFailureEvents = (
   ];
 };
 
+const STARTING: ReadonlySet<OrchestrationV2Run["status"]> = new Set(["starting"]);
+
 export class ProviderTurnStartError extends Schema.TaggedError<ProviderTurnStartError>()(
   "ProviderTurnStartError",
   { runId: RunId, cause: Schema.Defect() },
@@ -151,7 +153,8 @@ const make = Effect.gen(function* () {
 
       const fail = (detail: string) =>
         Effect.flatMap(DateTime.now, (now) =>
-          eventSink.write(
+          eventSink.writeIfRunStatus(
+            { runId: run.id, statuses: STARTING },
             unstartedRunFailureEvents(
               { run, attempt, rootNode },
               RunExecutionService.failureFrom(detail),
@@ -230,14 +233,19 @@ const make = Effect.gen(function* () {
         },
       };
       const base = { threadId: thread.id, runId: run.id, occurredAt: now };
-      yield* eventSink.write([
-        { ...base, type: "provider-session.updated", payload: records.providerSession },
-        { ...base, type: "provider-thread.updated", payload: records.providerThread },
-        { ...base, type: "provider-turn.updated", payload: records.providerTurn },
-        { ...base, type: "run-attempt.updated", payload: records.attempt },
-        { ...base, type: "node.updated", payload: records.rootNode },
-        { ...base, type: "run.updated", payload: records.run },
-      ]);
+      // An interrupt may have ended the run while its session opened.
+      const stillStarting = yield* eventSink.writeIfRunStatus(
+        { runId: run.id, statuses: STARTING },
+        [
+          { ...base, type: "provider-session.updated", payload: records.providerSession },
+          { ...base, type: "provider-thread.updated", payload: records.providerThread },
+          { ...base, type: "provider-turn.updated", payload: records.providerTurn },
+          { ...base, type: "run-attempt.updated", payload: records.attempt },
+          { ...base, type: "node.updated", payload: records.rootNode },
+          { ...base, type: "run.updated", payload: records.run },
+        ],
+      );
+      if (!stillStarting) return;
 
       yield* runs.startRootRun({
         session,
