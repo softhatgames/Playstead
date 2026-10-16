@@ -1,6 +1,6 @@
 # Domain Docs
 
-Playstead uses one domain context across its application packages: a root GLOSSARY.md, created lazily, and the existing [ADR collection](https://github.com/softhatgames/playstead-v0/blob/v0/docs/adr/README.md).
+Playstead uses one domain context across its application packages: a root GLOSSARY.md, created lazily, and the ADRs in [docs/adr/](../adr/). v0's ADRs are archived at [softhatgames/playstead-v0](https://github.com/softhatgames/playstead-v0/tree/v0/docs/adr), tag `v0`, and are reviewed with the game features.
 
 How the engineering skills should consume this repo's domain documentation when exploring the codebase.
 
