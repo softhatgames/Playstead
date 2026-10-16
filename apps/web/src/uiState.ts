@@ -3,8 +3,7 @@ import { useSyncExternalStore } from "react";
 /**
  * The interface's own state, kept in the page (T3 Code keeps it in
  * `apps/web/src/uiStateStore.ts` at 2577baf). So far it is the project the
- * person last opened, which the sidebar marks. Opening a project shows its
- * threads once threads exist.
+ * person last opened, which the sidebar marks.
  */
 
 let activeProjectId: string | undefined;

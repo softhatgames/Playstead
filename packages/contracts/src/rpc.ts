@@ -7,7 +7,16 @@ import {
   FilesystemBrowseInput,
   FilesystemBrowseResult,
 } from "./filesystem.ts";
-import { ORCHESTRATION_V2_WS_METHODS, OrchestrationV2ShellStreamItem } from "./orchestrationV2.ts";
+import {
+  ORCHESTRATION_V2_WS_METHODS,
+  OrchestrationDispatchCommandError,
+  OrchestrationThreadNotFoundError,
+  OrchestrationV2Command,
+  OrchestrationV2DispatchCommandResult,
+  OrchestrationV2ShellStreamItem,
+  OrchestrationV2SubscribeThreadInput,
+  OrchestrationV2ThreadStreamItem,
+} from "./orchestrationV2.ts";
 import { Project, ProjectConflictError, ProjectMutation, ProjectMutationError } from "./project.ts";
 import { ProviderInstanceId, ProviderInstanceMutation } from "./providerInstance.ts";
 import {
@@ -80,6 +89,21 @@ const WsOrchestrationSubscribeShellRpc = Rpc.make(ORCHESTRATION_V2_WS_METHODS.su
   stream: true,
 });
 
+/** Sends an orchestration command; the result is the last event it produced. */
+const WsOrchestrationDispatchCommandRpc = Rpc.make(ORCHESTRATION_V2_WS_METHODS.dispatchCommand, {
+  payload: OrchestrationV2Command,
+  success: OrchestrationV2DispatchCommandResult,
+  error: OrchestrationDispatchCommandError,
+});
+
+/** One thread for the thread view: its projection, then each of its events. */
+const WsOrchestrationSubscribeThreadRpc = Rpc.make(ORCHESTRATION_V2_WS_METHODS.subscribeThread, {
+  payload: OrchestrationV2SubscribeThreadInput,
+  success: OrchestrationV2ThreadStreamItem,
+  error: OrchestrationThreadNotFoundError,
+  stream: true,
+});
+
 /**
  * The RPC contract on `/ws`. The socket is authenticated before it opens, and
  * every client on this computer may call every method, so the methods carry
@@ -94,4 +118,6 @@ export const WsRpcGroup = RpcGroup.make(
   WsProjectsMutateRpc,
   WsFilesystemBrowseRpc,
   WsOrchestrationSubscribeShellRpc,
+  WsOrchestrationDispatchCommandRpc,
+  WsOrchestrationSubscribeThreadRpc,
 );

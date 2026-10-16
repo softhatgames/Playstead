@@ -11,6 +11,10 @@
     "./fakeProviders": {
       "types": "./src/fakeProviders.ts",
       "import": "./src/fakeProviders.ts"
+    },
+    "./replayTranscript": {
+      "types": "./src/replayTranscript.ts",
+      "import": "./src/replayTranscript.ts"
     }
   },
   "scripts": {

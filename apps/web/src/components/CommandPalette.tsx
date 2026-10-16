@@ -11,6 +11,7 @@ import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 
 import { onOpenCommandPalette } from "../commandPaletteBus.ts";
 import { requestPrimary, usePrimaryConnectionState } from "../connection/runtime.ts";
+import { newId } from "../ids.ts";
 import { desktopBridge } from "../env.ts";
 import { openProject } from "../uiState.ts";
 import { planAddProject } from "./addProject.logic.ts";
@@ -24,12 +25,6 @@ const fileManagerName = (platform: string) =>
 
 const isPrimaryModifierPressed = (event: KeyboardEvent) =>
   /mac/i.test(navigator.platform) ? event.metaKey : event.ctrlKey;
-
-/** 16 random bytes as hex, for new command and project ids. */
-const newId = () =>
-  Array.from(globalThis.crypto.getRandomValues(new Uint8Array(16)), (byte) =>
-    byte.toString(16).padStart(2, "0"),
-  ).join("");
 
 const errorMessage = (error: unknown) =>
   error instanceof Error && error.message.length > 0 ? error.message : "An error occurred.";

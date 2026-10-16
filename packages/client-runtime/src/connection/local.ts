@@ -52,7 +52,7 @@ export interface ConnectionState {
   readonly config: ServerConfig | undefined;
   /** The environment's latest lifecycle event. */
   readonly lifecycle: ServerLifecycleStreamEvent | undefined;
-  /** The sidebar's shell: the environment's projects, current while connected. */
+  /** The sidebar's shell: the environment's projects and threads, current while connected. */
   readonly shell: OrchestrationV2ShellSnapshot | undefined;
 }
 
@@ -63,6 +63,10 @@ export interface LocalConnection {
   readonly request: <A, E>(
     call: (client: WsRpcClient) => Effect.Effect<A, E>,
   ) => Effect.Effect<A, E | ConnectionTransientError>;
+  /** Opens a stream over the open session; it fails when the session closes. */
+  readonly stream: <A, E>(
+    call: (client: WsRpcClient) => Stream.Stream<A, E>,
+  ) => Stream.Stream<A, E | ConnectionTransientError>;
 }
 
 /** The config stream keeps the server's status, provider statuses and settings current. */
@@ -239,5 +243,16 @@ export const makeLocalConnection = Effect.fn("makeLocalConnection")(function* (
           : call(client),
     );
 
-  return { state, changes: SubscriptionRef.changes(state), request };
+  const stream = <A, E>(call: (client: WsRpcClient) => Stream.Stream<A, E>) =>
+    Stream.unwrap(
+      Effect.map(
+        Ref.get(currentClient),
+        (client): Stream.Stream<A, E | ConnectionTransientError> =>
+          client === undefined
+            ? Stream.fail(new ConnectionTransientError({ detail: "Not connected to the server." }))
+            : call(client),
+      ),
+    );
+
+  return { state, changes: SubscriptionRef.changes(state), request, stream };
 });

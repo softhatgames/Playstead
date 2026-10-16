@@ -6,13 +6,16 @@ import {
 import type { ServerProvider, ServerProviders } from "@playstead/contracts/server";
 import type { ServerSettings } from "@playstead/contracts/settings";
 import type { ProviderDriver, ProviderInstance } from "@playstead/provider-core/server/driver";
+import type { ProviderAdapterV2 } from "@playstead/provider-core/server/ProviderAdapter";
 import * as HostProcess from "@playstead/shared/hostProcess";
 import { withKnownCliDirs } from "@playstead/shared/shell";
 import * as Context from "effect/Context";
+import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
@@ -43,12 +46,16 @@ export class ProviderRegistry extends Context.Service<
     readonly refresh: (instanceId?: ProviderInstanceId) => Effect.Effect<ServerProviders>;
     /** Every status now, then after each change. */
     readonly streamChanges: Stream.Stream<ServerProviders>;
+    /** The instance's current orchestration adapter, if it can run threads. */
+    readonly getAdapter: (
+      instanceId: ProviderInstanceId,
+    ) => Effect.Effect<Option.Option<ProviderAdapterV2>>;
   }
 >()("@playstead/server/provider/ProviderRegistry") {}
 
 const BUILT_IN_DRIVERS: Record<
   ProviderInstanceId,
-  ProviderDriver<ChildProcessSpawner.ChildProcessSpawner | FileSystem.FileSystem>
+  ProviderDriver<ChildProcessSpawner.ChildProcessSpawner | FileSystem.FileSystem | Crypto.Crypto>
 > = {
   codex: CodexDriver,
   claudeAgent: ClaudeDriver,
@@ -73,6 +80,7 @@ export const layer = Layer.effect(
     const settingsService = yield* ServerSettingsService.ServerSettingsService;
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     const fileSystem = yield* FileSystem.FileSystem;
+    const crypto = yield* Crypto.Crypto;
     const platform = yield* HostProcess.Platform;
     const homeDirectory = yield* HostProcess.HomeDirectory;
     // Provider processes get the server's environment, as in T3 Code.
@@ -103,6 +111,7 @@ export const layer = Layer.effect(
             Scope.provide(scope),
             Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
             Effect.provideService(FileSystem.FileSystem, fileSystem),
+            Effect.provideService(Crypto.Crypto, crypto),
           );
         yield* publish(yield* instance.snapshot.getSnapshot);
         yield* Stream.runForEach(instance.snapshot.streamChanges, publish).pipe(
@@ -153,6 +162,10 @@ export const layer = Layer.effect(
           return yield* getProviders;
         }),
       streamChanges: SubscriptionRef.changes(statuses).pipe(Stream.map(toList)),
+      getAdapter: (instanceId) =>
+        Effect.sync(() =>
+          Option.fromUndefinedOr(live.get(instanceId)?.instance.orchestrationAdapter),
+        ),
     });
   }),
 );

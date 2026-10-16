@@ -4,6 +4,10 @@
   "description": "The driver, adapter and host interfaces that providers implement.",
   "type": "module",
   "exports": {
+    "./server/ProviderAdapter": {
+      "types": "./src/server/ProviderAdapter.ts",
+      "import": "./src/server/ProviderAdapter.ts"
+    },
     "./server/driver": {
       "types": "./src/server/driver.ts",
       "import": "./src/server/driver.ts"

@@ -12,7 +12,9 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as SettingsRouteImport } from './routes/settings'
 import { Route as PairRouteImport } from './routes/pair'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as ThreadsThreadIdRouteImport } from './routes/threads.$threadId'
 import { Route as SettingsProvidersRouteImport } from './routes/settings.providers'
+import { Route as DraftDraftIdRouteImport } from './routes/draft.$draftId'
 
 const SettingsRoute = SettingsRouteImport.update({
   id: '/settings',
@@ -29,43 +31,80 @@ const IndexRoute = IndexRouteImport.update({
   path: '/',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ThreadsThreadIdRoute = ThreadsThreadIdRouteImport.update({
+  id: '/threads/$threadId',
+  path: '/threads/$threadId',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const SettingsProvidersRoute = SettingsProvidersRouteImport.update({
   id: '/providers',
   path: '/providers',
   getParentRoute: () => SettingsRoute,
+} as any)
+const DraftDraftIdRoute = DraftDraftIdRouteImport.update({
+  id: '/draft/$draftId',
+  path: '/draft/$draftId',
+  getParentRoute: () => rootRouteImport,
 } as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/pair': typeof PairRoute
   '/settings': typeof SettingsRouteWithChildren
+  '/draft/$draftId': typeof DraftDraftIdRoute
   '/settings/providers': typeof SettingsProvidersRoute
+  '/threads/$threadId': typeof ThreadsThreadIdRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/pair': typeof PairRoute
   '/settings': typeof SettingsRouteWithChildren
+  '/draft/$draftId': typeof DraftDraftIdRoute
   '/settings/providers': typeof SettingsProvidersRoute
+  '/threads/$threadId': typeof ThreadsThreadIdRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/pair': typeof PairRoute
   '/settings': typeof SettingsRouteWithChildren
+  '/draft/$draftId': typeof DraftDraftIdRoute
   '/settings/providers': typeof SettingsProvidersRoute
+  '/threads/$threadId': typeof ThreadsThreadIdRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/pair' | '/settings' | '/settings/providers'
+  fullPaths:
+    | '/'
+    | '/pair'
+    | '/settings'
+    | '/draft/$draftId'
+    | '/settings/providers'
+    | '/threads/$threadId'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/pair' | '/settings' | '/settings/providers'
-  id: '__root__' | '/' | '/pair' | '/settings' | '/settings/providers'
+  to:
+    | '/'
+    | '/pair'
+    | '/settings'
+    | '/draft/$draftId'
+    | '/settings/providers'
+    | '/threads/$threadId'
+  id:
+    | '__root__'
+    | '/'
+    | '/pair'
+    | '/settings'
+    | '/draft/$draftId'
+    | '/settings/providers'
+    | '/threads/$threadId'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   PairRoute: typeof PairRoute
   SettingsRoute: typeof SettingsRouteWithChildren
+  DraftDraftIdRoute: typeof DraftDraftIdRoute
+  ThreadsThreadIdRoute: typeof ThreadsThreadIdRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -91,12 +130,26 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/threads/$threadId': {
+      id: '/threads/$threadId'
+      path: '/threads/$threadId'
+      fullPath: '/threads/$threadId'
+      preLoaderRoute: typeof ThreadsThreadIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/settings/providers': {
       id: '/settings/providers'
       path: '/providers'
       fullPath: '/settings/providers'
       preLoaderRoute: typeof SettingsProvidersRouteImport
       parentRoute: typeof SettingsRoute
+    }
+    '/draft/$draftId': {
+      id: '/draft/$draftId'
+      path: '/draft/$draftId'
+      fullPath: '/draft/$draftId'
+      preLoaderRoute: typeof DraftDraftIdRouteImport
+      parentRoute: typeof rootRouteImport
     }
   }
 }
@@ -117,6 +170,8 @@ const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   PairRoute: PairRoute,
   SettingsRoute: SettingsRouteWithChildren,
+  DraftDraftIdRoute: DraftDraftIdRoute,
+  ThreadsThreadIdRoute: ThreadsThreadIdRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

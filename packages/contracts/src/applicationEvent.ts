@@ -8,6 +8,7 @@ import {
   ProjectId,
   TrimmedNonEmptyString,
 } from "./baseSchemas.ts";
+import type { OrchestrationV2StoredEvent } from "./orchestrationV2.ts";
 
 /**
  * Project events, as T3 Code's `packages/contracts/src/applicationEvent.ts`
@@ -41,5 +42,5 @@ export type ApplicationProjectCreatedEvent = typeof ApplicationProjectCreatedEve
 export const ApplicationProjectEvent = Schema.Union([ApplicationProjectCreatedEvent]);
 export type ApplicationProjectEvent = typeof ApplicationProjectEvent.Type;
 
-/** Every stored application event. Agent events join with the orchestration core. */
-export type ApplicationStoredEvent = ApplicationProjectEvent;
+/** Every stored application event: project events and thread events, in one sequence. */
+export type ApplicationStoredEvent = ApplicationProjectEvent | OrchestrationV2StoredEvent;

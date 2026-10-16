@@ -1,4 +1,7 @@
-import { ORCHESTRATION_V2_WS_METHODS } from "@playstead/contracts/orchestrationV2";
+import {
+  ORCHESTRATION_V2_WS_METHODS,
+  OrchestrationDispatchCommandError,
+} from "@playstead/contracts/orchestrationV2";
 import { ProjectMutationError } from "@playstead/contracts/project";
 import { WS_METHODS, WsRpcGroup } from "@playstead/contracts/rpc";
 import * as Effect from "effect/Effect";
@@ -14,7 +17,9 @@ import * as RpcServer from "effect/rpc/RpcServer";
 import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
 import { failEnvironmentAuthInvalid, failEnvironmentInternal } from "./auth/http.ts";
 import * as ServerEnvironment from "./environment/ServerEnvironment.ts";
+import * as Orchestrator from "./orchestration-v2/Orchestrator.ts";
 import { streamShell } from "./orchestration-v2/ShellStream.ts";
+import { streamThread } from "./orchestration-v2/ThreadStream.ts";
 import * as ProjectService from "./project/ProjectService.ts";
 import * as ProviderRegistry from "./provider/ProviderRegistry.ts";
 import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
@@ -37,7 +42,12 @@ const layerWsRpc = WsRpcGroup.toLayer(
     const providers = yield* ProviderRegistry.ProviderRegistry;
     const settings = yield* ServerSettings.ServerSettingsService;
     const projects = yield* ProjectService.ProjectService;
-    const context = yield* Effect.context<Effect.Services<typeof streamShell> | Path.Path>();
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const context = yield* Effect.context<
+      | Effect.Services<typeof streamShell>
+      | Stream.Services<ReturnType<typeof streamThread>>
+      | Path.Path
+    >();
     const getConfig = Effect.all({
       environment: environment.getDescriptor,
       auth: Effect.succeed(auth.descriptor),
@@ -103,6 +113,32 @@ const layerWsRpc = WsRpcGroup.toLayer(
         WorkspaceEntries.browse(input).pipe(Effect.provideContext(context)),
       [ORCHESTRATION_V2_WS_METHODS.subscribeShell]: () =>
         streamShell.pipe(Stream.orDie, Stream.provideContext(context)),
+      // Mutations reach here only after startup: `/ws` waits at the readiness gate.
+      [ORCHESTRATION_V2_WS_METHODS.dispatchCommand]: (command) =>
+        orchestrator.dispatch(command).pipe(
+          Effect.catchTag("OrchestratorDispatchError", (error) =>
+            Effect.logWarning("An orchestration command could not be dispatched.").pipe(
+              Effect.annotateLogs({ commandId: command.commandId, cause: String(error.cause) }),
+              Effect.andThen(
+                Effect.fail(
+                  new OrchestrationDispatchCommandError({
+                    commandId: command.commandId,
+                    message: error.message,
+                  }),
+                ),
+              ),
+            ),
+          ),
+        ),
+      [ORCHESTRATION_V2_WS_METHODS.subscribeThread]: ({ threadId }) =>
+        streamThread(threadId).pipe(
+          Stream.catchTags({
+            EventStoreReadEventsError: Stream.die,
+            ProjectionStoreV2Error: Stream.die,
+            SqlError: Stream.die,
+          }),
+          Stream.provideContext(context),
+        ),
     });
   }),
 );

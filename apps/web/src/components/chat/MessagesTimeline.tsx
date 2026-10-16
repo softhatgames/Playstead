@@ -1,0 +1,91 @@
+import { useEffect, useRef } from "react";
+
+import { FilePenIcon, WrenchIcon } from "../icons.tsx";
+import type { TimelineRow } from "./timeline.logic.ts";
+
+/**
+ * The thread's messages and activity log, after T3 Code's
+ * `apps/web/src/components/chat/MessagesTimeline.tsx` and `WorkLog.tsx` at
+ * 2577baf. Replies show as plain text while they stream; file links and
+ * every other action that opens a panel are absent.
+ */
+export function MessagesTimeline(props: {
+  readonly rows: ReadonlyArray<TimelineRow>;
+  readonly working: boolean;
+}) {
+  const end = useRef<HTMLDivElement | null>(null);
+  const lastRow = props.rows.at(-1);
+  const lastText = lastRow?.kind === "assistant" ? lastRow.text : undefined;
+
+  useEffect(() => {
+    end.current?.scrollIntoView({ block: "end" });
+  }, [props.rows.length, lastText]);
+
+  return (
+    <div className="mx-auto flex w-full max-w-3xl flex-col gap-3 px-6 py-6" aria-live="polite">
+      {props.rows.map((row) => {
+        switch (row.kind) {
+          case "user":
+            return (
+              <div key={row.id} className="flex justify-end">
+                <div className="max-w-[80%] rounded-2xl bg-neutral-100 px-4 py-2 text-sm whitespace-pre-wrap dark:bg-neutral-800">
+                  {row.text}
+                </div>
+              </div>
+            );
+          case "assistant":
+            return (
+              <div
+                key={row.id}
+                data-streaming={row.streaming ? "true" : undefined}
+                className="text-sm leading-relaxed whitespace-pre-wrap"
+              >
+                {row.text}
+                {row.streaming ? <span className="animate-pulse">▍</span> : null}
+              </div>
+            );
+          case "work":
+            return <WorkLogRow key={row.id} row={row} />;
+        }
+      })}
+      {props.working && lastRow?.kind !== "assistant" ? (
+        <div className="animate-pulse text-xs text-neutral-500 dark:text-neutral-400">Working…</div>
+      ) : null}
+      <div ref={end} />
+    </div>
+  );
+}
+
+function WorkLogRow({ row }: { readonly row: Extract<TimelineRow, { kind: "work" }> }) {
+  const tone =
+    row.tone === "error"
+      ? "text-red-700 dark:text-red-400"
+      : "text-neutral-600 dark:text-neutral-300";
+  const icon =
+    row.icon === "file" ? (
+      <FilePenIcon className="size-3.5 shrink-0" />
+    ) : (
+      <WrenchIcon className="size-3.5 shrink-0" />
+    );
+  const summary = (
+    <span className={`flex items-center gap-2 text-xs ${tone}`}>
+      {icon}
+      <span className={`truncate ${row.running ? "animate-pulse" : ""}`}>{row.label}</span>
+    </span>
+  );
+  if (row.detail === undefined) {
+    return (
+      <div className="rounded-md border border-neutral-200 px-3 py-1.5 dark:border-neutral-800">
+        {summary}
+      </div>
+    );
+  }
+  return (
+    <details className="rounded-md border border-neutral-200 px-3 py-1.5 dark:border-neutral-800">
+      <summary className="cursor-pointer list-none">{summary}</summary>
+      <pre className="mt-2 max-h-64 overflow-auto rounded bg-neutral-50 p-2 text-xs dark:bg-neutral-900">
+        {row.detail}
+      </pre>
+    </details>
+  );
+}

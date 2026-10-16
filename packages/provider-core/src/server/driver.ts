@@ -8,6 +8,7 @@ import type * as Effect from "effect/Effect";
 import type * as Scope from "effect/Scope";
 
 import type { ManagedServerProvider } from "./managedProvider.ts";
+import type { ProviderAdapterV2 } from "./ProviderAdapter.ts";
 
 /**
  * What a driver's check finds, as T3 Code's `ProviderProbeResult` at 2577baf.
@@ -34,14 +35,15 @@ export interface ProviderDriverCreateInput {
 
 /**
  * One provider instance, built by its driver from its settings. Changing the
- * settings builds a new one. The orchestration adapter joins it with the
- * chat tickets.
+ * settings builds a new one, with a new adapter. An instance without an
+ * orchestration adapter cannot run threads: Codex's arrives with #22.
  */
 export interface ProviderInstance {
   readonly instanceId: ProviderInstanceId;
   readonly driverKind: ProviderDriverKind;
   readonly displayName: string;
   readonly snapshot: ManagedServerProvider;
+  readonly orchestrationAdapter?: ProviderAdapterV2;
 }
 
 /**
