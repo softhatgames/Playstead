@@ -169,6 +169,13 @@ const make = Effect.gen(function* () {
         return yield* fail(`Provider instance ${thread.providerInstanceId} cannot run threads.`);
       }
       const runtimePolicy = resolveRuntimePolicy(thread, project.value.workspaceRoot);
+      // A provider thread that has had turns continues its native
+      // conversation, as T3 Code resumes one with a persisted turn.
+      const earlierTurns = projection.providerTurns.filter(
+        (turn) => turn.providerThreadId === providerThread.id,
+      ).length;
+      const initialNativeThreadId =
+        earlierTurns > 0 ? providerThread.nativeThreadRef?.nativeId : undefined;
 
       const opened = yield* sessions
         .open({
@@ -179,6 +186,7 @@ const make = Effect.gen(function* () {
           ),
           modelSelection: run.modelSelection,
           runtimePolicy,
+          ...(initialNativeThreadId === undefined ? {} : { initialNativeThreadId }),
         })
         .pipe(Effect.result);
       if (opened._tag === "Failure") return yield* fail(opened.failure.message);

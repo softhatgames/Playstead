@@ -25,8 +25,9 @@ interface LiveSession {
  * trimmed to open and reuse). A thread's next turn reuses its live session;
  * a session whose provider process has gone, or that an adapter opened
  * before it was replaced because **Binary path** changed, is closed and
- * opened again. Sessions close with
- * the server. Resuming a provider's own session after a restart is #26's.
+ * opened again. Sessions close with the server; a session opened for a
+ * thread that has had turns, after a restart or a lost process, continues
+ * the provider's own conversation (`initialNativeThreadId`).
  */
 export class ProviderSessionManagerV2 extends Context.Service<
   ProviderSessionManagerV2,
@@ -37,6 +38,8 @@ export class ProviderSessionManagerV2 extends Context.Service<
       readonly providerSessionId: ProviderSessionId;
       readonly modelSelection: ModelSelection;
       readonly runtimePolicy: ProviderAdapterV2RuntimePolicy;
+      /** Passed to the adapter when a session is opened. */
+      readonly initialNativeThreadId?: string;
     }) => Effect.Effect<
       { readonly session: ProviderAdapterV2SessionRuntime; readonly opened: boolean },
       ProviderAdapterV2Error
@@ -75,6 +78,9 @@ const make = Effect.gen(function* () {
               providerSessionId: input.providerSessionId,
               modelSelection: input.modelSelection,
               runtimePolicy: input.runtimePolicy,
+              ...(input.initialNativeThreadId === undefined
+                ? {}
+                : { initialNativeThreadId: input.initialNativeThreadId }),
             })
             .pipe(
               Scope.provide(scope),

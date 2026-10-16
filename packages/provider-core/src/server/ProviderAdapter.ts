@@ -46,6 +46,12 @@ export interface ProviderAdapterV2OpenSessionInput {
   readonly providerSessionId: ProviderSessionId;
   readonly modelSelection: ModelSelection;
   readonly runtimePolicy: ProviderAdapterV2RuntimePolicy;
+  /**
+   * The provider's own id for a thread that has had turns before, such as
+   * Claude's session id. The session continues that conversation instead of
+   * starting a new one, as after a restart (T3 Code's `initialNativeThreadId`).
+   */
+  readonly initialNativeThreadId?: string;
 }
 
 export interface ProviderAdapterV2TurnInput {

@@ -1,7 +1,3 @@
-// @effect-diagnostics nodeBuiltinImport:off -- The test listener is a plain Node HTTP server.
-import * as NodeHttp from "node:http";
-
-import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -10,11 +6,12 @@ import * as Queue from "effect/Queue";
 import * as References from "effect/References";
 import * as Schedule from "effect/Schedule";
 import * as HttpServer from "effect/http/HttpServer";
+import * as NetAddress from "effect/net/NetAddress";
 
 import * as HostProcess from "@playstead/shared/hostProcess";
 
 import * as ServerConfig from "../config.ts";
-import { layerServer } from "../server.ts";
+import { layerHttpServer, layerServer } from "../server.ts";
 import type { StartupOptions } from "../serverRuntimeStartup.ts";
 
 /**
@@ -59,6 +56,8 @@ export const makeTestServerConfig = Effect.fn("makeTestServerConfig")(function* 
 export interface TestServerOptions extends StartupOptions {
   readonly devUrl?: URL;
   readonly desktopBootstrapToken?: string;
+  /** An existing home, for a server started again over another one's state. */
+  readonly config?: ServerConfig.ServerConfig["Service"];
   /**
    * The environment providers are found and started with. By default PATH is
    * empty, so no test reaches a provider installed on the machine.
@@ -68,6 +67,8 @@ export interface TestServerOptions extends StartupOptions {
 
 export interface TestServer {
   readonly baseUrl: string;
+  /** The address the server's listener is bound to. */
+  readonly listeningOn: string;
   readonly config: ServerConfig.ServerConfig["Service"];
   /** Every message the server logs, at debug level and above, with its annotations. */
   readonly logs: Queue.Dequeue<string>;
@@ -80,7 +81,7 @@ export interface TestServer {
 export const startTestServer = Effect.fn("startTestServer")(function* (
   options: TestServerOptions = {},
 ) {
-  const config = yield* makeTestServerConfig(options);
+  const config = options.config ?? (yield* makeTestServerConfig(options));
   const logs = yield* Queue.unbounded<string>();
   const captureLogs = Logger.make(({ message, fiber }) => {
     const text = Array.isArray(message) ? message.map(String).join(" ") : String(message);
@@ -92,9 +93,7 @@ export const startTestServer = Effect.fn("startTestServer")(function* (
 
   const context = yield* Layer.build(
     layerServer(options).pipe(
-      Layer.provideMerge(
-        NodeHttpServer.layer(NodeHttp.createServer, { host: "127.0.0.1", port: 0 }),
-      ),
+      Layer.provideMerge(layerHttpServer(0)),
       Layer.provide(ServerConfig.layer(config)),
       Layer.provide(
         Layer.succeed(HostProcess.Environment, options.providerEnvironment ?? { PATH: "" }),
@@ -108,6 +107,7 @@ export const startTestServer = Effect.fn("startTestServer")(function* (
   if (!("port" in address)) return yield* Effect.die("The test server has no TCP port.");
   return {
     baseUrl: `http://127.0.0.1:${address.port}`,
+    listeningOn: NetAddress.formatIp(address.address),
     config,
     logs,
   } satisfies TestServer;

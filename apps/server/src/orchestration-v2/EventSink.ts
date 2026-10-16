@@ -76,6 +76,8 @@ export interface EventSinkV2Shape {
     readonly acceptedAt: DateTime.Utc;
     readonly events: ReadonlyArray<NewDomainEvent>;
     readonly effects: ReadonlyArray<EffectOutbox.PendingEffect>;
+    /** Cancels the thread's process-bound effects in the same transaction. */
+    readonly cancelUnsettledEffects?: { readonly reason: string };
   }) => Effect.Effect<
     { readonly receipt: CommandReceiptStore.CommandReceiptV2; readonly committed: boolean },
     EventSinkWriteError
@@ -266,6 +268,13 @@ const make = Effect.gen(function* () {
           effects: input.effects,
           now: DateTime.formatIso(input.acceptedAt),
         });
+        if (input.cancelUnsettledEffects !== undefined) {
+          yield* outbox.cancelUnsettled({
+            threadId: input.threadId,
+            reason: input.cancelUnsettledEffects.reason,
+            now: DateTime.formatIso(input.acceptedAt),
+          });
+        }
         const receipt = {
           ...reserved,
           resultSequence: events.at(-1)?.sequence ?? (yield* eventStore.latestApplicationSequence),

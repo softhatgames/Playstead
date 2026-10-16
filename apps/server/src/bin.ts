@@ -1,19 +1,14 @@
-// @effect-diagnostics nodeBuiltinImport:off -- The listener and port probe are plain Node.
-import * as NodeHttp from "node:http";
+// @effect-diagnostics nodeBuiltinImport:off -- The port probe is plain Node.
 import * as NodeNet from "node:net";
 import * as NodeOS from "node:os";
 
-import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
 import * as ServerConfig from "./config.ts";
-import { layerServer } from "./server.ts";
-
-/** The server listens on this computer only. */
-const HOST = "127.0.0.1";
+import { HOST, layerHttpServer, layerServer } from "./server.ts";
 
 const canListen = (port: number) =>
   Effect.callback<boolean>((resume) => {
@@ -41,9 +36,7 @@ const program = Effect.gen(function* () {
   );
   return yield* Layer.launch(
     layerServer().pipe(
-      Layer.provideMerge(
-        NodeHttpServer.layer(NodeHttp.createServer, { host: HOST, port: config.port }),
-      ),
+      Layer.provideMerge(layerHttpServer(config.port)),
       Layer.provide(ServerConfig.layer(config)),
     ),
   );

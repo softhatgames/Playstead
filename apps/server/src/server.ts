@@ -1,3 +1,7 @@
+// @effect-diagnostics nodeBuiltinImport:off -- The listener is a plain Node HTTP server.
+import * as NodeHttp from "node:http";
+
+import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import { EnvironmentHttpApi } from "@playstead/contracts/environmentHttp";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -11,13 +15,14 @@ import * as ServerSecretStore from "./auth/ServerSecretStore.ts";
 import * as ServerConfig from "./config.ts";
 import * as ServerEnvironment from "./environment/ServerEnvironment.ts";
 import * as ServerHttp from "./http.ts";
-import * as EffectWorker from "./orchestration-v2/EffectWorker.ts";
 import * as ProviderAdapterRegistry from "./orchestration-v2/ProviderAdapterRegistry.ts";
+import * as ProviderRuntimeRecovery from "./orchestration-v2/ProviderRuntimeRecoveryService.ts";
 import * as OrchestrationRuntime from "./orchestration-v2/runtimeLayer.ts";
 import * as SqlitePersistence from "./persistence/Sqlite.ts";
 import * as ProjectService from "./project/ProjectService.ts";
 import * as ProviderRegistry from "./provider/ProviderRegistry.ts";
 import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
+import * as ServerOwnership from "./serverOwnership.ts";
 import * as ServerSettings from "./serverSettings.ts";
 import * as ServerRuntimeStartup from "./serverRuntimeStartup.ts";
 import * as WorkspacePaths from "./workspace/WorkspacePaths.ts";
@@ -75,27 +80,10 @@ const layerStartupPairingLink = Layer.effectDiscard(
   }),
 );
 
-/**
- * The effect worker runs for as long as the server does, as T3 Code's
- * startup forks `EffectWorker.runDaemon`. Commands reach the server only
- * after startup, so nothing is enqueued before it runs.
- */
-const layerEffectWorkerDaemon = Layer.effectDiscard(
-  Effect.gen(function* () {
-    const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
-    yield* worker.runDaemon.pipe(
-      Effect.catchCause((cause) =>
-        Effect.logError("The orchestration effect worker stopped.").pipe(
-          Effect.annotateLogs({ cause: String(cause) }),
-        ),
-      ),
-      Effect.forkScoped,
-    );
-  }),
-);
-
+// Startup runs recovery and then the effect worker (`serverRuntimeStartup.ts`).
 const layerOrchestration = Layer.mergeAll(
-  layerEffectWorkerDaemon.pipe(Layer.provideMerge(OrchestrationRuntime.layerCore)),
+  OrchestrationRuntime.layerCore,
+  ProviderRuntimeRecovery.layer,
   ProjectService.layer.pipe(Layer.provide(WorkspacePaths.layer)),
 ).pipe(
   Layer.provide(ProviderAdapterRegistry.layerFromProviderRegistry),
@@ -111,7 +99,21 @@ const layerRuntimeServices = Layer.mergeAll(
   Layer.provideMerge(ServerEnvironment.layer),
   Layer.provideMerge(ServerSecretStore.layer),
   Layer.provideMerge(SqlitePersistence.layerConfig),
+  // Before anything opens the database: one server per Playstead home.
+  Layer.provideMerge(ServerOwnership.layer),
 );
+
+/** The server listens on this computer only: nothing on another machine can reach it. */
+export const HOST = "127.0.0.1";
+
+/**
+ * The HTTP listener on `127.0.0.1` (T3 Code's `layerHttpServer` in
+ * `apps/server/src/server.ts` at 2577baf). Effect's server would wait 20 s
+ * for open sockets as it stops; like T3 Code's, it waits for none, since
+ * each WebSocket's own finalizer closes it.
+ */
+export const layerHttpServer = (port: number) =>
+  NodeHttpServer.layer(NodeHttp.createServer, { host: HOST, port, gracefulShutdownTimeout: 0 });
 
 /**
  * Everything but the HTTP listener and the platform: the binary listens on

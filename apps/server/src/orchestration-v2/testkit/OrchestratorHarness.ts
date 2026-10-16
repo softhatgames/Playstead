@@ -17,6 +17,7 @@ import * as EffectWorker from "../EffectWorker.ts";
 import * as EventStore from "../EventStore.ts";
 import * as Orchestrator from "../Orchestrator.ts";
 import * as ProviderAdapterRegistry from "../ProviderAdapterRegistry.ts";
+import * as ProviderRuntimeRecoveryService from "../ProviderRuntimeRecoveryService.ts";
 import * as OrchestrationRuntime from "../runtimeLayer.ts";
 
 /**
@@ -27,7 +28,8 @@ import * as OrchestrationRuntime from "../runtimeLayer.ts";
  * are real, in a temporary Playstead home; only each adapter's seam to its
  * provider is given (Claude's `query()` runner, Codex's app-server clients):
  * a replay in tests, the recording wrapper in the recorders. A provider
- * given no seam has no adapter, so it cannot run threads.
+ * given no seam has no adapter, so it cannot run threads. A restart is a
+ * second harness over the first one's `config`.
  */
 export const makeOrchestrationHarness = Effect.fn("makeOrchestrationHarness")(function* (input: {
   readonly claudeRunner?: ClaudeAgentSdkQueryRunner["Service"];
@@ -36,8 +38,15 @@ export const makeOrchestrationHarness = Effect.fn("makeOrchestrationHarness")(fu
   readonly claudeBinaryPath?: string;
   readonly codexBinaryPath?: string;
   readonly environment?: ProcessEnvironment;
+  /**
+   * An existing Playstead home, to build the services again over its SQLite
+   * file as a restarted server would. By default a new temporary home.
+   */
+  readonly config?: ServerConfig.ServerConfig["Service"];
+  /** Runs startup recovery before anything is dispatched, as the server's startup does. */
+  readonly recoverOnStartup?: boolean;
 }) {
-  const config = yield* makeTestServerConfig();
+  const config = input.config ?? (yield* makeTestServerConfig());
   const platform = yield* HostProcess.Platform;
   const environment = input.environment ?? {};
   const claude =
@@ -71,7 +80,11 @@ export const makeOrchestrationHarness = Effect.fn("makeOrchestrationHarness")(fu
     ),
   );
   const context = yield* Layer.build(
-    Layer.mergeAll(OrchestrationRuntime.layerCore, ProjectService.layer).pipe(
+    Layer.mergeAll(
+      OrchestrationRuntime.layerCore,
+      ProjectService.layer,
+      ProviderRuntimeRecoveryService.layer,
+    ).pipe(
       Layer.provide(adapters),
       Layer.provideMerge(OrchestrationRuntime.layer),
       Layer.provide(WorkspacePaths.layer),
@@ -84,7 +97,9 @@ export const makeOrchestrationHarness = Effect.fn("makeOrchestrationHarness")(fu
     worker: EffectWorker.OrchestrationEffectWorkerV2,
     projects: ProjectService.ProjectService,
     eventStore: EventStore.EventStoreV2,
+    recovery: ProviderRuntimeRecoveryService.ProviderRuntimeRecoveryService,
   }).pipe(Effect.provideContext(context));
+  if (input.recoverOnStartup === true) yield* services.recovery.recover;
 
   /**
    * Waits, without sleeping, for the thread's run to end: reads the thread's
