@@ -20,9 +20,10 @@ export const ServerAuthSessionMethod = Schema.Literals([
 ]);
 export type ServerAuthSessionMethod = typeof ServerAuthSessionMethod.Type;
 
-const AuthTokenExchangeGrantType = "urn:ietf:params:oauth:grant-type:token-exchange" as const;
+export const AuthTokenExchangeGrantType =
+  "urn:ietf:params:oauth:grant-type:token-exchange" as const;
 export const AuthAccessTokenType = "urn:ietf:params:oauth:token-type:access_token" as const;
-const AuthEnvironmentBootstrapTokenType =
+export const AuthEnvironmentBootstrapTokenType =
   "urn:playstead:params:oauth:token-type:environment-bootstrap" as const;
 
 /** The query parameter that carries a WebSocket ticket on `/ws`. */

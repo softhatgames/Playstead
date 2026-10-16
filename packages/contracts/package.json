@@ -12,6 +12,10 @@
       "types": "./src/baseSchemas.ts",
       "import": "./src/baseSchemas.ts"
     },
+    "./desktopBootstrap": {
+      "types": "./src/desktopBootstrap.ts",
+      "import": "./src/desktopBootstrap.ts"
+    },
     "./environment": {
       "types": "./src/environment.ts",
       "import": "./src/environment.ts"
@@ -19,6 +23,10 @@
     "./environmentHttp": {
       "types": "./src/environmentHttp.ts",
       "import": "./src/environmentHttp.ts"
+    },
+    "./ipc": {
+      "types": "./src/ipc.ts",
+      "import": "./src/ipc.ts"
     },
     "./rpc": {
       "types": "./src/rpc.ts",

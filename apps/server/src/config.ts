@@ -6,9 +6,11 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 
+import type { DesktopBackendBootstrap } from "@playstead/contracts/desktopBootstrap";
 import { identity } from "@playstead/shared/identity";
 
 import packageJson from "../package.json" with { type: "json" };
+import { readBootstrapEnvelope } from "./bootstrap.ts";
 
 /** Where a server started without a port listens, when that port is free. */
 const DEFAULT_PORT = 4773;
@@ -22,6 +24,8 @@ const ServerEnvironmentVariables = {
   home: identity.home.variable,
   port: variable("PORT"),
   devUrl: variable("DEV_URL"),
+  /** The file descriptor the desktop app writes its settings to. */
+  bootstrapFd: variable("BOOTSTRAP_FD"),
 } as const;
 
 export interface ServerDerivedPaths {
@@ -103,8 +107,8 @@ const optionalString = (name: string) =>
   );
 
 /**
- * The home is `PLAYSTEAD_HOME`, or `~/.playstead`. The development runner sets
- * the variable to a worktree's own `.playstead`.
+ * The home is `PLAYSTEAD_HOME`, the desktop app's, or `~/.playstead`. The
+ * development runner sets the variable to a worktree's own `.playstead`.
  */
 const resolveBaseDir = Effect.fn("resolveBaseDir")(function* (
   configured: Option.Option<string>,
@@ -121,11 +125,24 @@ export const resolveServerConfig = Effect.fn("resolveServerConfig")(function* (i
   readonly homeDirectory: string;
   readonly findPort: (preferred: number) => Effect.Effect<number>;
 }) {
-  const configuredHome = yield* optionalString(ServerEnvironmentVariables.home);
-  const configuredPort = yield* Config.Port(ServerEnvironmentVariables.port).pipe(Config.option);
-  const devUrl = yield* optionalString(ServerEnvironmentVariables.devUrl).pipe(
-    Config.map(Option.map((value) => new URL(value))),
+  // As in T3 Code's `apps/server/src/cli/config.ts`, a variable wins over the
+  // desktop app's settings.
+  const bootstrapFd = yield* Config.Int(ServerEnvironmentVariables.bootstrapFd).pipe(Config.option);
+  const bootstrap = Option.isSome(bootstrapFd)
+    ? yield* readBootstrapEnvelope(bootstrapFd.value)
+    : Option.none();
+  const fromBootstrap = <A>(read: (envelope: DesktopBackendBootstrap) => A | undefined) =>
+    Option.flatMap(bootstrap, (envelope) => Option.fromUndefinedOr(read(envelope)));
+  const configuredHome = Option.orElse(yield* optionalString(ServerEnvironmentVariables.home), () =>
+    fromBootstrap((envelope) => envelope.playsteadHome),
   );
+  const configuredPort = Option.orElse(
+    yield* Config.Port(ServerEnvironmentVariables.port).pipe(Config.option),
+    () => fromBootstrap((envelope) => envelope.port),
+  );
+  const devUrl = Option.orElse(yield* optionalString(ServerEnvironmentVariables.devUrl), () =>
+    fromBootstrap((envelope) => envelope.devUrl),
+  ).pipe(Option.map((value) => new URL(value)));
   const baseDir = yield* resolveBaseDir(configuredHome, input.homeDirectory);
   const paths = yield* deriveServerPaths(baseDir, Option.getOrUndefined(devUrl));
   const port = Option.isSome(configuredPort)
@@ -138,7 +155,9 @@ export const resolveServerConfig = Effect.fn("resolveServerConfig")(function* (i
     port,
     devUrl: Option.getOrUndefined(devUrl),
     staticDir: Option.isSome(devUrl) ? undefined : yield* resolveStaticDir(),
-    desktopBootstrapToken: undefined,
+    desktopBootstrapToken: Option.getOrUndefined(
+      fromBootstrap((envelope) => envelope.desktopBootstrapToken),
+    ),
   });
 });
 

@@ -2,6 +2,7 @@ import { createFileRoute } from "@tanstack/react-router";
 
 import { APP_DISPLAY_NAME } from "../branding.ts";
 import { EnvironmentStatus } from "../components/EnvironmentStatus.tsx";
+import { isElectron } from "../env.ts";
 import { fetchSessionState } from "../environments/primary/auth.ts";
 
 function HomeView() {
@@ -21,6 +22,7 @@ function HomeView() {
 }
 
 export const Route = createFileRoute("/")({
-  loader: () => fetchSessionState(),
+  // The desktop app signs its window in itself.
+  loader: () => (isElectron ? { authenticated: true } : fetchSessionState()),
   component: HomeView,
 });

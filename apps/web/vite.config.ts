@@ -24,6 +24,9 @@ export default defineConfig({
     host: "localhost",
     port: webPort,
     strictPort: true,
+    // The desktop window's page is at `playstead-dev://app/`, which Vite's
+    // client cannot open a socket to; it reaches Vite directly instead.
+    hmr: { protocol: "ws", host: "localhost", clientPort: webPort },
     // In development the interface talks to the server through this proxy,
     // on the page's own origin. The server's catch-all answers the same list
     // with 404, so the two cannot drift.

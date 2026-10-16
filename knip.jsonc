@@ -15,9 +15,19 @@
       // Run by the development runner and, later, by the desktop app.
       "entry": ["src/bin.ts!"],
     },
+    "apps/desktop": {
+      // Electron's main process and the window's preload, bundled by vp pack;
+      // the launcher scripts run from the dev task and the smoke:desktop script.
+      "entry": [
+        "src/main.ts!",
+        "src/preload.ts!",
+        "scripts/dev-electron.ts",
+        "scripts/smoke-test.ts",
+      ],
+    },
     "scripts": {
-      // Run directly by the root sync:repos script.
-      "entry": ["sync-reference-repos.ts", "dev-runner.ts"],
+      // Run directly by the root sync:repos, dev* and icons:* scripts.
+      "entry": ["sync-reference-repos.ts", "dev-runner.ts", "export-icons.ts"],
     },
     "oxlint-plugin-playstead": {
       // Loaded by oxlint through jsPlugins in the root vite.config.ts.
