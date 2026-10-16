@@ -196,7 +196,13 @@ const make = Effect.gen(function* () {
         run: { ...run, status: "running", startedAt: now },
         attempt: { ...attempt, status: "running", providerTurnId, startedAt: now },
         rootNode: { ...rootNode, status: "running", providerTurnId, startedAt: now },
-        providerSession: { ...session.providerSession, status: "running", updatedAt: now },
+        // The adapter runs the turn with the run's model, changing the session's if needed.
+        providerSession: {
+          ...session.providerSession,
+          model: run.modelSelection.model,
+          status: "running",
+          updatedAt: now,
+        },
         providerThread: {
           ...readyThread.success,
           providerSessionId: session.providerSession.id,

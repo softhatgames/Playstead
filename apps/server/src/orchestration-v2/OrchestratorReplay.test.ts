@@ -5,6 +5,7 @@ import { OrchestrationDispatchCommandError } from "@playstead/contracts/orchestr
 import {
   decodeProviderReplayNdjson,
   materializeReplayWorkspace,
+  type ProviderReplayEntry,
 } from "@playstead/provider-testing/replayTranscript";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -23,37 +24,42 @@ import {
  * Seam 1 over Playstead's recording of the signed-in Claude: the real
  * orchestrator, event sink, effect worker, Claude adapter, projections and
  * SQLite, with only `query()`, the clock and randomness stood in for.
+ * `followedBy` are frames the adapter must send after the recorded turn.
  */
-const replayFileCreate = Effect.gen(function* () {
-  const fs = yield* FileSystem.FileSystem;
-  const path = yield* Path.Path;
-  const recordingPath = path.join(
-    path.dirname(yield* path.fromFileUrl(new URL(import.meta.url))),
-    "testkit",
-    "fixtures",
-    "file_create.claude.ndjson",
-  );
-  const recorded = yield* decodeProviderReplayNdjson(yield* fs.readFileString(recordingPath));
-  // The workspace is the harness's own folder, known only once it exists.
-  let replay: Effect.Success<ReturnType<typeof makeClaudeReplay>> | undefined;
-  const harness = yield* makeOrchestrationHarness({
-    claudeRunner: {
-      allocateSessionId: Effect.suspend(() => replay!.runner.allocateSessionId),
-      open: (input) => Effect.suspend(() => replay!.runner.open(input)),
-    },
+const replayFileCreate = (followedBy: ReadonlyArray<ProviderReplayEntry> = []) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const recordingPath = path.join(
+      path.dirname(yield* path.fromFileUrl(new URL(import.meta.url))),
+      "testkit",
+      "fixtures",
+      "file_create.claude.ndjson",
+    );
+    const recorded = yield* decodeProviderReplayNdjson(yield* fs.readFileString(recordingPath));
+    // The workspace is the harness's own folder, known only once it exists.
+    let replay: Effect.Success<ReturnType<typeof makeClaudeReplay>> | undefined;
+    const harness = yield* makeOrchestrationHarness({
+      claudeRunner: {
+        allocateSessionId: Effect.suspend(() => replay!.runner.allocateSessionId),
+        open: (input) => Effect.suspend(() => replay!.runner.open(input)),
+      },
+    });
+    replay = yield* makeClaudeReplay(
+      materializeReplayWorkspace(
+        { ...recorded, entries: [...recorded.entries, ...followedBy] },
+        path.join(harness.home, "empty-game"),
+      ),
+    );
+    return { harness, replay: replay! };
   });
-  replay = yield* makeClaudeReplay(
-    materializeReplayWorkspace(recorded, path.join(harness.home, "empty-game")),
-  );
-  return { harness, replay: replay! };
-});
 
 describe("Chat with Claude in a thread", () => {
   it.layer(NodeServices.layer)((it) => {
     it.effect("a file-creating turn completes with the file's name and content", () =>
       Effect.gen(function* () {
         const path = yield* Path.Path;
-        const { harness, replay } = yield* replayFileCreate;
+        const { harness, replay } = yield* replayFileCreate();
 
         const { workspace, run } = yield* runFileCreateScenario(harness);
 
@@ -91,7 +97,7 @@ describe("Chat with Claude in a thread", () => {
 
     it.effect("refuses a message while the thread's run is active", () =>
       Effect.gen(function* () {
-        const { harness, replay } = yield* replayFileCreate;
+        const { harness, replay } = yield* replayFileCreate();
         const sendAgain = {
           type: "message.dispatch",
           commandId: CommandId.make("command:file-create:too-soon"),
@@ -123,6 +129,96 @@ describe("Chat with Claude in a thread", () => {
         );
         yield* replay.assertComplete;
         assert.strictEqual(run.status, "completed");
+      }).pipe(Effect.scoped),
+    );
+
+    it.effect("after a model change, the next turn asks Claude for the new model", () =>
+      Effect.gen(function* () {
+        const followUp = "Now say hello in one word.";
+        // The recording holds one turn; the frames after it are what the
+        // adapter must send for the next. Claude's answer is not recorded,
+        // so the replay ends there.
+        const { harness, replay } = yield* replayFileCreate([
+          {
+            type: "expect_outbound",
+            frame: { type: "query.set_model", model: "claude-sonnet-5-5" },
+          },
+          {
+            type: "expect_outbound",
+            frame: {
+              type: "prompt.offer",
+              message: {
+                type: "user",
+                message: { role: "user", content: followUp },
+                parent_tool_use_id: null,
+              },
+            },
+          },
+        ]);
+        yield* runFileCreateScenario(harness);
+
+        yield* harness.orchestrator.dispatch({
+          type: "thread.model-selection.set",
+          commandId: CommandId.make("command:file-create:model"),
+          threadId: FILE_CREATE_IDS.threadId,
+          modelSelection: { instanceId: "claudeAgent", model: "claude-sonnet-5-5" },
+        });
+        const sent = yield* harness.orchestrator.dispatch({
+          type: "message.dispatch",
+          commandId: CommandId.make("command:file-create:follow-up"),
+          threadId: FILE_CREATE_IDS.threadId,
+          messageId: MessageId.make("message:file-create:2"),
+          text: followUp,
+        });
+        yield* harness.worker.drain;
+        yield* harness.awaitRunEnded(FILE_CREATE_IDS.threadId, sent.sequence);
+
+        yield* replay.assertComplete;
+        const projection = Option.getOrThrow(
+          yield* harness.orchestrator.getThreadProjection(FILE_CREATE_IDS.threadId),
+        );
+        assert.deepStrictEqual(projection.thread.modelSelection, {
+          instanceId: "claudeAgent",
+          model: "claude-sonnet-5-5",
+        });
+        assert.deepStrictEqual(
+          projection.runs.map((run) => run.modelSelection.model),
+          ["claude-haiku-5-5", "claude-sonnet-5-5"],
+        );
+        assert.deepStrictEqual(
+          projection.providerSessions.map((session) => session.model),
+          ["claude-sonnet-5-5"],
+        );
+      }).pipe(Effect.scoped),
+    );
+
+    it.effect("refuses a model change that names another provider instance", () =>
+      Effect.gen(function* () {
+        const { harness, replay } = yield* replayFileCreate();
+        yield* runFileCreateScenario(harness);
+
+        const refused = yield* Effect.flip(
+          harness.orchestrator.dispatch({
+            type: "thread.model-selection.set",
+            commandId: CommandId.make("command:file-create:switch-provider"),
+            threadId: FILE_CREATE_IDS.threadId,
+            modelSelection: { instanceId: "codex", model: "gpt-5.5" },
+          }),
+        );
+
+        assert.instanceOf(refused, OrchestrationDispatchCommandError);
+        assert.strictEqual(
+          refused.message,
+          "Thread thread:file-create runs on claudeAgent. Choose one of its models; switching provider is not available yet.",
+        );
+        const projection = Option.getOrThrow(
+          yield* harness.orchestrator.getThreadProjection(FILE_CREATE_IDS.threadId),
+        );
+        assert.deepStrictEqual(projection.thread.modelSelection, {
+          instanceId: "claudeAgent",
+          model: "claude-haiku-5-5",
+        });
+        yield* replay.assertComplete;
       }).pipe(Effect.scoped),
     );
   });

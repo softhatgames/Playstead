@@ -1,5 +1,5 @@
 import { CommandId, MessageId, type ThreadId } from "@playstead/contracts/baseSchemas";
-import { ACTIVE_RUN_STATUSES } from "@playstead/contracts/orchestrationV2";
+import { ACTIVE_RUN_STATUSES, type ModelSelection } from "@playstead/contracts/orchestrationV2";
 import { useNavigate } from "@tanstack/react-router";
 import { useMemo } from "react";
 
@@ -31,6 +31,17 @@ const sendCommands = async (target: SendTarget, text: string, threadCommandId: C
     await requestPrimary((client) => client["orchestration.dispatchCommand"](command));
   }
 };
+
+/** A started thread's model, for its next turn (T3 Code's `thread.model-selection.set`). */
+const setThreadModelSelection = (threadId: ThreadId, modelSelection: ModelSelection) =>
+  requestPrimary((client) =>
+    client["orchestration.dispatchCommand"]({
+      type: "thread.model-selection.set",
+      commandId: CommandId.make(`command:${newId()}`),
+      threadId,
+      modelSelection,
+    }),
+  );
 
 /**
  * The thread view: the chat column only, after T3 Code's `ChatView.tsx` at
@@ -118,11 +129,11 @@ export function ChatView(
       <ChatComposer
         entries={entries}
         selection={selection}
-        {...(props.kind === "draft"
-          ? {
-              onSelectModel: (next) => setDraftModelSelection(props.draft.draftId, next),
-            }
-          : {})}
+        onSelectModel={
+          props.kind === "draft"
+            ? (next) => setDraftModelSelection(props.draft.draftId, next)
+            : (next) => setThreadModelSelection(props.threadId, next).then(() => undefined)
+        }
         working={working}
         onSend={onSend}
       />
