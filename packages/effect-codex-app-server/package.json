@@ -2,5 +2,38 @@
   "name": "@playstead/effect-codex-app-server",
   "private": true,
   "description": "The protocol client for Codex's app-server: JSON-RPC over stdio, with a schema generated from Codex's own.",
-  "type": "module"
+  "type": "module",
+  "exports": {
+    "./client": {
+      "types": "./src/client.ts",
+      "import": "./src/client.ts"
+    },
+    "./schema": {
+      "types": "./src/schema.ts",
+      "import": "./src/schema.ts"
+    },
+    "./errors": {
+      "types": "./src/errors.ts",
+      "import": "./src/errors.ts"
+    },
+    "./replay": {
+      "types": "./src/replay.ts",
+      "import": "./src/replay.ts"
+    }
+  },
+  "scripts": {
+    "typecheck": "tsc-rs --noEmit",
+    "test": "vp test run --config ../../vite.config.ts --dir .",
+    "generate": "node scripts/generate.ts"
+  },
+  "dependencies": {
+    "effect": "catalog:"
+  },
+  "devDependencies": {
+    "@effect/openapi-generator": "catalog:",
+    "@effect/platform-node": "catalog:",
+    "@effect/vitest": "catalog:",
+    "@types/node": "catalog:",
+    "vite-plus": "catalog:"
+  }
 }

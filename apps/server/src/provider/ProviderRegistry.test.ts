@@ -229,6 +229,78 @@ describe("ProviderRegistry", () => {
       }).pipe(Effect.scoped),
     );
 
+    it.effect("reads a signed-in Codex's account and models over its app-server", () =>
+      Effect.gen(function* () {
+        const bin = yield* makeTempDirectory("playstead-bin-");
+        yield* writeFakeCodex({
+          directory: bin,
+          version: "0.163.0",
+          account: { type: "chatgpt", email: "person@example.com", planType: "plus" },
+          // More than one page: the fake answers two models at a time.
+          models: [
+            { model: "gpt-6.1-sol", displayName: "GPT-6.1-Sol", isDefault: true },
+            { model: "gpt-6-astra", displayName: "GPT-6-Astra" },
+            { model: "gpt-6-luna", displayName: "GPT-6-Luna" },
+          ],
+        });
+        const { registry } = yield* startRegistry([bin]);
+
+        const providers = yield* registry.refresh("codex");
+
+        assert.deepInclude(providerById(providers, "codex"), {
+          installed: true,
+          version: "0.163.0",
+          status: "ready",
+          auth: {
+            status: "authenticated",
+            type: "chatgpt",
+            label: "ChatGPT Plus Subscription",
+            email: "person@example.com",
+          },
+          models: [
+            { slug: "gpt-6.1-sol", name: "GPT-6.1-Sol", isDefault: true },
+            { slug: "gpt-6-astra", name: "GPT-6-Astra" },
+            { slug: "gpt-6-luna", name: "GPT-6-Luna" },
+          ],
+        });
+        assert.notProperty(providerById(providers, "codex"), "message");
+      }).pipe(Effect.scoped),
+    );
+
+    it.effect("labels a Codex signed in with an API key, without an e-mail", () =>
+      Effect.gen(function* () {
+        const bin = yield* makeTempDirectory("playstead-bin-");
+        yield* writeFakeCodex({ directory: bin, version: "0.163.0", account: { type: "apiKey" } });
+        const { registry } = yield* startRegistry([bin]);
+
+        const providers = yield* registry.refresh("codex");
+
+        assert.deepInclude(providerById(providers, "codex"), {
+          status: "ready",
+          auth: { status: "authenticated", type: "apiKey", label: "OpenAI API Key" },
+        });
+      }).pipe(Effect.scoped),
+    );
+
+    it.effect("says a signed-out Codex needs `codex login`, with no models", () =>
+      Effect.gen(function* () {
+        const bin = yield* makeTempDirectory("playstead-bin-");
+        yield* writeFakeCodex({ directory: bin, version: "0.163.0", account: null });
+        const { registry } = yield* startRegistry([bin]);
+
+        const providers = yield* registry.refresh("codex");
+
+        assert.deepInclude(providerById(providers, "codex"), {
+          installed: true,
+          version: "0.163.0",
+          status: "error",
+          auth: { status: "unauthenticated" },
+          message: "Codex CLI is not authenticated. Run `codex login` and try again.",
+          models: [],
+        });
+      }).pipe(Effect.scoped),
+    );
+
     it.effect("reports a signed-in Claude with its plan and the models its version runs", () =>
       Effect.gen(function* () {
         const bin = yield* makeTempDirectory("playstead-bin-");

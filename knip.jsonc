@@ -37,5 +37,11 @@
       // These workspace packages are private to this monorepo.
       "includeEntryExports": true,
     },
+    "packages/effect-codex-app-server": {
+      "includeEntryExports": true,
+      // Run by its generate script. The generated protocol is kept whole, as T3 Code keeps it.
+      "entry": ["scripts/generate.ts"],
+      "ignoreIssues": { "src/_generated/**": ["exports", "types"] },
+    },
   },
 }

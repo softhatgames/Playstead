@@ -23,13 +23,18 @@ export interface ProviderInstanceCardProps {
 
 /**
  * One provider instance, after T3 Code's `ProviderInstanceCard.tsx` at
- * 2577baf: the status dot, the summary (which says whether the provider is
- * signed in), the version, the compatibility warning, **Binary path** and a
- * refresh.
+ * 2577baf: the status dot, the summary (with the account's e-mail when
+ * signed in), the version, the compatibility warning, the models, **Binary
+ * path** and a refresh. T3 Code hides the e-mail behind a reveal toggle and
+ * lets models be hidden, ordered and added; those are absent.
  */
 export function ProviderInstanceCard(props: ProviderInstanceCardProps) {
   const { provider } = props;
   const summary = getProviderSummary(provider);
+  const authEmail =
+    provider?.auth.status === "authenticated" ? provider.auth.email?.trim() : undefined;
+  const authLabel = provider?.auth.label ?? provider?.auth.type;
+  const models = provider?.models ?? [];
   const version = getProviderVersionLabel(provider?.version);
   const warning = provider ? getCompatibilityWarning(provider) : null;
   const fieldId = useId();
@@ -64,7 +69,16 @@ export function ProviderInstanceCard(props: ProviderInstanceCardProps) {
               </span>
             ) : null}
           </h2>
-          <p className="text-sm">{summary.headline}</p>
+          <p className="text-sm">
+            {authEmail ? (
+              <>
+                Authenticated as <span className="font-medium">{authEmail}</span>
+                {authLabel ? ` · ${authLabel}` : null}
+              </>
+            ) : (
+              summary.headline
+            )}
+          </p>
           {summary.detail ? (
             <p className="text-sm text-neutral-500 dark:text-neutral-400">{summary.detail}</p>
           ) : null}
@@ -90,6 +104,23 @@ export function ProviderInstanceCard(props: ProviderInstanceCardProps) {
         >
           <p className="font-medium">{warning.title}</p>
           <p>{warning.detail}</p>
+        </div>
+      ) : null}
+
+      {models.length > 0 ? (
+        <div className="flex flex-col gap-1">
+          <h3 className="text-sm font-medium">Models</h3>
+          <ul aria-label={`${props.displayName} models`} className="flex flex-col gap-0.5 text-sm">
+            {models.map((model) => (
+              <li key={model.slug} className="flex items-baseline gap-2">
+                <span>{model.name}</span>
+                <code className="text-xs text-neutral-500 dark:text-neutral-400">{model.slug}</code>
+                {model.isDefault ? (
+                  <span className="text-xs text-neutral-500 dark:text-neutral-400">Default</span>
+                ) : null}
+              </li>
+            ))}
+          </ul>
         </div>
       ) : null}
 

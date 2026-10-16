@@ -32,12 +32,14 @@ const ServerProviderAuthStatus = Schema.Literals(["authenticated", "unauthentica
 /**
  * Whether the provider's CLI is signed in, as T3 Code's `ServerProviderAuth`
  * at 2577baf without its sign-in actions: `type` is the account kind the
- * provider reports and `label` names it for people.
+ * provider reports, `label` names it for people, and `email` is the account's
+ * when the provider gives one.
  */
 export const ServerProviderAuth = Schema.Struct({
   status: ServerProviderAuthStatus,
   type: Schema.optionalKey(TrimmedNonEmptyString),
   label: Schema.optionalKey(TrimmedNonEmptyString),
+  email: Schema.optionalKey(TrimmedNonEmptyString),
 });
 export type ServerProviderAuth = typeof ServerProviderAuth.Type;
 
