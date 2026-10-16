@@ -16,13 +16,13 @@ flowchart LR
   window -- WebSocket RPC --> server
   browser -- WebSocket RPC --> server
   server --> providers["Provider processes"]
-  server --> projects["Project folders and Git"]
+  server --> projects["Project folders"]
   server --> state["SQLite in the Playstead home"]
 ```
 
-The server owns everything that touches the machine: projects and their files, Git, provider processes and the database. Clients show its state and send it commands (`docs/internals/overview.md`).
+The server owns everything that touches the machine: projects and their files, provider processes and the database. Clients show its state and send it commands (`docs/internals/overview.md`).
 
-Inside the server, orchestration, persistence and recovery follow T3 Code's (`docs/orchestration-v2/`). The orchestrator (`apps/server/src/orchestration-v2/Orchestrator.ts`) decides events from commands without I/O. The event sink (`EventSink.ts`) commits the events, projections, command receipt and outbox effects in one transaction. The effect worker (`EffectWorker.ts`) then starts provider turns and captures checkpoints, hidden Git refs kept by `apps/server/src/checkpointing/`. Each provider's protocol stays behind its adapter. Server features are Effect services that thin transports call (`docs/internals/effect-services.md`).
+Inside the server, orchestration, persistence and recovery follow T3 Code's (`docs/orchestration-v2/`). The orchestrator (`apps/server/src/orchestration-v2/Orchestrator.ts`) decides events from commands without I/O. The event sink (`EventSink.ts`) commits the events, projections, command receipt and outbox effects in one transaction. The effect worker (`EffectWorker.ts`) then starts provider turns. In T3 Code it also captures checkpoints, hidden Git refs kept by `apps/server/src/checkpointing/`. Playstead's version control waits for its own slice, which chooses the system, so a project is a plain folder and no checkpoints are captured, as T3 Code captures none in a folder that is not a Git repository (`CheckpointService.ts`). Each provider's protocol stays behind its adapter. Server features are Effect services that thin transports call (`docs/internals/effect-services.md`).
 
 Playstead's database starts at its own first migration in `apps/server/src/persistence/`. T3 Code's migration history and its importer for older databases (`apps/server/src/orchestration-v2/legacy/`) are not carried.
 
@@ -47,7 +47,7 @@ Each workspace sits at the path of the T3 Code workspace it follows, under Plays
 | The lint plugin | Playstead's own lint rules, where T3 Code has `oxlint-plugin-t3code`. |
 | `.repos/effect-smol` | Effect's source, vendored read-only for agents, as in T3 Code. |
 
-Each provider Playstead enables takes its T3 Code place. [First working slice](https://github.com/softhatgames/playstead/issues/8) decides which ones the first slice enables.
+Each provider Playstead enables takes its T3 Code place. The first slice has Codex and Claude, as [First working slice](https://github.com/softhatgames/playstead/issues/8) decided; the other providers are absent until their slice.
 
 ## Left out
 
@@ -71,17 +71,17 @@ An area Playstead leaves out is absent: it has no workspace, contract, RPC metho
 | Product analytics | server `telemetry/` |
 | WSL backend, to be considered later | `apps/desktop/src/wsl/` |
 
-Features inside followed areas are for [First working slice](https://github.com/softhatgames/playstead/issues/8) to decide, such as worktrees, the orchestrator's MCP server, auto-update, signing and publishing the server as a command.
+Features inside followed areas come in slice by slice. [First working slice](https://github.com/softhatgames/playstead/issues/8) lists what the first slice includes and orders the slices that wait, such as worktrees, the orchestrator's MCP server, auto-update, signing and publishing the server as a command. Until its slice, a feature is absent, as a left-out area is.
 
 ### Split modules
 
 Some T3 Code modules serve a followed area and a left-out one. Playstead's module at the same path keeps only the followed part, so a T3 Code change there may apply only in part.
 
-- **Git.** `checkpointing/` and `vcs/` stand alone. `git/GitManager.ts` and `git/GitWorkflowService.ts` mix local Git with pull request actions; `orchestration-v2/CheckpointRollbackService.ts` uses their worktree handling, and `vcs/VcsStatusBroadcaster.ts` reaches source control through them. Playstead keeps local Git. Its `packages/contracts/src/git.ts` has no source control types; T3 Code's imports `sourceControl.ts`, and its status carries `pr` and `sourceControlProvider`.
+- **Git.** Version control waits for its own slice, which chooses the system. If it is Git: `checkpointing/` and `vcs/` stand alone. `git/GitManager.ts` and `git/GitWorkflowService.ts` mix local Git with pull request actions; `orchestration-v2/CheckpointRollbackService.ts` uses their worktree handling, and `vcs/VcsStatusBroadcaster.ts` reaches source control through them. Playstead keeps local Git. Its `packages/contracts/src/git.ts` has no source control types; T3 Code's imports `sourceControl.ts`, and its status carries `pr` and `sourceControlProvider`.
 - **Connections.** `packages/client-runtime/src/connection/` routes local, SSH, Tailscale and relay environments. Playstead keeps the local route.
 - **The desktop bridge.** `packages/contracts/src/ipc.ts` and `apps/desktop/src/preload.ts` carry SSH, Tailscale, WSL, preview and snap-shot methods beside the core ones. Playstead's bridge has the core ones.
 - **Deep links.** `apps/desktop/src/app/DesktopClerk.ts` handles the URL scheme's deep links, such as provider sign-in returns and prompt links, beside Clerk sign-in. Clerk goes with T3 Connect; the deep links stay with the features that use them.
-- **`cloud/`.** It holds T3 Connect beside self-update and the service launcher, which come in only if First working slice takes them.
+- **`cloud/`.** It holds T3 Connect beside self-update and the service launcher. Those two belong to the server as a command, which comes with the first public release.
 
 ## Identity
 
@@ -123,7 +123,7 @@ The interface follows T3 Code's left sidebar, thread view, Settings and Usage, a
 
 Playstead tests as T3 Code does (`docs/orchestration-v2/testing-strategy.md`), as found in [How T3 Code tests, including recorded provider sessions](https://github.com/softhatgames/playstead/issues/4).
 
-- **Few, deep tests.** A test sends commands through the real orchestrator, adapter, event store, projections and checkpoints, and replays only the provider's transport, from a recording of its raw frames. The clock, randomness, processes and the filesystem are the only other stand-ins. Tests run under `vp test` with `@effect/vitest`, and wait by draining the effect worker or awaiting an event.
+- **Few, deep tests.** A test sends commands through the real orchestrator, adapter, event store and projections (and checkpoints, once version control comes), and replays only the provider's transport, from a recording of its raw frames. The clock, randomness, processes and the filesystem are the only other stand-ins. Tests run under `vp test` with `@effect/vitest`, and wait by draining the effect worker or awaiting an event.
 - **Where the pieces live.** `packages/provider-testing` holds transcript reading, replay gates, temporary Git workspaces, fake CLIs and a test provider host. Recorders are in `apps/server/scripts/` and scenarios in `apps/server/src/orchestration-v2/testkit/fixtures/`. A replay driver sits beside what it replaces: Codex's in `packages/effect-codex-app-server/src/replay.ts`, Claude's in `apps/server/src/orchestration-v2/Adapters/ClaudeAdapterV2.testkit.ts`.
 - **Playstead's own recordings.** Each protocol Playstead enables has its own recorder, run against signed-in providers on the founder's machine. T3 Code's recordings carry its identity in their frames, and copying them would break the rule against copying.
 - **Two gaps closed.** A Codex replay fails when part of its recording goes unused; T3 Code defines `CodexAppServerReplayIncompleteError` but never raises it. Every recording's header carries the provider's real version and the capture date.
@@ -145,15 +145,15 @@ Tests pass on macOS and Windows from the start. These rules come from the failur
 - **Versions.** Playstead uses the versions T3 Code pins at the followed commit: Node 24, pnpm 11, Vite+, Electron 44, and TypeScript 7 with `@effect/tsgo` and tsc-rs. It moves when a weekly review adopts T3 Code's change.
 - **A development machine** needs Git and Vite+, which brings Node and pnpm. Electron's binary comes from Electron's own installer, `install-electron` or the first `require("electron")`, which checks the download against checksums in the package and caches it once per machine. T3 Code's `apps/desktop/scripts/ensure-electron-runtime.mjs` extracts it with `python3` on Windows instead. No step needs Python, a compiler or Developer Mode. On Windows, work in a folder whose path starts with an upper-case drive letter, because Vitest can fail every file under `c:\`. Text files are LF everywhere (`.gitattributes`); `.cmd` and `.bat` files need CRLF, as T3 Code's `.gitattributes` gives them.
 - **A clean environment.** The development runner starts its children with only the variables they need, and the launcher removes `ELECTRON_RUN_AS_NODE` before starting Electron, as T3 Code's `scripts/dev-runner.ts` and `apps/desktop/scripts/dev-electron.mjs` do. Agents work on Playstead inside T3 Code, whose shells carry `ELECTRON_RUN_AS_NODE`, `T3CODE_*` and the provider's own variables.
-- **Installers.** `scripts/build-desktop-artifact.ts` makes a DMG on macOS and an NSIS installer on Windows with electron-builder, each on its own platform; electron-builder downloads Electron itself. Without `native/`, the build needs no Rust or Visual Studio Build Tools: T3 Code's `preflightWindowsDesktopBuild` asks for them only to build its resource monitor. Signing and auto-update are for First working slice.
-- **Untested on Windows.** Smart App Control and Defender were off during the Windows run. Smart App Control can block unsigned native files, such as Electron's zip extractor and the oxlint and Rolldown bindings; Windows' own `tar.exe` can extract Electron's zip instead.
+- **Installers** come with the first public release, with signing and auto-update. Until then Playstead runs from source with its development commands. `scripts/build-desktop-artifact.ts` will make a DMG on macOS and an NSIS installer on Windows with electron-builder, each on its own platform; electron-builder downloads Electron itself. Without `native/`, the build needs no Rust or Visual Studio Build Tools: T3 Code's `preflightWindowsDesktopBuild` asks for them only to build its resource monitor.
+- **Untested on Windows.** Smart App Control and Defender were off during the Windows run. Smart App Control can block unsigned native files, such as Electron's zip extractor and the oxlint and Rolldown bindings; Windows' own `tar.exe` can extract Electron's zip instead. Security software is checked with the signed installers at the first public release.
 
 ## Continuous integration
 
 Until the first public release, pull requests get fast checks:
 
 - **Every pull request** runs one required job on GitHub's Linux runner: format, lint, typecheck, the unused-code check and the tests, in about 5 minutes, like T3 Code's CI. When the tests outgrow that, server test files are split across runners by duration, as `apps/server/src/testUtils/weightedShardSequencer.ts` does. Each runner keeps T3 Code's one-file-at-a-time rule for server tests (`apps/server/vite.config.ts`).
-- **Every merge to `main`** runs the same checks, the desktop build and a short boot of the built app on macOS and Windows. They report and block nothing, so a Windows break shows up the same day. T3 Code has such a boot test, `apps/desktop/scripts/smoke-test.mjs`, but no workflow runs it. On Windows, CI caches pnpm's store directly, because setup-vp's cache restores "a Linux-shaped store" there (`.github/workflows/windows-tests.yml`).
+- **Every merge to `main`** runs the same checks, the desktop app's build and a short boot of it on macOS and Windows; until installers come, that is the built Electron app, not an installer. They report and block nothing, so a Windows break shows up the same day. T3 Code has such a boot test, `apps/desktop/scripts/smoke-test.mjs`, but no workflow runs it. On Windows, CI caches pnpm's store directly, because setup-vp's cache restores "a Linux-shaped store" there (`.github/workflows/windows-tests.yml`).
 - **From the first public release,** the macOS and Windows checks run on every pull request and must pass.
 
 ## Keeping this document current
