@@ -14,7 +14,9 @@ const codex = (overrides: Partial<ServerProvider>): ServerProvider => ({
   installed: true,
   version: "0.160.0",
   status: "ready",
+  auth: { status: "unknown" },
   checkedAt: "2026-10-16T12:00:00.000Z",
+  models: [],
   ...overrides,
 });
 
@@ -41,6 +43,38 @@ describe("getProviderSummary", () => {
     assert.strictEqual(
       getProviderSummary(codex({ status: "error", message: "probe failed" })).headline,
       "Unavailable",
+    );
+  });
+
+  it("says a signed-out provider is not authenticated, with the server's advice", () => {
+    assert.deepStrictEqual(
+      getProviderSummary(
+        codex({
+          status: "error",
+          auth: { status: "unauthenticated" },
+          message: "Codex CLI is not authenticated. Run `codex login` and try again.",
+        }),
+      ),
+      {
+        headline: "Not authenticated",
+        detail: "Codex CLI is not authenticated. Run `codex login` and try again.",
+      },
+    );
+  });
+
+  it("says a signed-in provider is authenticated, naming the account's kind", () => {
+    assert.deepStrictEqual(
+      getProviderSummary(
+        codex({
+          auth: {
+            status: "authenticated",
+            type: "chatgpt",
+            label: "ChatGPT Plus Subscription",
+            email: "person@example.com",
+          },
+        }),
+      ),
+      { headline: "Authenticated · ChatGPT Plus Subscription", detail: null },
     );
   });
 

@@ -13,6 +13,7 @@
     "@effect/platform-node": "catalog:",
     "@effect/sql-sqlite-node": "catalog:",
     "@playstead/contracts": "workspace:*",
+    "@playstead/effect-codex-app-server": "workspace:*",
     "@playstead/provider-core": "workspace:*",
     "@playstead/shared": "workspace:*",
     "effect": "catalog:"

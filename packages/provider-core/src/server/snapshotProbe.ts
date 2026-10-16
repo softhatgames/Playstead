@@ -104,8 +104,10 @@ export const buildServerProvider = (input: {
     installed: input.probe.installed,
     version: input.probe.version,
     status: input.probe.status,
+    auth: input.probe.auth ?? { status: "unknown" },
     checkedAt: DateTime.formatIso(now),
     ...(input.probe.message === undefined ? {} : { message: input.probe.message }),
+    models: input.probe.models ?? [],
   }));
 
 /**

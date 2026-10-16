@@ -1,4 +1,7 @@
-// @effect-diagnostics preferSchemaOverJson:off -- One fixed JSON-RPC request line, written once.
+import type { ServerProviderAuth, ServerProviderModel } from "@playstead/contracts/server";
+import * as CodexClient from "@playstead/effect-codex-app-server/client";
+import { CodexAppServerSpawnError } from "@playstead/effect-codex-app-server/errors";
+import type * as CodexSchema from "@playstead/effect-codex-app-server/schema";
 import type { ProviderProbeResult } from "@playstead/provider-core/server/driver";
 import {
   AUTH_PROBE_TIMEOUT_MS,
@@ -9,72 +12,19 @@ import { type ProcessEnvironment, resolveSpawnCommand } from "@playstead/shared/
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import type * as FileSystem from "effect/FileSystem";
-import * as Fiber from "effect/Fiber";
 import * as Option from "effect/Option";
 import * as Result from "effect/Result";
-import * as Schema from "effect/Schema";
-import * as Stream from "effect/Stream";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
 import packageJson from "../../package.json" with { type: "json" };
 
 /**
- * Codex's status, read over `codex app-server` as T3 Code reads it
- * (`apps/server/src/provider/CodexProvider.ts` at 2577baf). Codex has no
- * version probe: the version is in the user agent `initialize` answers with.
- *
- * This ticket needs only `initialize`, so it writes that one JSON-RPC line
- * itself. The Codex app-server client replaces this with its typed client and
- * adds `account/read` and `model/list` for sign-in and models.
+ * Codex's status, read over `codex app-server` through Playstead's Codex
+ * app-server client, as T3 Code reads it
+ * (`apps/server/src/provider/CodexProvider.ts` at 2577baf): the version from
+ * `initialize`'s user agent, sign-in from `account/read`, and the models from
+ * `model/list`. Skills, rate limits and the managed runtime are absent.
  */
-
-class CodexAppServerSpawnError extends Schema.TaggedError<CodexAppServerSpawnError>()(
-  "CodexAppServerSpawnError",
-  { command: Schema.String, detail: Schema.String },
-) {
-  override get message(): string {
-    return `Could not start ${this.command}: ${this.detail}`;
-  }
-}
-
-class CodexAppServerProbeError extends Schema.TaggedError<CodexAppServerProbeError>()(
-  "CodexAppServerProbeError",
-  { detail: Schema.String },
-) {
-  override get message(): string {
-    return this.detail;
-  }
-}
-
-const INITIALIZE_REQUEST_ID = 1;
-
-/** `codexAppServerEnvironment` at 2577baf, naming Playstead as the originator. */
-const codexAppServerEnvironment = (environment: ProcessEnvironment) => ({
-  CODEX_INTERNAL_ORIGINATOR_OVERRIDE: identity.productName.production,
-  ...environment,
-});
-
-const initializeLine = `${JSON.stringify({
-  id: INITIALIZE_REQUEST_ID,
-  method: "initialize",
-  params: {
-    clientInfo: {
-      name: identity.urlScheme.production,
-      title: identity.productName.production,
-      version: packageJson.version,
-    },
-    capabilities: { experimentalApi: true },
-  },
-})}\n`;
-
-const InitializeResponse = Schema.fromJsonString(
-  Schema.Struct({
-    id: Schema.Literal(INITIALIZE_REQUEST_ID),
-    result: Schema.optionalKey(Schema.Struct({ userAgent: Schema.String })),
-    error: Schema.optionalKey(Schema.Struct({ message: Schema.String })),
-  }),
-);
-const decodeInitializeResponse = Schema.decodeUnknownOption(InitializeResponse);
 
 export interface CodexProbeInput {
   readonly binaryPath: string;
@@ -83,17 +33,30 @@ export interface CodexProbeInput {
   readonly cwd: string;
 }
 
-class CodexCommandNotFound extends Schema.TaggedError<CodexCommandNotFound>()(
-  "CodexCommandNotFound",
-  {},
-) {}
+/** `codexAppServerEnvironment` at 2577baf, naming Playstead as the originator. */
+const codexAppServerEnvironment = (environment: ProcessEnvironment) => ({
+  CODEX_INTERNAL_ORIGINATOR_OVERRIDE: identity.productName.production,
+  ...environment,
+});
 
-/** Starts `codex app-server`, sends `initialize`, and reads the version from the user agent. */
-const probeCodexAppServer = Effect.fn("probeCodexAppServer")(function* (input: CodexProbeInput) {
+/** `buildCodexInitializeParams` at 2577baf. */
+const initializeParams: CodexSchema.InitializeParams = {
+  clientInfo: {
+    name: identity.urlScheme.production,
+    title: identity.productName.production,
+    version: packageJson.version,
+  },
+  capabilities: { experimentalApi: true },
+};
+
+/** Starts `codex app-server` in the current scope and returns the client, initialized. */
+const startCodexAppServer = Effect.fn("startCodexAppServer")(function* (input: CodexProbeInput) {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const environment = codexAppServerEnvironment(input.environment);
-  const target = { platform: input.platform, env: environment };
-  const spawnCommand = yield* resolveSpawnCommand(input.binaryPath, ["app-server"], target);
+  const spawnCommand = yield* resolveSpawnCommand(input.binaryPath, ["app-server"], {
+    platform: input.platform,
+    env: environment,
+  });
   const child = yield* spawner
     .spawn(
       ChildProcess.make(spawnCommand.command, spawnCommand.args, {
@@ -102,51 +65,129 @@ const probeCodexAppServer = Effect.fn("probeCodexAppServer")(function* (input: C
         extendEnv: false,
         shell: spawnCommand.shell,
         forceKillAfter: "2 seconds",
-        stdin: { stream: Stream.make(new TextEncoder().encode(initializeLine)), endOnDone: false },
       }),
     )
     .pipe(
       Effect.mapError(
         (cause) =>
-          new CodexAppServerSpawnError({
-            command: `${input.binaryPath} app-server`,
-            detail: cause.message,
-          }),
+          new CodexAppServerSpawnError({ command: `${input.binaryPath} app-server`, cause }),
       ),
     );
-  const stderr = yield* child.stderr.pipe(
-    Stream.decodeText(),
-    Stream.mkString,
-    Effect.orElseSucceed(() => ""),
-    Effect.forkScoped,
-  );
-  const response = yield* child.stdout.pipe(
-    Stream.decodeText(),
-    Stream.splitLines,
-    Stream.filterMap((line) => Result.fromOption(decodeInitializeResponse(line), () => undefined)),
-    Stream.runHead,
-    Effect.mapError((cause) => new CodexAppServerProbeError({ detail: cause.message })),
-  );
-  if (Option.isNone(response)) {
-    // stdout closed without an answer: the process ended.
-    const code = yield* child.exitCode.pipe(
-      Effect.map(Number),
-      Effect.orElseSucceed(() => null),
-    );
-    const errorOutput = yield* Fiber.join(stderr);
-    if (isWindowsCommandNotFound(input.platform, code, errorOutput)) {
-      return yield* new CodexCommandNotFound();
+  const client = yield* CodexClient.fromChildProcess(child);
+  const initialize = yield* client.request("initialize", initializeParams);
+  yield* client.notify("initialized", undefined);
+  return { client, initialize };
+});
+
+/** `codexPlanLabel` at 2577baf. */
+const codexPlanLabel = (planType: string): string | undefined => {
+  switch (planType) {
+    case "free":
+      return "ChatGPT Free Subscription";
+    case "go":
+      return "ChatGPT Go Subscription";
+    case "plus":
+      return "ChatGPT Plus Subscription";
+    case "pro":
+      return "ChatGPT Pro 20x Subscription";
+    case "prolite":
+      return "ChatGPT Pro 5x Subscription";
+    case "promax":
+      return "ChatGPT Pro Max Subscription";
+    case "team":
+      return "ChatGPT Team Subscription";
+    case "business":
+    case "self_serve_business_prolite":
+    case "self_serve_business_usage_based":
+      return "ChatGPT Business Subscription";
+    case "enterprise":
+    case "ent26":
+    case "enterprise_cbp_automation":
+    case "enterprise_cbp_usage_based":
+      return "ChatGPT Enterprise Subscription";
+    case "edu":
+    case "edu_plus":
+    case "edu_pro":
+      return "ChatGPT Edu Subscription";
+    case "unknown":
+      return "ChatGPT Subscription";
+    default:
+      return undefined;
+  }
+};
+
+/** `accountProbeStatus`'s auth at 2577baf: the kind of account, its label and, for ChatGPT, its e-mail. */
+const codexAuth = (account: CodexSchema.V2Account): ServerProviderAuth => {
+  switch (account.type) {
+    case "apiKey":
+      return { status: "authenticated", type: "apiKey", label: "OpenAI API Key" };
+    case "amazonBedrock":
+      return { status: "authenticated", type: "amazonBedrock", label: "Amazon Bedrock" };
+    case "chatgpt": {
+      const label = codexPlanLabel(account.planType);
+      const email = account.email?.trim();
+      return {
+        status: "authenticated",
+        type: "chatgpt",
+        ...(label === undefined ? {} : { label }),
+        ...(email ? { email } : {}),
+      };
     }
-    return yield* new CodexAppServerProbeError({
-      detail: `codex app-server exited (code ${code ?? "unknown"}) before answering initialize`,
-    });
   }
-  if (response.value.result === undefined) {
-    return yield* new CodexAppServerProbeError({
-      detail: `initialize failed: ${response.value.error?.message ?? "no result"}`,
-    });
+};
+
+/** `formatCodexModelName` at 2577baf: `gpt-6-astra` reads as `GPT-6-Astra`. */
+const formatCodexModelName = (name: string) =>
+  name
+    .replace(/^gpt/i, "GPT")
+    .replace(/-([a-z])/g, (_, letter: string) => `-${letter.toUpperCase()}`);
+
+/** Every page of `model/list`, as `requestAllCodexModels` at 2577baf. Codex's own default stays the default. */
+const listCodexModels = Effect.fn("listCodexModels")(function* (
+  client: CodexClient.CodexAppServerClient["Service"],
+) {
+  const models: Array<ServerProviderModel> = [];
+  let cursor: string | null | undefined;
+  do {
+    const page = yield* client.request("model/list", cursor ? { cursor } : {});
+    for (const model of page.data) {
+      models.push({
+        slug: model.model,
+        name: formatCodexModelName(model.displayName),
+        ...(model.isDefault ? { isDefault: true } : {}),
+      });
+    }
+    cursor = page.nextCursor;
+  } while (cursor);
+  return models;
+});
+
+const probeCodexAppServer = Effect.fn("probeCodexAppServer")(function* (input: CodexProbeInput) {
+  const { client, initialize } = yield* startCodexAppServer(input);
+  const version = /\/([^\s]+)/.exec(initialize.userAgent)?.[1] ?? null;
+  const { account, requiresOpenaiAuth } = yield* client.request("account/read", {});
+  if (account === undefined || account === null) {
+    return requiresOpenaiAuth
+      ? {
+          version,
+          status: "error" as const,
+          auth: { status: "unauthenticated" as const },
+          models: [],
+          message: "Codex CLI is not authenticated. Run `codex login` and try again.",
+        }
+      : {
+          version,
+          status: "ready" as const,
+          auth: { status: "unknown" as const },
+          models: yield* listCodexModels(client),
+        };
   }
-  return { version: /\/([^\s]+)/.exec(response.value.result.userAgent)?.[1] ?? null };
+  return {
+    version,
+    status: "ready" as const,
+    auth: codexAuth(account),
+    models: yield* listCodexModels(client),
+  };
 });
 
 const notFoundMessage = (binaryPath: string) =>
@@ -155,7 +196,7 @@ const notFoundMessage = (binaryPath: string) =>
     ? " Installing ChatGPT or Codex desktop may not add codex to PATH."
     : " Make sure the configured executable exists and can be run.");
 
-/** `checkCodexProviderStatus` at 2577baf, without sign-in and models. */
+/** `checkCodexProviderStatus` at 2577baf. */
 export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(function* (
   input: CodexProbeInput,
 ): Effect.fn.Return<
@@ -170,15 +211,23 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
   );
   if (Result.isFailure(probe)) {
     const error = probe.failure;
-    const installed = error._tag === "CodexAppServerProbeError";
-    return {
-      installed,
-      version: null,
-      status: "error",
-      message: installed
-        ? `Codex app-server provider probe failed: ${error.message}.`
-        : notFoundMessage(input.binaryPath),
-    };
+    const notFound =
+      error._tag === "CodexAppServerSpawnError" ||
+      (error._tag === "CodexAppServerProcessExitedError" &&
+        isWindowsCommandNotFound(input.platform, error.code, error.stderr));
+    return notFound
+      ? {
+          installed: false,
+          version: null,
+          status: "error",
+          message: notFoundMessage(input.binaryPath),
+        }
+      : {
+          installed: true,
+          version: null,
+          status: "error",
+          message: `Codex app-server provider probe failed: ${error.message}.`,
+        };
   }
   if (Option.isNone(probe.success)) {
     return {
@@ -188,5 +237,5 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
       message: "Timed out while checking Codex app-server provider status.",
     };
   }
-  return { installed: true, version: probe.success.value.version, status: "ready" };
+  return { installed: true, ...probe.success.value };
 });

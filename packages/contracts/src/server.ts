@@ -27,10 +27,38 @@ export const ServerProviderCompatibilityAdvisory = Schema.Struct({
 });
 export type ServerProviderCompatibilityAdvisory = typeof ServerProviderCompatibilityAdvisory.Type;
 
+const ServerProviderAuthStatus = Schema.Literals(["authenticated", "unauthenticated", "unknown"]);
+export type ServerProviderAuthStatus = typeof ServerProviderAuthStatus.Type;
+
+/**
+ * Whether the person is signed in to the provider, T3 Code's
+ * `ServerProviderAuth` at 2577baf without its sign-in actions, profiles and
+ * workspaces: the kind of account (`type`), what to call it (`label`) and its
+ * e-mail when the provider gives one.
+ */
+export const ServerProviderAuth = Schema.Struct({
+  status: ServerProviderAuthStatus,
+  type: Schema.optionalKey(TrimmedNonEmptyString),
+  label: Schema.optionalKey(TrimmedNonEmptyString),
+  email: Schema.optionalKey(TrimmedNonEmptyString),
+});
+export type ServerProviderAuth = typeof ServerProviderAuth.Type;
+
+/**
+ * A model the provider offers, T3 Code's `ServerProviderModel` at 2577baf
+ * without custom models and capabilities (reasoning and service tiers).
+ */
+export const ServerProviderModel = Schema.Struct({
+  slug: TrimmedNonEmptyString,
+  name: TrimmedNonEmptyString,
+  isDefault: Schema.optionalKey(Schema.Boolean),
+});
+export type ServerProviderModel = typeof ServerProviderModel.Type;
+
 /**
  * A provider instance's status, trimmed from T3 Code's `ServerProvider` at
- * 2577baf to what discovery finds: whether it is installed, its version and
- * the compatibility advisory. Sign-in and models join it with their tickets.
+ * 2577baf: whether it is installed, its version, the compatibility advisory,
+ * whether the person is signed in, and its models.
  */
 export const ServerProvider = Schema.Struct({
   instanceId: ProviderInstanceId,
@@ -39,8 +67,10 @@ export const ServerProvider = Schema.Struct({
   installed: Schema.Boolean,
   version: Schema.NullOr(TrimmedNonEmptyString),
   status: ServerProviderState,
+  auth: ServerProviderAuth,
   checkedAt: Schema.String,
   message: Schema.optionalKey(TrimmedNonEmptyString),
+  models: Schema.Array(ServerProviderModel),
   compatibilityAdvisory: Schema.optionalKey(ServerProviderCompatibilityAdvisory),
 });
 export type ServerProvider = typeof ServerProvider.Type;

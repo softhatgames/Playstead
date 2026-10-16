@@ -3,9 +3,7 @@ import type { ServerProvider } from "@playstead/contracts/server";
 /**
  * What a provider card says, following T3 Code's
  * `apps/web/src/components/settings/providerStatus.ts` at 2577baf, without
- * the disabled state, update advisories and, until sign-in arrives, the
- * authenticated headlines. Sign-in adds its headlines between "Not found"
- * and "Needs attention", as T3 Code orders them.
+ * the disabled state and update advisories.
  */
 export function getProviderSummary(provider: ServerProvider | undefined): {
   readonly headline: string;
@@ -20,6 +18,13 @@ export function getProviderSummary(provider: ServerProvider | undefined): {
   if (!provider.installed) {
     return { headline: "Not found", detail: provider.message ?? "CLI not detected on PATH." };
   }
+  const authLabel = provider.auth.label ?? provider.auth.type;
+  if (provider.auth.status === "unauthenticated") {
+    return {
+      headline: authLabel ? `Not authenticated · ${authLabel}` : "Not authenticated",
+      detail: provider.message ?? null,
+    };
+  }
   if (provider.status === "warning") {
     return {
       headline: "Needs attention",
@@ -31,6 +36,12 @@ export function getProviderSummary(provider: ServerProvider | undefined): {
     return {
       headline: "Unavailable",
       detail: provider.message ?? "The provider failed its startup checks.",
+    };
+  }
+  if (provider.auth.status === "authenticated") {
+    return {
+      headline: authLabel ? `Authenticated · ${authLabel}` : "Authenticated",
+      detail: provider.message ?? null,
     };
   }
   return { headline: "Available", detail: provider.message ?? null };

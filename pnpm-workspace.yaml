@@ -11,6 +11,7 @@ allowBuilds:
   tsc-rs: true
 
 catalog:
+  "@effect/openapi-generator": 4.0.5
   "@effect/platform-node": 4.0.5
   "@effect/sql-sqlite-node": 4.0.5
   "@effect/tsgo": 0.51.1
@@ -28,6 +29,7 @@ catalog:
 minimumReleaseAgeExclude:
   - tsc-rs
   - "@tsc-rs/*"
+  - "@effect/openapi-generator@4.0.5"
   - "@effect/platform-node@4.0.5"
   - "@effect/platform-node-shared@4.0.5"
   - "@effect/sql-sqlite-node@4.0.5"
