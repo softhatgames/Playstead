@@ -89,4 +89,35 @@ describe("CodexAppServerClient", () => {
       yield* driver.assertComplete;
     }).pipe(Effect.scoped),
   );
+
+  it.effect("tells when Codex's output has ended, after its last message", () =>
+    Effect.gen(function* () {
+      const driver = yield* CodexReplay.makeReplayDriver(
+        transcript([
+          { type: "expect_outbound", frame: { id: 1, method: "account/read", params: {} } },
+          {
+            type: "emit_inbound",
+            frame: { id: 1, result: { account: null, requiresOpenaiAuth: false } },
+          },
+          {
+            type: "emit_inbound",
+            frame: { method: "account/updated", params: { authMode: "apikey" } },
+          },
+          { type: "runtime_exit", status: "success" },
+        ]),
+      );
+      const client = yield* CodexReplay.makeReplayClient(driver);
+      const seen: Array<string> = [];
+      yield* client.handleServerNotification("account/updated", (params) =>
+        Effect.sync(() => seen.push(String(params.authMode))),
+      );
+      yield* client.request("account/read", {});
+
+      const ended = yield* client.terminated;
+
+      assert.strictEqual(ended._tag, "CodexAppServerProcessExitedError");
+      assert.deepStrictEqual(seen, ["apikey"]);
+      yield* driver.assertComplete;
+    }).pipe(Effect.scoped),
+  );
 });

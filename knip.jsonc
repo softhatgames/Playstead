@@ -12,8 +12,8 @@
       "project": ["*.{js,mjs,cjs,ts,mts,cts}"],
     },
     "apps/server": {
-      // Run by the development runner and the desktop app; the recorder by hand.
-      "entry": ["src/bin.ts!", "scripts/record-claude-replay.ts"],
+      // Run by the development runner and the desktop app; the recorders by hand.
+      "entry": ["src/bin.ts!", "scripts/record-claude-replay.ts", "scripts/record-codex-replay.ts"],
     },
     "apps/desktop": {
       // Electron's main process and the window's preload, bundled by vp pack;

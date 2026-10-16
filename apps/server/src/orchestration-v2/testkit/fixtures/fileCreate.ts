@@ -1,4 +1,5 @@
 import { CommandId, MessageId, ProjectId, ThreadId } from "@playstead/contracts/baseSchemas";
+import type { ProviderInstanceId } from "@playstead/contracts/providerInstance";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
@@ -7,12 +8,23 @@ import type { makeOrchestrationHarness } from "../OrchestratorHarness.ts";
 
 /**
  * The file-creating turn: an empty folder becomes a project, a thread with
- * Claude is created in it, and one message asks Claude to write a file.
- * The recorder runs it against the signed-in `claude`; the replay test runs
- * it again over the recording.
+ * the provider is created in it, and one message asks it to write a file.
+ * Each provider's recorder runs it against the signed-in CLI; the replay
+ * tests run it again over the recordings.
  */
+export interface FileCreateScenario {
+  readonly scenario: string;
+  readonly instanceId: ProviderInstanceId;
+  readonly model: string;
+  readonly fileName: string;
+  readonly content: string;
+  readonly prompt: string;
+  readonly titleSeed: string;
+}
+
 export const FILE_CREATE_SCENARIO = {
   scenario: "file_create",
+  instanceId: "claudeAgent",
   model: "claude-haiku-5-5",
   fileName: "hello-claude.txt",
   content: "Hello from Claude in Playstead!",
@@ -20,7 +32,23 @@ export const FILE_CREATE_SCENARIO = {
     "Use your Write tool, not the shell, to create hello-claude.txt in the current folder containing exactly this line: Hello from Claude in Playstead! Then reply with one short sentence.",
   /** T3 Code's title seed: the message's first 50 characters and an ellipsis. */
   titleSeed: "Use your Write tool, not the shell, to create hell...",
-} as const;
+} as const satisfies FileCreateScenario;
+
+/**
+ * Codex's turn. Some Codex models write files through the shell, which gives
+ * a command item rather than a file change; this model and prompt use
+ * `apply_patch`.
+ */
+export const CODEX_FILE_CREATE_SCENARIO = {
+  scenario: "file_create",
+  instanceId: "codex",
+  model: "gpt-5.6-terra",
+  fileName: "hello-codex.txt",
+  content: "Hello from Codex in Playstead!",
+  prompt:
+    "Use apply_patch, not the shell, to create hello-codex.txt in the current folder containing exactly this line: Hello from Codex in Playstead! Then reply with one short sentence.",
+  titleSeed: "Use apply_patch, not the shell, to create hello-co...",
+} as const satisfies FileCreateScenario;
 
 export const FILE_CREATE_IDS = {
   projectId: ProjectId.make("project:file-create"),
@@ -37,6 +65,13 @@ type Harness = Effect.Success<ReturnType<typeof makeOrchestrationHarness>>;
  */
 export const runFileCreateScenario = <A = undefined, E = never, R = never>(
   harness: Harness,
+  whileStarting?: Effect.Effect<A, E, R>,
+) => runProviderFileCreateScenario(harness, FILE_CREATE_SCENARIO, whileStarting);
+
+/** The same turn with the given provider's scenario. */
+export const runProviderFileCreateScenario = <A = undefined, E = never, R = never>(
+  harness: Harness,
+  scenario: FileCreateScenario,
   whileStarting?: Effect.Effect<A, E, R>,
 ) =>
   Effect.gen(function* () {
@@ -57,15 +92,15 @@ export const runFileCreateScenario = <A = undefined, E = never, R = never>(
       threadId: FILE_CREATE_IDS.threadId,
       projectId: FILE_CREATE_IDS.projectId,
       title: "New thread",
-      modelSelection: { instanceId: "claudeAgent", model: FILE_CREATE_SCENARIO.model },
+      modelSelection: { instanceId: scenario.instanceId, model: scenario.model },
     });
     const sent = yield* harness.orchestrator.dispatch({
       type: "message.dispatch",
       commandId: CommandId.make("command:file-create:message"),
       threadId: FILE_CREATE_IDS.threadId,
       messageId: FILE_CREATE_IDS.messageId,
-      text: FILE_CREATE_SCENARIO.prompt,
-      titleSeed: FILE_CREATE_SCENARIO.titleSeed,
+      text: scenario.prompt,
+      titleSeed: scenario.titleSeed,
     });
     const interjected = whileStarting === undefined ? undefined : yield* whileStarting;
     yield* harness.worker.drain;
