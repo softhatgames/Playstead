@@ -2,6 +2,11 @@ import {
   ApplicationProjectEvent,
   type ApplicationStoredEvent,
 } from "@playstead/contracts/applicationEvent";
+import type { CommandId } from "@playstead/contracts/baseSchemas";
+import {
+  OrchestrationV2StoredEvent,
+  type OrchestrationV2DomainEvent,
+} from "@playstead/contracts/orchestrationV2";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -31,6 +36,12 @@ export class EventStoreReadEventsError extends Schema.TaggedError<EventStoreRead
 /** A project event before the log gives it its sequence. */
 export type UnsequencedProjectEvent = Omit<ApplicationProjectEvent, "sequence">;
 
+/** A thread event to append, and the command that caused it, if any. */
+export interface ThreadEventToAppend {
+  readonly commandId: CommandId | null;
+  readonly event: OrchestrationV2DomainEvent;
+}
+
 /**
  * The orchestration event log: one table, `orchestration_events`, and one
  * sequence for project and thread events (T3 Code's
@@ -45,6 +56,9 @@ export class EventStoreV2 extends Context.Service<
     readonly appendProjectEvent: (
       event: UnsequencedProjectEvent,
     ) => Effect.Effect<ApplicationProjectEvent, EventStoreAppendEventsError>;
+    readonly appendThreadEvent: (
+      input: ThreadEventToAppend,
+    ) => Effect.Effect<OrchestrationV2StoredEvent, EventStoreAppendEventsError>;
     readonly latestApplicationSequence: Effect.Effect<number, EventStoreReadEventsError>;
     /** Call only after the transaction that appended `events` has committed. */
     readonly publishCommitted: (
@@ -71,13 +85,43 @@ interface EventRow {
   readonly correlationId: string | null;
   readonly type: string;
   readonly payloadJson: string;
+  readonly metadataJson: string;
 }
 
 const decodeProjectEvent = Schema.decodeUnknownEffect(ApplicationProjectEvent);
+const decodeThreadEvent = Schema.decodeUnknownEffect(OrchestrationV2StoredEvent);
 const decodeJson = Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Unknown));
 const encodeJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 
+const rowToThreadEvent = (row: EventRow) =>
+  Effect.gen(function* () {
+    const payload = yield* decodeJson(row.payloadJson);
+    const metadata = yield* decodeJson(row.metadataJson);
+    const runId =
+      typeof metadata === "object" && metadata !== null && "runId" in metadata
+        ? { runId: metadata.runId }
+        : {};
+    return yield* decodeThreadEvent({
+      sequence: row.sequence,
+      aggregateKind: "thread",
+      commandId: row.commandId,
+      event: {
+        id: row.eventId,
+        threadId: row.aggregateId,
+        ...runId,
+        occurredAt: row.occurredAt,
+        type: row.type,
+        payload,
+      },
+    });
+  });
+
 const rowToEvent = (row: EventRow) =>
+  row.aggregateKind === "thread"
+    ? Effect.map(rowToThreadEvent(row), (event): ApplicationStoredEvent => event)
+    : Effect.map(rowToProjectEvent(row), (event): ApplicationStoredEvent => event);
+
+const rowToProjectEvent = (row: EventRow) =>
   Effect.flatMap(decodeJson(row.payloadJson), (payload) =>
     decodeProjectEvent({
       sequence: row.sequence,
@@ -146,11 +190,66 @@ const make = Effect.gen(function* () {
           causation_event_id AS "causationEventId",
           correlation_id AS "correlationId",
           event_type AS "type",
-          payload_json AS "payloadJson"
+          payload_json AS "payloadJson",
+          metadata_json AS "metadataJson"
       `;
       const row = rows[0];
       if (row === undefined) return yield* Effect.die("The event insert returned no row.");
-      return yield* rowToEvent(row);
+      return yield* rowToProjectEvent(row);
+    }).pipe(Effect.mapError((cause) => new EventStoreAppendEventsError({ eventCount: 1, cause })));
+
+  const appendThreadEvent = ({ commandId, event }: ThreadEventToAppend) =>
+    Effect.gen(function* () {
+      const payloadJson = yield* encodeJson(event.payload);
+      const metadataJson = yield* encodeJson(
+        event.runId === undefined ? {} : { runId: event.runId },
+      );
+      const rows = yield* sql<{ readonly sequence: number }>`
+        INSERT INTO orchestration_events (
+          event_id,
+          aggregate_kind,
+          stream_id,
+          stream_version,
+          event_type,
+          occurred_at,
+          command_id,
+          causation_event_id,
+          correlation_id,
+          actor_kind,
+          payload_json,
+          metadata_json
+        )
+        VALUES (
+          ${event.id},
+          'thread',
+          ${event.threadId},
+          COALESCE(
+            (
+              SELECT MAX(stream_version) + 1
+              FROM orchestration_events
+              WHERE aggregate_kind = 'thread' AND stream_id = ${event.threadId}
+            ),
+            0
+          ),
+          ${event.type},
+          ${event.occurredAt},
+          ${commandId},
+          NULL,
+          ${commandId},
+          ${commandId === null ? "provider" : "client"},
+          ${payloadJson},
+          ${metadataJson}
+        )
+        RETURNING sequence
+      `;
+      const sequence = rows[0]?.sequence;
+      if (sequence === undefined) return yield* Effect.die("The event insert returned no row.");
+      return {
+        sequence,
+        aggregateKind: "thread",
+        commandId,
+        event,
+      } satisfies OrchestrationV2StoredEvent;
     }).pipe(Effect.mapError((cause) => new EventStoreAppendEventsError({ eventCount: 1, cause })));
 
   const latestApplicationSequence = sql<{ readonly sequence: number | null }>`
@@ -172,7 +271,8 @@ const make = Effect.gen(function* () {
         causation_event_id AS "causationEventId",
         correlation_id AS "correlationId",
         event_type AS "type",
-        payload_json AS "payloadJson"
+        payload_json AS "payloadJson",
+        metadata_json AS "metadataJson"
       FROM orchestration_events
       WHERE sequence > ${afterSequence} AND sequence <= ${throughSequence}
       ORDER BY sequence ASC
@@ -197,6 +297,7 @@ const make = Effect.gen(function* () {
 
   return EventStoreV2.of({
     appendProjectEvent,
+    appendThreadEvent,
     latestApplicationSequence,
     publishCommitted: (events) => PubSub.publishAll(committed, events).pipe(Effect.asVoid),
     streamApplicationEvents,

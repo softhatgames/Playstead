@@ -89,6 +89,31 @@ export function requestPrimary<A, E>(
   return runtime.runPromise(connection.request(call));
 }
 
+/**
+ * Runs a stream over the page's connection and hands each item to `onItem`
+ * until the returned function stops it. It ends, without retrying, when the
+ * connection drops; callers open it again once the connection is back.
+ */
+export function runPrimaryStream<A, E>(
+  call: (client: WsRpcClient) => Stream.Stream<A, E>,
+  onItem: (item: A) => void,
+  onEnd: (error: E | ConnectionTransientError | undefined) => void,
+): () => void {
+  if (connection === undefined) {
+    onEnd(new ConnectionTransientError({ detail: "Not connected to the server." }));
+    return () => {};
+  }
+  const fiber = runtime.runFork(
+    connection.stream(call).pipe(
+      Stream.runForEach((item) => Effect.sync(() => onItem(item))),
+      Effect.match({ onFailure: (error) => onEnd(error), onSuccess: () => onEnd(undefined) }),
+    ),
+  );
+  return () => {
+    fiber.interruptUnsafe();
+  };
+}
+
 export function usePrimaryConnectionState(): ConnectionState | undefined {
   startPrimaryConnection();
   return useSyncExternalStore(subscribe, () => current);

@@ -11,6 +11,8 @@ import * as ServerSecretStore from "./auth/ServerSecretStore.ts";
 import * as ServerConfig from "./config.ts";
 import * as ServerEnvironment from "./environment/ServerEnvironment.ts";
 import * as ServerHttp from "./http.ts";
+import * as EffectWorker from "./orchestration-v2/EffectWorker.ts";
+import * as ProviderAdapterRegistry from "./orchestration-v2/ProviderAdapterRegistry.ts";
 import * as OrchestrationRuntime from "./orchestration-v2/runtimeLayer.ts";
 import * as SqlitePersistence from "./persistence/Sqlite.ts";
 import * as ProjectService from "./project/ProjectService.ts";
@@ -73,15 +75,39 @@ const layerStartupPairingLink = Layer.effectDiscard(
   }),
 );
 
+/**
+ * The effect worker runs for as long as the server does, as T3 Code's
+ * startup forks `EffectWorker.runDaemon`. Commands reach the server only
+ * after startup, so nothing is enqueued before it runs.
+ */
+const layerEffectWorkerDaemon = Layer.effectDiscard(
+  Effect.gen(function* () {
+    const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+    yield* worker.runDaemon.pipe(
+      Effect.catchCause((cause) =>
+        Effect.logError("The orchestration effect worker stopped.").pipe(
+          Effect.annotateLogs({ cause: String(cause) }),
+        ),
+      ),
+      Effect.forkScoped,
+    );
+  }),
+);
+
+const layerOrchestration = Layer.mergeAll(
+  layerEffectWorkerDaemon.pipe(Layer.provideMerge(OrchestrationRuntime.layerCore)),
+  ProjectService.layer.pipe(Layer.provide(WorkspacePaths.layer)),
+).pipe(
+  Layer.provide(ProviderAdapterRegistry.layerFromProviderRegistry),
+  Layer.provideMerge(OrchestrationRuntime.layer),
+);
+
 const layerRuntimeServices = Layer.mergeAll(
   EnvironmentAuth.layer,
   ServerLifecycleEvents.layer,
-  ProviderRegistry.layer.pipe(Layer.provideMerge(ServerSettings.layer)),
-  ProjectService.layer.pipe(
-    Layer.provideMerge(OrchestrationRuntime.layer),
-    Layer.provide(WorkspacePaths.layer),
-  ),
+  layerOrchestration,
 ).pipe(
+  Layer.provideMerge(ProviderRegistry.layer.pipe(Layer.provideMerge(ServerSettings.layer))),
   Layer.provideMerge(ServerEnvironment.layer),
   Layer.provideMerge(ServerSecretStore.layer),
   Layer.provideMerge(SqlitePersistence.layerConfig),

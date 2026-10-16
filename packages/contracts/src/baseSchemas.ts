@@ -45,3 +45,33 @@ export type CommandId = typeof CommandId.Type;
 
 export const EventId = makeEntityId("EventId");
 export type EventId = typeof EventId.Type;
+
+/** Orchestration's ids, as T3 Code's `packages/contracts/src/baseSchemas.ts` at 2577baf names them. */
+export const ThreadId = makeEntityId("ThreadId");
+export type ThreadId = typeof ThreadId.Type;
+
+export const RunId = makeEntityId("RunId");
+export type RunId = typeof RunId.Type;
+
+export const RunAttemptId = makeEntityId("RunAttemptId");
+export type RunAttemptId = typeof RunAttemptId.Type;
+
+export const NodeId = makeEntityId("NodeId");
+export type NodeId = typeof NodeId.Type;
+
+export const MessageId = makeEntityId("MessageId");
+export type MessageId = typeof MessageId.Type;
+
+export const TurnItemId = makeEntityId("TurnItemId");
+export type TurnItemId = typeof TurnItemId.Type;
+
+export const ProviderSessionId = makeEntityId("ProviderSessionId");
+export type ProviderSessionId = typeof ProviderSessionId.Type;
+
+export const ProviderThreadId = makeEntityId("ProviderThreadId");
+export type ProviderThreadId = typeof ProviderThreadId.Type;
+
+export const ProviderTurnId = makeEntityId("ProviderTurnId");
+export type ProviderTurnId = typeof ProviderTurnId.Type;
+
+export const PositiveInt = Schema.Int.check(Schema.isGreaterThanOrEqualTo(1));

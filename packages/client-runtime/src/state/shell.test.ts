@@ -1,5 +1,6 @@
 import { assert, describe, it } from "@effect/vitest";
-import { ProjectId } from "@playstead/contracts/baseSchemas";
+import { ProjectId, RunId, ThreadId } from "@playstead/contracts/baseSchemas";
+import type { OrchestrationV2ThreadShell } from "@playstead/contracts/orchestrationV2";
 
 import { applyShellStreamItem } from "./shell.ts";
 
@@ -11,8 +12,25 @@ const project = (id: string, title = id) => ({
   updatedAt: "2026-10-17T00:00:00.000Z",
 });
 
+const thread = (
+  id: string,
+  overrides: Partial<OrchestrationV2ThreadShell> = {},
+): OrchestrationV2ThreadShell => ({
+  id: ThreadId.make(id),
+  projectId: ProjectId.make("a"),
+  title: "New thread",
+  providerInstanceId: "claudeAgent",
+  modelSelection: { instanceId: "claudeAgent", model: "claude-haiku-5-5" },
+  latestRunId: null,
+  activeRunId: null,
+  status: "idle",
+  createdAt: "2026-10-17T00:00:00.000Z",
+  updatedAt: "2026-10-17T00:00:00.000Z",
+  ...overrides,
+});
+
 describe("applyShellStreamItem", () => {
-  const snapshot = { snapshotSequence: 3, projects: [project("a")] };
+  const snapshot = { snapshotSequence: 3, projects: [project("a")], threads: [] };
 
   it("takes the snapshot, then adds and replaces projects as they change", () => {
     const fromSnapshot = applyShellStreamItem(undefined, { kind: "snapshot", snapshot });
@@ -30,7 +48,37 @@ describe("applyShellStreamItem", () => {
     assert.deepStrictEqual(renamed, {
       snapshotSequence: 5,
       projects: [project("a", "renamed"), project("b")],
+      threads: [],
     });
+  });
+
+  it("adds a thread, then follows its title and run", () => {
+    const shell = applyShellStreamItem(undefined, { kind: "snapshot", snapshot });
+    const created = applyShellStreamItem(shell, {
+      kind: "thread.updated",
+      sequence: 4,
+      thread: thread("t"),
+    });
+    const working = applyShellStreamItem(created, {
+      kind: "thread.updated",
+      sequence: 6,
+      thread: thread("t", {
+        title: "Make a game",
+        latestRunId: RunId.make("run:1"),
+        activeRunId: RunId.make("run:1"),
+        status: "running",
+      }),
+    });
+
+    assert.deepStrictEqual(working?.threads, [
+      thread("t", {
+        title: "Make a game",
+        latestRunId: RunId.make("run:1"),
+        activeRunId: RunId.make("run:1"),
+        status: "running",
+      }),
+    ]);
+    assert.strictEqual(working?.snapshotSequence, 6);
   });
 
   it("drops a change the shell already holds", () => {
@@ -41,7 +89,12 @@ describe("applyShellStreamItem", () => {
       sequence: 3,
       project: project("a", "stale"),
     });
+    const replayedThread = applyShellStreamItem(replayed, {
+      kind: "thread.updated",
+      sequence: 2,
+      thread: thread("old"),
+    });
 
-    assert.deepStrictEqual(replayed, snapshot);
+    assert.deepStrictEqual(replayedThread, snapshot);
   });
 });

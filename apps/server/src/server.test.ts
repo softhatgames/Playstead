@@ -259,6 +259,7 @@ describe("server", () => {
           [
             { migration_id: 1, name: "Initial" },
             { migration_id: 2, name: "Projects" },
+            { migration_id: 3, name: "Orchestration" },
           ],
         );
       }).pipe(Effect.scoped),

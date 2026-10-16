@@ -1,4 +1,4 @@
-import { CommandId, NonNegativeInt, ProjectId } from "@playstead/contracts/baseSchemas";
+import { CommandId, NonNegativeInt, ProjectId, ThreadId } from "@playstead/contracts/baseSchemas";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -34,27 +34,42 @@ export const ProjectCommandReceiptV2 = Schema.Struct({
 });
 export type ProjectCommandReceiptV2 = typeof ProjectCommandReceiptV2.Type;
 
+/** A thread command's receipt (T3 Code's `CommandReceiptV2`). */
+export const CommandReceiptV2 = Schema.Struct({
+  commandId: CommandId,
+  threadId: ThreadId,
+  commandType: Schema.String,
+  acceptedAt: Schema.DateTimeUtc,
+  resultSequence: NonNegativeInt,
+  status: CommandReceiptStatus,
+  error: Schema.NullOr(Schema.String),
+});
+export type CommandReceiptV2 = typeof CommandReceiptV2.Type;
+
+type AnyCommandReceipt = ProjectCommandReceiptV2 | CommandReceiptV2;
+
 /**
  * Command receipts in `orchestration_command_receipts`, one table for project
  * and thread commands told apart by `aggregate_kind` (T3 Code's
  * `apps/server/src/orchestration-v2/CommandReceiptStore.ts` and
  * `apps/server/src/persistence/OrchestrationCommandReceipts.ts` at 2577baf).
- * Thread receipts join with the orchestration core.
  */
 export class CommandReceiptStoreV2 extends Context.Service<
   CommandReceiptStoreV2,
   {
     /** False when a receipt with this command id is already there. */
     readonly insertIfAbsent: (
-      receipt: ProjectCommandReceiptV2,
+      receipt: AnyCommandReceipt,
     ) => Effect.Effect<boolean, CommandReceiptStoreError>;
-    readonly upsert: (
-      receipt: ProjectCommandReceiptV2,
-    ) => Effect.Effect<void, CommandReceiptStoreError>;
+    readonly upsert: (receipt: AnyCommandReceipt) => Effect.Effect<void, CommandReceiptStoreError>;
     /** None when the id is unused or belongs to a thread command. */
     readonly getProjectByCommandId: (
       commandId: CommandId,
     ) => Effect.Effect<Option.Option<ProjectCommandReceiptV2>, CommandReceiptStoreError>;
+    /** None when the id is unused or belongs to a project command. */
+    readonly getByCommandId: (
+      commandId: CommandId,
+    ) => Effect.Effect<Option.Option<CommandReceiptV2>, CommandReceiptStoreError>;
   }
 >()("@playstead/server/orchestration-v2/CommandReceiptStore/CommandReceiptStoreV2") {}
 
@@ -65,12 +80,19 @@ const decodeProjectReceipt = Schema.decodeUnknownEffect(
   })),
 );
 
+const decodeThreadReceipt = Schema.decodeUnknownEffect(
+  CommandReceiptV2.mapFields((fields) => ({
+    ...fields,
+    acceptedAt: Schema.DateTimeUtcFromString,
+  })),
+);
+
 const make = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
   const toError = (commandId: CommandId) => (cause: unknown) =>
     new CommandReceiptStoreError({ commandId, cause });
 
-  const insert = (receipt: ProjectCommandReceiptV2, onConflict: "ignore" | "replace") =>
+  const insert = (receipt: AnyCommandReceipt, onConflict: "ignore" | "replace") =>
     sql<{ readonly commandId: string }>`
       INSERT INTO orchestration_command_receipts (
         command_id,
@@ -84,8 +106,8 @@ const make = Effect.gen(function* () {
       )
       VALUES (
         ${receipt.commandId},
-        'project',
-        ${receipt.projectId},
+        ${"projectId" in receipt ? "project" : "thread"},
+        ${"projectId" in receipt ? receipt.projectId : receipt.threadId},
         ${receipt.commandType},
         ${DateTime.formatIso(receipt.acceptedAt)},
         ${receipt.resultSequence},
@@ -130,6 +152,24 @@ const make = Effect.gen(function* () {
       `.pipe(
         Effect.flatMap((rows) =>
           rows[0] === undefined ? Effect.succeedNone : Effect.asSome(decodeProjectReceipt(rows[0])),
+        ),
+        Effect.mapError(toError(commandId)),
+      ),
+    getByCommandId: (commandId) =>
+      sql`
+        SELECT
+          command_id AS "commandId",
+          aggregate_id AS "threadId",
+          command_type AS "commandType",
+          accepted_at AS "acceptedAt",
+          result_sequence AS "resultSequence",
+          status,
+          error
+        FROM orchestration_command_receipts
+        WHERE command_id = ${commandId} AND aggregate_kind = 'thread'
+      `.pipe(
+        Effect.flatMap((rows) =>
+          rows[0] === undefined ? Effect.succeedNone : Effect.asSome(decodeThreadReceipt(rows[0])),
         ),
         Effect.mapError(toError(commandId)),
       ),
