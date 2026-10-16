@@ -10,3 +10,4 @@ Playstead's own investigations, with sources, versions, findings and limits. Acc
 | [Interface prior art](interface-prior-art.md) | How agentic coding products, game tools, creative tools and human–AI research present agent work, running software, alternatives and authority. |
 | [Interface concepts](interface-concepts.md)   | The interface concepts considered for making a game with Playstead, and the founder's decisions.                                                |
 | [Game stacks](game-stacks.md)                 | Languages and libraries for code-first games: web builds, reload speed, desktop, phones, consoles, and REDox.                                   |
+| [T3 Code testing](t3-code-testing.md)         | How T3 Code tests itself: recorded provider sessions, server, web and desktop tests, performance, CI, and which tests need a real provider.     |
