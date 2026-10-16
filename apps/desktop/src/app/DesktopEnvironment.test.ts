@@ -8,9 +8,9 @@ import { resolveDesktopEnvironment } from "./DesktopEnvironment.ts";
 const resolveWith = (env: Record<string, string>, argv: ReadonlyArray<string> = []) =>
   Effect.gen(function* () {
     const path = yield* Path.Path;
-    const homeDirectory = path.join(path.sep, "Users", "person");
+    const homeDirectory = path.resolve(path.sep, "Users", "person");
     const appDataDirectory = path.join(homeDirectory, "Library", "Application Support");
-    const desktopDir = path.join(path.sep, "work", "playstead", "apps", "desktop");
+    const desktopDir = path.resolve(path.sep, "work", "playstead", "apps", "desktop");
     return {
       path,
       homeDirectory,
