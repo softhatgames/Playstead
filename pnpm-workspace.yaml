@@ -6,6 +6,8 @@ packages:
 
 # pnpm 11: true lets a dependency run its install scripts.
 allowBuilds:
+  # As in T3 Code. Electron 44 fetches its binary on first use (`install-electron`), with checksums.
+  electron: true
   tsc-rs: true
 
 catalog:
@@ -13,9 +15,11 @@ catalog:
   "@effect/sql-sqlite-node": 4.0.5
   "@effect/tsgo": 0.51.1
   "@effect/vitest": 4.0.5
+  "@resvg/resvg-js": 2.6.2
   "@tailwindcss/vite": 4.3.3
   "@types/node": 24.12.4
   effect: 4.0.5
+  electron: 44.4.5
   tailwindcss: 4.3.3
   typescript: 7.0.2
   vite-plus: 1.0.0

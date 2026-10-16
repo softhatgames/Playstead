@@ -28,7 +28,10 @@ const layerRoutes = Layer.mergeAll(
   ),
   Ws.layer,
   ServerHttp.layerStaticAndDevRoute,
-).pipe(Layer.provide(ServerHttp.layerCommandReadiness));
+).pipe(
+  Layer.provide(ServerHttp.layerCommandReadiness),
+  Layer.provide(ServerHttp.layerDesktopWindowCors),
+);
 
 const layerHttpListening = Layer.effectDiscard(
   Effect.gen(function* () {

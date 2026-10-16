@@ -1,5 +1,6 @@
 import { EnvironmentHttpApi } from "@playstead/contracts/environmentHttp";
 import { isDevProxiedPath } from "@playstead/shared/devProxy";
+import { identity } from "@playstead/shared/identity";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -39,6 +40,21 @@ export const layerCommandReadiness = HttpRouter.middleware(
     }),
   { global: true },
 );
+
+/**
+ * The desktop window's page has the URL scheme's origin, so its requests with
+ * the bearer token are cross-origin. They carry no cookie, so the origin list
+ * is all CORS needs, as in T3 Code's `layerBrowserApiCors`
+ * (`apps/server/src/http.ts`, `httpCors.ts`).
+ */
+export const layerDesktopWindowCors = HttpRouter.cors({
+  allowedOrigins: [identity.windowUrl.production, identity.windowUrl.development].map((url) =>
+    url.replace(/\/$/, ""),
+  ),
+  allowedMethods: ["GET", "POST", "OPTIONS"],
+  allowedHeaders: ["authorization", "content-type", "traceparent", "b3"],
+  maxAge: 600,
+});
 
 const LOOPBACK_HOSTNAMES = new Set(["localhost", "127.0.0.1", "::1"]);
 

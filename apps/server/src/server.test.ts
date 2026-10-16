@@ -209,6 +209,36 @@ describe("server", () => {
         }).pipe(Effect.scoped),
     );
 
+    it.effect("lets the desktop window's page ask for a WebSocket ticket across origins", () =>
+      Effect.gen(function* () {
+        const server = yield* startTestServer();
+        const client = yield* HttpClient.HttpClient;
+        const preflight = (origin: string) =>
+          client.execute(
+            HttpClientRequest.make("OPTIONS")(`${server.baseUrl}/api/auth/websocket-ticket`).pipe(
+              HttpClientRequest.setHeaders({
+                origin,
+                "access-control-request-method": "POST",
+                "access-control-request-headers": "authorization,traceparent,b3",
+              }),
+            ),
+          );
+
+        const fromWindow = yield* preflight("playstead-dev://app");
+        assert.strictEqual(
+          fromWindow.headers["access-control-allow-origin"],
+          "playstead-dev://app",
+        );
+        // The client's HTTP requests carry tracing headers.
+        assert.includeMembers(
+          fromWindow.headers["access-control-allow-headers"]?.split(",") ?? [],
+          ["authorization", "traceparent", "b3"],
+        );
+        const fromElsewhere = yield* preflight("http://localhost:9999");
+        assert.isUndefined(fromElsewhere.headers["access-control-allow-origin"]);
+      }).pipe(Effect.scoped),
+    );
+
     it.effect("keeps its state in the Playstead home, starting at its own first migration", () =>
       Effect.gen(function* () {
         const server = yield* startTestServer({ devUrl: new URL("http://localhost:5999/") });

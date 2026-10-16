@@ -14,7 +14,7 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import { ChildProcess } from "effect/process";
 
-export const DEV_RUNNER_MODES = ["dev", "dev:server", "dev:web"] as const;
+export const DEV_RUNNER_MODES = ["dev", "dev:server", "dev:web", "dev:desktop"] as const;
 export type DevMode = (typeof DEV_RUNNER_MODES)[number];
 
 /** Away from T3 Code's 13773 and 5733, so both can run side by side. */
@@ -26,6 +26,9 @@ const MODE_ARGS: Record<DevMode, ReadonlyArray<string>> = {
   dev: ["run", "--filter=@playstead/web", "--filter=@playstead/server", "--parallel", "dev"],
   "dev:server": ["run", "--filter=@playstead/server", "dev"],
   "dev:web": ["run", "--filter=@playstead/web", "dev"],
+  // The desktop app starts its own server from the server's build, as in
+  // T3 Code; Vite serves the window's interface.
+  "dev:desktop": ["run", "--filter=@playstead/desktop", "--filter=@playstead/web", "dev"],
 };
 
 const variable = (name: string) => `${identity.environmentVariablePrefix}${name}`;

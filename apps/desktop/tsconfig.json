@@ -1,0 +1,9 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "types": ["node"],
+    // Electron's own types refer to DOM types.
+    "lib": ["ESNext", "esnext.disposable", "DOM"]
+  },
+  "include": ["src", "scripts", "vite.config.ts"]
+}
