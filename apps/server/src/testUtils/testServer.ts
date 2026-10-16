@@ -22,7 +22,7 @@ import type { StartupOptions } from "../serverRuntimeStartup.ts";
  * file busy for a moment after it closes, so removal retries on EBUSY and
  * EPERM.
  */
-const makeTempHome = Effect.gen(function* () {
+export const makeTempHome = Effect.gen(function* () {
   const fs = yield* FileSystem.FileSystem;
   return yield* Effect.acquireRelease(
     fs.makeTempDirectory({ prefix: "playstead-home-" }),
@@ -37,6 +37,23 @@ const makeTempHome = Effect.gen(function* () {
         Effect.ignore,
       ),
   );
+});
+
+/** The server's config over a temporary Playstead home. */
+export const makeTestServerConfig = Effect.fn("makeTestServerConfig")(function* (
+  options: { readonly devUrl?: URL; readonly desktopBootstrapToken?: string } = {},
+) {
+  const home = yield* makeTempHome;
+  const paths = yield* ServerConfig.deriveServerPaths(home, options.devUrl);
+  return ServerConfig.ServerConfig.of({
+    cwd: home,
+    baseDir: home,
+    ...paths,
+    port: 0,
+    devUrl: options.devUrl,
+    staticDir: undefined,
+    desktopBootstrapToken: options.desktopBootstrapToken,
+  });
 });
 
 export interface TestServerOptions extends StartupOptions {
@@ -63,17 +80,7 @@ export interface TestServer {
 export const startTestServer = Effect.fn("startTestServer")(function* (
   options: TestServerOptions = {},
 ) {
-  const home = yield* makeTempHome;
-  const paths = yield* ServerConfig.deriveServerPaths(home, options.devUrl);
-  const config = ServerConfig.ServerConfig.of({
-    cwd: home,
-    baseDir: home,
-    ...paths,
-    port: 0,
-    devUrl: options.devUrl,
-    staticDir: undefined,
-    desktopBootstrapToken: options.desktopBootstrapToken,
-  });
+  const config = yield* makeTestServerConfig(options);
   const logs = yield* Queue.unbounded<string>();
   const captureLogs = Logger.make(({ message, fiber }) => {
     const text = Array.isArray(message) ? message.map(String).join(" ") : String(message);

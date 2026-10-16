@@ -256,7 +256,10 @@ describe("server", () => {
         );
         assert.deepStrictEqual(
           migrations.map((row) => ({ ...row })),
-          [{ migration_id: 1, name: "Initial" }],
+          [
+            { migration_id: 1, name: "Initial" },
+            { migration_id: 2, name: "Projects" },
+          ],
         );
       }).pipe(Effect.scoped),
     );

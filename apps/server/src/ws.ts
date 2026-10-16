@@ -1,6 +1,9 @@
+import { ORCHESTRATION_V2_WS_METHODS } from "@playstead/contracts/orchestrationV2";
+import { ProjectMutationError } from "@playstead/contracts/project";
 import { WS_METHODS, WsRpcGroup } from "@playstead/contracts/rpc";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import type * as Path from "effect/Path";
 import * as Stream from "effect/Stream";
 import * as HttpRouter from "effect/http/HttpRouter";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
@@ -11,9 +14,12 @@ import * as RpcServer from "effect/rpc/RpcServer";
 import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
 import { failEnvironmentAuthInvalid, failEnvironmentInternal } from "./auth/http.ts";
 import * as ServerEnvironment from "./environment/ServerEnvironment.ts";
+import { streamShell } from "./orchestration-v2/ShellStream.ts";
+import * as ProjectService from "./project/ProjectService.ts";
 import * as ProviderRegistry from "./provider/ProviderRegistry.ts";
 import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
 import * as ServerSettings from "./serverSettings.ts";
+import * as WorkspaceEntries from "./workspace/WorkspaceEntries.ts";
 
 // RpcServer's default sends a socket-level Defect frame instead, and the client
 // ends every pending request on the socket with it.
@@ -30,6 +36,8 @@ const layerWsRpc = WsRpcGroup.toLayer(
     const lifecycleEvents = yield* ServerLifecycleEvents.ServerLifecycleEvents;
     const providers = yield* ProviderRegistry.ProviderRegistry;
     const settings = yield* ServerSettings.ServerSettingsService;
+    const projects = yield* ProjectService.ProjectService;
+    const context = yield* Effect.context<Effect.Services<typeof streamShell> | Path.Path>();
     const getConfig = Effect.all({
       environment: environment.getDescriptor,
       auth: Effect.succeed(auth.descriptor),
@@ -73,6 +81,28 @@ const layerWsRpc = WsRpcGroup.toLayer(
           ),
         ),
       [WS_METHODS.subscribeServerLifecycle]: () => lifecycleEvents.subscribe,
+      // A conflict passes through so the client can open the project that owns
+      // the folder. Anything else is T3 Code's one mutation error, carrying the
+      // folder check's reason when that is what failed.
+      [WS_METHODS.projectsMutate]: (mutation) =>
+        projects.create(mutation).pipe(
+          Effect.catchTag("ProjectOperationError", (cause) =>
+            Effect.fail(
+              new ProjectMutationError({
+                commandId: mutation.commandId,
+                message:
+                  cause.operation === "normalize-workspace" && cause.cause instanceof Error
+                    ? cause.cause.message
+                    : "Failed to mutate project.",
+                cause,
+              }),
+            ),
+          ),
+        ),
+      [WS_METHODS.filesystemBrowse]: (input) =>
+        WorkspaceEntries.browse(input).pipe(Effect.provideContext(context)),
+      [ORCHESTRATION_V2_WS_METHODS.subscribeShell]: () =>
+        streamShell.pipe(Stream.orDie, Stream.provideContext(context)),
     });
   }),
 );

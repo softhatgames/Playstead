@@ -11,13 +11,27 @@
     "./connection": {
       "types": "./src/connection/index.ts",
       "import": "./src/connection/index.ts"
+    },
+    "./state/filesystem": {
+      "types": "./src/state/filesystem.ts",
+      "import": "./src/state/filesystem.ts"
+    },
+    "./state/projects": {
+      "types": "./src/state/projects.ts",
+      "import": "./src/state/projects.ts"
     }
   },
   "scripts": {
-    "typecheck": "tsc-rs --noEmit"
+    "typecheck": "tsc-rs --noEmit",
+    "test": "vp test run --config ../../vite.config.ts --dir ."
   },
   "dependencies": {
     "@playstead/contracts": "workspace:*",
+    "@playstead/shared": "workspace:*",
     "effect": "catalog:"
+  },
+  "devDependencies": {
+    "@effect/vitest": "catalog:",
+    "vite-plus": "catalog:"
   }
 }
