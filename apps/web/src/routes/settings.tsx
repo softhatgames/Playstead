@@ -1,6 +1,6 @@
 import { Link, Outlet, createFileRoute, redirect } from "@tanstack/react-router";
 
-import { fetchSessionState } from "../environments/primary/auth.ts";
+import { fetchPrimarySessionState } from "../environments/primary/auth.ts";
 
 /**
  * Settings, after T3 Code's `apps/web/src/routes/settings.tsx` at 2577baf.
@@ -41,6 +41,6 @@ export const Route = createFileRoute("/settings")({
       throw redirect({ to: "/settings/providers", replace: true });
     }
   },
-  loader: () => fetchSessionState(),
+  loader: () => fetchPrimarySessionState(),
   component: SettingsLayout,
 });
