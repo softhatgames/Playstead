@@ -6,15 +6,17 @@ import * as Option from "effect/Option";
 
 import * as EffectOutbox from "./EffectOutbox.ts";
 import * as ProviderTurnStartService from "./ProviderTurnStartService.ts";
+import * as RunExecutionService from "./RunExecutionService.ts";
 
 const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
 
 /**
  * Runs the outbox's effects (T3 Code's
- * `apps/server/src/orchestration-v2/EffectWorker.ts` at 2577baf). The only
- * effect is starting a provider turn; there is no checkpoint step. The
- * server runs `runDaemon`; tests call `drain` and then wait for the events
- * they expect.
+ * `apps/server/src/orchestration-v2/EffectWorker.ts` at 2577baf): starting a
+ * run's provider turn and interrupting it; there is no checkpoint step. An
+ * effect a command cancels while it runs is stopped, as T3 Code's `runOnce`
+ * races `execute` against `awaitCancellation`. The server runs `runDaemon`;
+ * tests call `drain` and then wait for the events they expect.
  */
 export class OrchestrationEffectWorkerV2 extends Context.Service<
   OrchestrationEffectWorkerV2,
@@ -31,11 +33,24 @@ export class OrchestrationEffectWorkerV2 extends Context.Service<
 const make = Effect.gen(function* () {
   const outbox = yield* EffectOutbox.EffectOutboxV2;
   const turnStart = yield* ProviderTurnStartService.ProviderTurnStartServiceV2;
+  const runs = yield* RunExecutionService.RunExecutionServiceV2;
 
-  const execute = (effect: EffectOutbox.ClaimedEffect) => {
+  const execute = (
+    effect: EffectOutbox.ClaimedEffect,
+  ): Effect.Effect<
+    void,
+    | ProviderTurnStartService.ProviderTurnStartError
+    | Effect.Error<ReturnType<RunExecutionService.RunExecutionServiceV2["Service"]["interruptRun"]>>
+  > => {
     switch (effect.request.type) {
       case "provider-turn.start":
         return turnStart.start({ threadId: effect.threadId, runId: effect.request.runId });
+      case "provider-turn.interrupt":
+        return runs.interruptRun({
+          threadId: effect.threadId,
+          runId: effect.request.runId,
+          providerTurnId: effect.request.providerTurnId,
+        });
     }
   };
 
@@ -43,7 +58,17 @@ const make = Effect.gen(function* () {
     const claimed = yield* outbox.claimNext(yield* nowIso);
     if (Option.isNone(claimed)) return false;
     const effect = claimed.value;
-    const exit = yield* Effect.exit(execute(effect));
+    const outcome = yield* Effect.raceFirst(
+      Effect.exit(execute(effect)),
+      Effect.as(outbox.awaitCancellation(effect.id), "cancelled" as const),
+    ).pipe(Effect.scoped);
+    if (outcome === "cancelled") {
+      yield* Effect.logDebug("A cancelled orchestration effect was stopped.").pipe(
+        Effect.annotateLogs({ effectId: effect.id, effectType: effect.request.type }),
+      );
+      return true;
+    }
+    const exit = outcome;
     if (exit._tag === "Success") {
       yield* outbox.succeed(effect.id, yield* nowIso);
     } else {

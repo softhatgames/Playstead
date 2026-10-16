@@ -24,7 +24,11 @@ export type TimelineRow =
       readonly icon: "file" | "tool";
       readonly tone: "tool" | "error";
       readonly running: boolean;
-    };
+    }
+  /** The person pressed **Interrupt** (T3 Code's `V2LifecycleRow`). */
+  | { readonly kind: "interrupt-request"; readonly id: string; readonly label: string }
+  /** The run has stopped. */
+  | { readonly kind: "interrupted"; readonly id: string; readonly label: string };
 
 /** A path inside the project, shown from the project's folder. */
 const displayPath = (fileName: string, workspaceRoot: string | undefined) => {
@@ -42,7 +46,9 @@ const verb = (item: OrchestrationV2TurnItem, running: string, done: string) =>
     ? running
     : item.status === "failed"
       ? "Failed"
-      : done;
+      : item.status === "interrupted" || item.status === "cancelled"
+        ? "Stopped"
+        : done;
 
 const workRow = (
   item: OrchestrationV2TurnItem,
@@ -80,6 +86,10 @@ export function deriveTimelineRows(
         return workRow(item, item.toolName, undefined);
       case "error":
         return workRow(item, item.failure.message, undefined);
+      case "run_interrupt_request":
+        return { kind: "interrupt-request", id: item.id, label: "Interrupt requested" };
+      case "run_interrupt_result":
+        return { kind: "interrupted", id: item.id, label: "Interrupted" };
     }
   });
 }

@@ -30,7 +30,7 @@ import { ProviderDriverKind, ProviderInstanceId } from "./providerInstance.ts";
  * project contract keeps them, so one schema serves the database and the wire.
  *
  * Absent until their tickets: subagents, plans, checkpoints, context
- * handoffs, runtime requests (#25), interrupts (#24), model changes (#23).
+ * handoffs and runtime requests (#25).
  */
 
 export const ORCHESTRATION_V2_WS_METHODS = {
@@ -230,9 +230,11 @@ const TurnItemBaseFields = {
 
 /**
  * What the thread view shows, item by item: T3 Code's turn items trimmed to
- * messages, file changes, commands, other tools and errors. A `file_change`
- * carries the written content in `newStr`, which T3 Code's Claude adapter
- * leaves out.
+ * messages, file changes, commands, other tools, errors and a run's
+ * interrupt. A `file_change` carries the written content in `newStr`, which
+ * T3 Code's Claude adapter leaves out. An interrupt is a request, written
+ * when the person asks, and a result, written when the run has stopped; the
+ * result names its request in `parentItemId`.
  */
 export const OrchestrationV2TurnItem = Schema.Union([
   Schema.Struct({
@@ -271,6 +273,17 @@ export const OrchestrationV2TurnItem = Schema.Union([
     ...TurnItemBaseFields,
     type: Schema.Literal("error"),
     failure: OrchestrationV2ProviderFailure,
+  }),
+  Schema.Struct({
+    ...TurnItemBaseFields,
+    type: Schema.Literal("run_interrupt_request"),
+    message: Schema.String,
+  }),
+  Schema.Struct({
+    ...TurnItemBaseFields,
+    type: Schema.Literal("run_interrupt_result"),
+    message: Schema.String,
+    parentItemId: TurnItemId,
   }),
 ]);
 export type OrchestrationV2TurnItem = typeof OrchestrationV2TurnItem.Type;
@@ -400,7 +413,8 @@ export type OrchestrationV2ThreadStreamItem = typeof OrchestrationV2ThreadStream
  * A thread is created with its project, provider instance and model, always in
  * Full access and the default interaction mode. Its model can change to
  * another of the same provider instance's. A message is plain text; the
- * first one's `titleSeed` titles the thread.
+ * first one's `titleSeed` titles the thread. `run.interrupt` stops a run
+ * that is still active.
  */
 export const OrchestrationV2Command = Schema.Union([
   Schema.Struct({
@@ -424,6 +438,12 @@ export const OrchestrationV2Command = Schema.Union([
     messageId: MessageId,
     text: TrimmedNonEmptyString,
     titleSeed: Schema.optionalKey(TrimmedNonEmptyString),
+  }),
+  Schema.Struct({
+    type: Schema.Literal("run.interrupt"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    runId: RunId,
   }),
 ]);
 export type OrchestrationV2Command = typeof OrchestrationV2Command.Type;

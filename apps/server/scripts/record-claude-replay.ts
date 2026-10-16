@@ -36,6 +36,10 @@ import {
   runFirstTurn,
   runSecondTurn,
 } from "../src/orchestration-v2/testkit/fixtures/restartResume.ts";
+import {
+  CLAUDE_TURN_INTERRUPT_SCENARIO,
+  runTurnInterruptScenario,
+} from "../src/orchestration-v2/testkit/fixtures/turnInterrupt.ts";
 import { makeTestServerConfig } from "../src/testUtils/testServer.ts";
 
 /**
@@ -46,10 +50,11 @@ import { makeTestServerConfig } from "../src/testUtils/testServer.ts";
  * adapter sends). It uses the signed-in `claude` on PATH, in a temporary
  * empty folder, and writes `src/orchestration-v2/testkit/fixtures/<scenario>.claude.ndjson`.
  *
- *   node apps/server/scripts/record-claude-replay.ts [file_create | restart_resume]
+ *   node apps/server/scripts/record-claude-replay.ts [file_create | restart_resume | turn_interrupt]
  *
  * `restart_resume` builds the services a second time over the same home
- * between its two turns, as a restarted server would.
+ * between its two turns, as a restarted server would. `turn_interrupt`
+ * interrupts a long command once it runs, then sends one more message.
  *
  * The header carries `claude --version` and the capture date. The frames are
  * scrubbed of the folder (which becomes `<workspace>`), this machine's home,
@@ -199,6 +204,22 @@ const trimmedInbound = (frame: unknown): unknown => {
   return frame;
 };
 
+/**
+ * Claude Code keeps sending bookkeeping after the last turn's `result`
+ * (`command_lifecycle`, for one). Nothing waits for it, so a replay could
+ * not tell whether it was read before the test ends; it is left out.
+ */
+const untilLastResult = (recorded: ReadonlyArray<ProviderReplayEntry>) => {
+  const last = recorded.findLastIndex(
+    (entry) =>
+      entry.type === "emit_inbound" &&
+      typeof entry.frame === "object" &&
+      entry.frame !== null &&
+      Reflect.get(entry.frame, "type") === "result",
+  );
+  return last < 0 ? recorded : recorded.slice(0, last + 1);
+};
+
 type HarnessOptions = Parameters<typeof makeOrchestrationHarness>[0];
 
 /** One file-creating turn. */
@@ -218,6 +239,23 @@ const recordFileCreate = (options: HarnessOptions) =>
       }),
     );
     if (run.status !== "completed") return yield* Effect.die(`The run ended ${run.status}.`);
+    return { harness, workspace };
+  });
+
+/** A turn interrupted while its command runs, then a turn after it. */
+const recordTurnInterrupt = (options: HarnessOptions) =>
+  Effect.gen(function* () {
+    const harness = yield* makeOrchestrationHarness(options);
+    const { workspace, first, next } = yield* runTurnInterruptScenario(
+      harness,
+      CLAUDE_TURN_INTERRUPT_SCENARIO,
+    );
+    yield* Effect.logInfo("The turns ended.").pipe(
+      Effect.annotateLogs({ first: first.status, next: next.status }),
+    );
+    if (first.status !== "interrupted" || next.status !== "completed") {
+      return yield* Effect.die(`The runs ended ${first.status} and ${next.status}.`);
+    }
     return { harness, workspace };
   });
 
@@ -251,7 +289,11 @@ const program = Effect.gen(function* () {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const scenario = process.argv[2] ?? FILE_CREATE_SCENARIO.scenario;
-  if (scenario !== FILE_CREATE_SCENARIO.scenario && scenario !== RESTART_RESUME_SCENARIO.scenario) {
+  if (
+    scenario !== FILE_CREATE_SCENARIO.scenario &&
+    scenario !== RESTART_RESUME_SCENARIO.scenario &&
+    scenario !== CLAUDE_TURN_INTERRUPT_SCENARIO.scenario
+  ) {
     return yield* Effect.die(`No scenario is called ${scenario}.`);
   }
   const version = yield* claudeVersion;
@@ -281,7 +323,9 @@ const program = Effect.gen(function* () {
   const { harness, workspace } =
     scenario === RESTART_RESUME_SCENARIO.scenario
       ? yield* recordRestartResume(harnessOptions)
-      : yield* recordFileCreate(harnessOptions);
+      : scenario === CLAUDE_TURN_INTERRUPT_SCENARIO.scenario
+        ? yield* recordTurnInterrupt(harnessOptions)
+        : yield* recordFileCreate(harnessOptions);
 
   const home = NodeOS.homedir();
   const user = NodeOS.userInfo().username;
@@ -299,7 +343,7 @@ const program = Effect.gen(function* () {
     [`/${user}/`, "/replay-user/"],
   ];
   const entries: Array<ProviderReplayEntry> = collapseScrubbedDeltas(
-    recording.entries,
+    untilLastResult(recording.entries),
     replacements,
   ).map((entry) => ({
     ...entry,
@@ -323,7 +367,16 @@ const program = Effect.gen(function* () {
               model: RESTART_RESUME_SCENARIO.model,
               prompts: [RESTART_RESUME_SCENARIO.firstPrompt, RESTART_RESUME_SCENARIO.secondPrompt],
             }
-          : { model: FILE_CREATE_SCENARIO.model, prompt: FILE_CREATE_SCENARIO.prompt }),
+          : scenario === CLAUDE_TURN_INTERRUPT_SCENARIO.scenario
+            ? {
+                model: CLAUDE_TURN_INTERRUPT_SCENARIO.model,
+                prompts: [
+                  CLAUDE_TURN_INTERRUPT_SCENARIO.longPrompt,
+                  CLAUDE_TURN_INTERRUPT_SCENARIO.nextPrompt,
+                ],
+                interruptAfter: "command_execution running",
+              }
+            : { model: FILE_CREATE_SCENARIO.model, prompt: FILE_CREATE_SCENARIO.prompt }),
         nativeSessionId: recording.sessionIds[0],
         recorder: "apps/server/scripts/record-claude-replay.ts",
       },

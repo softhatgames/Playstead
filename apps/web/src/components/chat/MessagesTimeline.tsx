@@ -46,6 +46,33 @@ export function MessagesTimeline(props: {
             );
           case "work":
             return <WorkLogRow key={row.id} row={row} />;
+          // T3 Code's `V2LifecycleRow`: the request on the person's side,
+          // the result as a divider across the timeline.
+          case "interrupt-request":
+            return (
+              <div
+                key={row.id}
+                className="flex items-center justify-end gap-2 text-xs text-red-700 dark:text-red-400"
+              >
+                <span aria-hidden="true" className="font-mono">
+                  ■
+                </span>
+                <span className="font-medium">{row.label}</span>
+              </div>
+            );
+          case "interrupted":
+            return (
+              <div
+                key={row.id}
+                role="separator"
+                aria-label={row.label}
+                className="flex items-center gap-3 text-xs text-red-700 dark:text-red-400"
+              >
+                <span className="h-px flex-1 bg-red-200 dark:bg-red-900" />
+                <span className="font-medium">{row.label}</span>
+                <span className="h-px flex-1 bg-red-200 dark:bg-red-900" />
+              </div>
+            );
         }
       })}
       {props.working && lastRow?.kind !== "assistant" ? (

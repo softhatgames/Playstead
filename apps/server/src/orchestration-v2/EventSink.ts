@@ -2,10 +2,12 @@ import {
   CommandId,
   EventId,
   type ProjectId,
+  type RunId,
   type ThreadId,
 } from "@playstead/contracts/baseSchemas";
 import type {
   OrchestrationV2DomainEvent,
+  OrchestrationV2RunStatus,
   OrchestrationV2StoredEvent,
   OrchestrationV2TurnItem,
 } from "@playstead/contracts/orchestrationV2";
@@ -25,11 +27,14 @@ import * as EventStore from "./EventStore.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProjectStore from "./ProjectStore.ts";
 
-class EventSinkWriteError extends Schema.TaggedError<EventSinkWriteError>()("EventSinkWriteError", {
-  commandId: Schema.NullOr(CommandId),
-  eventCount: Schema.Number,
-  cause: Schema.Defect(),
-}) {
+export class EventSinkWriteError extends Schema.TaggedError<EventSinkWriteError>()(
+  "EventSinkWriteError",
+  {
+    commandId: Schema.NullOr(CommandId),
+    eventCount: Schema.Number,
+    cause: Schema.Defect(),
+  },
+) {
   override get message(): string {
     return `Failed to commit ${this.eventCount} orchestration event(s)${this.commandId === null ? "" : ` for command ${this.commandId}`}.`;
   }
@@ -76,8 +81,14 @@ export interface EventSinkV2Shape {
     readonly acceptedAt: DateTime.Utc;
     readonly events: ReadonlyArray<NewDomainEvent>;
     readonly effects: ReadonlyArray<EffectOutbox.PendingEffect>;
-    /** Cancels the thread's process-bound effects in the same transaction. */
-    readonly cancelUnsettledEffects?: { readonly reason: string };
+    /**
+     * Cancels the thread's process-bound effects (or only those of
+     * `effectTypes`) in the same transaction; a running one is told after.
+     */
+    readonly cancelUnsettledEffects?: {
+      readonly reason: string;
+      readonly effectTypes?: ReadonlyArray<EffectOutbox.OrchestrationEffectRequestV2["type"]>;
+    };
   }) => Effect.Effect<
     { readonly receipt: CommandReceiptStore.CommandReceiptV2; readonly committed: boolean },
     EventSinkWriteError
@@ -97,6 +108,18 @@ export interface EventSinkV2Shape {
   readonly write: (
     events: ReadonlyArray<NewDomainEvent>,
   ) => Effect.Effect<ReadonlyArray<OrchestrationV2StoredEvent>, EventSinkWriteError>;
+  /**
+   * `write`, only while the run's status is one of `statuses`, checked in
+   * the same transaction (T3 Code's `writeIfRunCurrent`), so a provider's
+   * late output cannot reopen a run that has ended. Says whether it wrote.
+   */
+  readonly writeIfRunStatus: (
+    guard: {
+      readonly runId: RunId;
+      readonly statuses: ReadonlySet<OrchestrationV2RunStatus>;
+    },
+    events: ReadonlyArray<NewDomainEvent>,
+  ) => Effect.Effect<boolean, EventSinkWriteError>;
 }
 
 /**
@@ -259,7 +282,11 @@ const make = Effect.gen(function* () {
           error: null,
         };
         if (!(yield* receipts.insertIfAbsent(reserved))) {
-          return { receipt: yield* existingThreadReceipt(input.commandId), events: undefined };
+          return {
+            receipt: yield* existingThreadReceipt(input.commandId),
+            events: undefined,
+            cancelled: [],
+          };
         }
         const events = yield* appendAndApply(input.commandId, input.events);
         yield* outbox.enqueue({
@@ -268,26 +295,33 @@ const make = Effect.gen(function* () {
           effects: input.effects,
           now: DateTime.formatIso(input.acceptedAt),
         });
-        if (input.cancelUnsettledEffects !== undefined) {
-          yield* outbox.cancelUnsettled({
-            threadId: input.threadId,
-            reason: input.cancelUnsettledEffects.reason,
-            now: DateTime.formatIso(input.acceptedAt),
-          });
-        }
+        const cancelled =
+          input.cancelUnsettledEffects === undefined
+            ? []
+            : yield* outbox.cancelUnsettled({
+                threadId: input.threadId,
+                reason: input.cancelUnsettledEffects.reason,
+                now: DateTime.formatIso(input.acceptedAt),
+                ...(input.cancelUnsettledEffects.effectTypes === undefined
+                  ? {}
+                  : { effectTypes: input.cancelUnsettledEffects.effectTypes }),
+              });
         const receipt = {
           ...reserved,
           resultSequence: events.at(-1)?.sequence ?? (yield* eventStore.latestApplicationSequence),
         };
         yield* receipts.upsert(receipt);
-        return { receipt, events };
+        return { receipt, events, cancelled };
       }),
       (result) =>
         result.events === undefined
           ? Effect.void
           : Effect.andThen(
               publishThreadEvents(result.events),
-              input.effects.length === 0 ? Effect.void : outbox.notifyAvailable,
+              Effect.andThen(
+                outbox.signalCancellations(result.cancelled),
+                input.effects.length === 0 ? Effect.void : outbox.notifyAvailable,
+              ),
             ),
     ).pipe(
       Effect.map((result) => ({ receipt: result.receipt, committed: result.events !== undefined })),
@@ -332,7 +366,23 @@ const make = Effect.gen(function* () {
       ),
     );
 
+  const writeIfRunStatus: EventSinkV2Shape["writeIfRunStatus"] = (guard, events) =>
+    commitThenPublish(
+      Effect.gen(function* () {
+        const run = yield* projections.getRun(guard.runId);
+        if (Option.isNone(run) || !guard.statuses.has(run.value.status)) return undefined;
+        return yield* appendAndApply(null, events);
+      }),
+      (stored) => (stored === undefined ? Effect.void : publishThreadEvents(stored)),
+    ).pipe(
+      Effect.map((stored) => stored !== undefined),
+      Effect.mapError(
+        (cause) => new EventSinkWriteError({ commandId: null, eventCount: events.length, cause }),
+      ),
+    );
+
   return EventSinkV2.of({
+    writeIfRunStatus,
     commitProjectCommand,
     commitRejectedProjectCommand,
     commitCommand,

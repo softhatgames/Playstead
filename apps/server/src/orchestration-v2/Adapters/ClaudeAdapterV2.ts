@@ -17,6 +17,7 @@ import type {
 } from "@playstead/contracts/orchestrationV2";
 import type { ProviderInstanceId } from "@playstead/contracts/providerInstance";
 import {
+  INTERRUPT_TERMINAL_TIMEOUT,
   type ProviderAdapterV2,
   ProviderAdapterV2Error,
   type ProviderAdapterV2Event,
@@ -27,6 +28,7 @@ import type { ProcessEnvironment } from "@playstead/shared/shell";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import type * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -53,10 +55,18 @@ import { resolveClaudeSdkExecutablePath } from "../../provider/Drivers/ClaudeExe
  *
  * - A turn whose model differs from the query's changes it first with the
  *   SDK's `setModel`, as T3 Code does when the selection can change live.
+ * - Each message goes out with its own uuid, and only the frames Claude Code
+ *   stamps with it belong to the turn: Claude Code also runs turns of its
+ *   own, for example when a background command finishes, and their `result`
+ *   must not end the person's turn. T3 Code ends the active turn on any
+ *   `result`.
+ * - An interrupt is the SDK's `interrupt()` (T3 Code's `interruptTurn`); the
+ *   turn ends interrupted on Claude's `result`, or after
+ *   `INTERRUPT_TERMINAL_TIMEOUT` without one. Unlike T3 Code, the query is
+ *   not closed, so the thread's next message continues the same session.
  *
- * Absent until their tickets: `canUseTool` and `AskUserQuestion` (#25),
- * interrupt (#24), resuming a session (#26); and, as in
- * the slice as a whole, thinking, MCP, subagents, attachments and usage.
+ * Absent until their tickets: `canUseTool` and `AskUserQuestion` (#25); and,
+ * as in the slice as a whole, thinking, MCP, subagents, attachments and usage.
  */
 
 export type ClaudeAgentSdkQueryOptions = ClaudeQueryOptions;
@@ -82,6 +92,8 @@ export interface ClaudeAgentSdkQuerySession {
   readonly offer: (message: SDKUserMessage) => Effect.Effect<void, ClaudeAgentSdkQueryRunnerError>;
   /** Changes the model for the query's next turns. */
   readonly setModel: (model: string) => Effect.Effect<void, ClaudeAgentSdkQueryRunnerError>;
+  /** Asks Claude Code to stop the turn it is running. */
+  readonly interrupt: Effect.Effect<void, ClaudeAgentSdkQueryRunnerError>;
 }
 
 /**
@@ -145,6 +157,10 @@ export const layerQueryRunner: Layer.Layer<ClaudeAgentSdkQueryRunner, never, Cry
                   try: () => queryRuntime.setModel(model),
                   catch: runnerError("setModel"),
                 }),
+              interrupt: Effect.tryPromise({
+                try: () => queryRuntime.interrupt(),
+                catch: runnerError("interrupt"),
+              }).pipe(Effect.asVoid),
             };
           }),
       });
@@ -207,12 +223,38 @@ export const recordedQueryOptions = (options: ClaudeAgentSdkQueryOptions) => ({
   additionalDirectories: options.additionalDirectories,
 });
 
-/** A plain-text message from the person, as T3 Code's `makeClaudeUserMessage` builds one. */
-const makeClaudeUserMessage = (text: string): SDKUserMessage => ({
+/**
+ * A plain-text message from the person, as T3 Code's `makeClaudeUserMessage`
+ * builds one, with the uuid Claude Code stamps on the turn's frames.
+ */
+const makeClaudeUserMessage = (text: string, uuid: string): SDKUserMessage => ({
   type: "user",
   message: { role: "user", content: text },
   parent_tool_use_id: null,
+  uuid: uuid as SDKUserMessage["uuid"] & string,
 });
+
+/** A turn's prompt uuid: its provider turn id is `provider-turn:<uuid>`. */
+const promptUuidFor = (providerTurnId: string) => providerTurnId.replace(/^provider-turn:/, "");
+
+/** Whether Claude Code stamped this frame with a prompt, and which. */
+const stampOf = (message: SDKMessage): string | undefined => {
+  const stamp: unknown = Reflect.get(message, "user_message_uuid");
+  return typeof stamp === "string" ? stamp : undefined;
+};
+
+/**
+ * Whether a `result` answers the turn's prompt. A result without any echo
+ * comes from a Claude Code too old to stamp, or from a turn of its own that
+ * answered no prompt; only the first is the turn's.
+ */
+const resultAnswers = (result: SDKResultMessage, promptUuid: string) => {
+  const uuids =
+    result.user_message_uuids ??
+    (result.user_message_uuid === undefined ? undefined : [result.user_message_uuid]);
+  if (uuids !== undefined) return uuids.includes(promptUuid);
+  return result.result_index === undefined;
+};
 
 type ClaudeToolItemType = "file_change" | "command_execution" | "dynamic_tool";
 
@@ -254,10 +296,16 @@ const toolResultText = (content: unknown): string | undefined => {
 
 interface ActiveTurn {
   readonly input: ProviderAdapterV2TurnInput;
+  readonly promptUuid: string;
   readonly items: Map<string, OrchestrationV2TurnItem>;
   /** Content blocks seen per Claude message, so a whole message lines up with its streamed blocks. */
   readonly blocksSeen: Map<string, number>;
   currentMessageId: string | undefined;
+  /** Whether the turn Claude Code is running answers this prompt. */
+  owned: boolean;
+  /** Set once the person asked to stop it. */
+  interrupting: boolean;
+  readonly ended: Deferred.Deferred<void>;
 }
 
 const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
@@ -280,7 +328,8 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (input
   });
 
   const adapterError =
-    (operation: "open-session" | "ensure-thread" | "start-turn") => (cause: unknown) =>
+    (operation: "open-session" | "ensure-thread" | "start-turn" | "interrupt-turn") =>
+    (cause: unknown) =>
       new ProviderAdapterV2Error({
         driver: "claudeAgent",
         operation,
@@ -515,7 +564,13 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (input
             const item = turn.items.get(block.tool_use_id);
             if (item === undefined || item.completedAt !== null) continue;
             const now = yield* nowIso;
-            const status = block.is_error === true ? ("failed" as const) : ("completed" as const);
+            // A tool the interrupt cut short was stopped, not failed.
+            const status =
+              block.is_error !== true
+                ? ("completed" as const)
+                : turn.interrupting
+                  ? ("interrupted" as const)
+                  : ("failed" as const);
             const output = toolResultText(block.content);
             const ended = { ...item, status, completedAt: now, updatedAt: now };
             const withOutput: OrchestrationV2TurnItem =
@@ -530,10 +585,12 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (input
 
       const endTurn = (
         turn: ActiveTurn,
-        status: "completed" | "failed",
+        status: "completed" | "interrupted" | "failed",
         failure: OrchestrationV2ProviderFailure | null,
       ) =>
         Effect.gen(function* () {
+          // Ends once: Claude's result and the interrupt's timeout may race.
+          if ((yield* Ref.get(activeTurn)) !== turn) return;
           // Anything still open ends with the turn.
           const now = yield* nowIso;
           for (const [key, item] of turn.items) {
@@ -547,12 +604,13 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (input
             );
           }
           yield* Ref.set(activeTurn, undefined);
+          yield* Deferred.succeed(turn.ended, undefined);
           yield* publish(
             failure === null
               ? {
                   type: "turn.terminal",
                   providerTurnId: turn.input.providerTurnId,
-                  status: "completed",
+                  status: status === "failed" ? "completed" : status,
                   failure: null,
                 }
               : {
@@ -565,6 +623,15 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (input
         });
 
       const handleResult = (turn: ActiveTurn, result: SDKResultMessage) => {
+        if (!resultAnswers(result, turn.promptUuid)) return Effect.void;
+        // T3 Code's `terminalStatusFromResult`, and its `interruptedTurns`.
+        if (
+          turn.interrupting ||
+          result.terminal_reason === "aborted_tools" ||
+          result.terminal_reason === "aborted_streaming"
+        ) {
+          return endTurn(turn, "interrupted", null);
+        }
         if (result.subtype === "success" && !result.is_error) {
           return endTurn(turn, "completed", null);
         }
@@ -589,6 +656,16 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (input
           ) {
             return;
           }
+          // Each of Claude Code's turns starts with `init`; the frames it
+          // stamps with a prompt's uuid say whose turn it is.
+          if (message.type === "system" && message.subtype === "init") {
+            turn.owned = false;
+            return;
+          }
+          const stamp = stampOf(message);
+          if (stamp !== undefined) turn.owned = stamp === turn.promptUuid;
+          if (message.type === "result") return yield* handleResult(turn, message);
+          if (!turn.owned) return;
           switch (message.type) {
             case "stream_event":
               return yield* handleStreamEvent(turn, message);
@@ -596,8 +673,6 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (input
               return yield* handleAssistant(turn, message);
             case "user":
               return yield* handleToolResults(turn, message);
-            case "result":
-              return yield* handleResult(turn, message);
             default:
               return;
           }
@@ -659,16 +734,45 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (input
               yield* session.setModel(nextModel).pipe(Effect.mapError(adapterError("start-turn")));
               yield* Ref.set(model, nextModel);
             }
+            const promptUuid = promptUuidFor(turnInput.providerTurnId);
             yield* Ref.set(activeTurn, {
               input: turnInput,
+              promptUuid,
               items: new Map(),
               blocksSeen: new Map(),
               currentMessageId: undefined,
+              owned: false,
+              interrupting: false,
+              ended: yield* Deferred.make<void>(),
             });
-            yield* session.offer(makeClaudeUserMessage(turnInput.message.text)).pipe(
+            yield* session.offer(makeClaudeUserMessage(turnInput.message.text, promptUuid)).pipe(
               Effect.tapError(() => Ref.set(activeTurn, undefined)),
               Effect.mapError(adapterError("start-turn")),
             );
+          }),
+        interruptTurn: ({ providerTurnId }) =>
+          Effect.gen(function* () {
+            const turn = yield* Ref.get(activeTurn);
+            if (turn === undefined || turn.input.providerTurnId !== providerTurnId) return;
+            turn.interrupting = true;
+            const stopped = yield* session.interrupt.pipe(
+              Effect.andThen(Deferred.await(turn.ended)),
+              Effect.timeoutOption(INTERRUPT_TERMINAL_TIMEOUT),
+              Effect.mapError(adapterError("interrupt-turn")),
+              Effect.ensuring(
+                // Claude never answered: the turn ends here, so the next can start.
+                Effect.suspend(() =>
+                  Deferred.isDone(turn.ended).pipe(
+                    Effect.flatMap((ended) =>
+                      ended ? Effect.void : endTurn(turn, "interrupted", null),
+                    ),
+                  ),
+                ),
+              ),
+            );
+            if (stopped._tag === "None") {
+              yield* Effect.logWarning("Claude did not end an interrupted turn in time.");
+            }
           }),
       };
       return runtime;

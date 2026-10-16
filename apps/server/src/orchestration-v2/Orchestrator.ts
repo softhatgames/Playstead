@@ -148,6 +148,9 @@ const make = Effect.gen(function* () {
         acceptedAt: now,
         events: decided.success.events,
         effects: decided.success.effects,
+        ...(decided.success.cancelUnsettledEffects === undefined
+          ? {}
+          : { cancelUnsettledEffects: decided.success.cancelUnsettledEffects }),
       });
       return receipt;
     });

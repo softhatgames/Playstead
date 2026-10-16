@@ -1,4 +1,4 @@
-import type { ThreadId, TurnItemId } from "@playstead/contracts/baseSchemas";
+import type { RunId, ThreadId, TurnItemId } from "@playstead/contracts/baseSchemas";
 import {
   ACTIVE_RUN_STATUSES,
   OrchestrationV2AppThread,
@@ -144,6 +144,10 @@ export class ProjectionStoreV2 extends Context.Service<
      * (T3 Code's `getRecoveryThreadIds("runtime")`).
      */
     readonly listRecoveryThreadIds: Effect.Effect<ReadonlyArray<ThreadId>, ProjectionStoreV2Error>;
+    /** One run as the projection has it now. */
+    readonly getRun: (
+      runId: RunId,
+    ) => Effect.Effect<Option.Option<OrchestrationV2Run>, ProjectionStoreV2Error>;
     /** The ordinal a stored turn item has, for the sink to keep it. */
     readonly getTurnItemOrdinal: (
       itemId: TurnItemId,
@@ -296,8 +300,22 @@ const make = Effect.gen(function* () {
       Effect.mapError(failWith("maxTurnItemOrdinal")),
     );
 
+  const getRun = (runId: RunId) =>
+    sql<{ readonly payloadJson: string }>`
+      SELECT payload_json AS "payloadJson" FROM orchestration_v2_projection_runs
+      WHERE id = ${runId}
+    `.pipe(
+      Effect.flatMap((rows) =>
+        rows[0] === undefined
+          ? Effect.succeedNone
+          : Effect.asSome(decodeJsonString(OrchestrationV2Run)(rows[0].payloadJson)),
+      ),
+      Effect.mapError(failWith("getRun")),
+    );
+
   return ProjectionStoreV2.of({
     apply,
+    getRun,
     getThread,
     getThreadShell,
     listThreadShells,

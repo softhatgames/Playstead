@@ -1,20 +1,27 @@
-import { CommandId, RunId, ThreadId } from "@playstead/contracts/baseSchemas";
+import { CommandId, ProviderTurnId, RunId, ThreadId } from "@playstead/contracts/baseSchemas";
 import * as Context from "effect/Context";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
+import type * as Scope from "effect/Scope";
 import * as SqlClient from "effect/sql/SqlClient";
 
 /**
  * The work a command leaves for the effect worker (T3 Code's
- * `OrchestrationEffectRequestV2` at 2577baf). Only starting a provider turn
- * exists: there is no checkpoint, title generation or cleanup. The
- * interrupt (#24) and runtime-request answers (#25) join this union.
+ * `OrchestrationEffectRequestV2` at 2577baf): starting a run's provider
+ * turn, and interrupting it. There is no checkpoint, title generation or
+ * cleanup. Runtime-request answers (#25) join this union.
  */
 const OrchestrationEffectRequestV2 = Schema.Union([
   Schema.Struct({ type: Schema.Literal("provider-turn.start"), runId: RunId }),
+  Schema.Struct({
+    type: Schema.Literal("provider-turn.interrupt"),
+    runId: RunId,
+    providerTurnId: ProviderTurnId,
+  }),
 ]);
 export type OrchestrationEffectRequestV2 = typeof OrchestrationEffectRequestV2.Type;
 
@@ -26,7 +33,15 @@ export type OrchestrationEffectRequestV2 = typeof OrchestrationEffectRequestV2.T
  */
 const PROCESS_BOUND_EFFECT_TYPES: ReadonlyArray<OrchestrationEffectRequestV2["type"]> = [
   "provider-turn.start",
+  "provider-turn.interrupt",
 ];
+
+/** Which of a thread's effects a command cancels (T3 Code's `cancelUnsettledEffects`). */
+export interface CancelUnsettledEffects {
+  readonly reason: string;
+  /** By default every process-bound type. */
+  readonly effectTypes?: ReadonlyArray<OrchestrationEffectRequestV2["type"]>;
+}
 
 export interface PendingEffect {
   readonly id: string;
@@ -54,6 +69,8 @@ export class EffectOutboxError extends Schema.TaggedError<EffectOutboxError>()(
  * enqueued in the transaction that commits their command and claimed in
  * order, at most one running per thread. A failed effect is final: nothing
  * retries it, since starting a turn twice would send the message twice.
+ * A cancelled effect that is running is told through `awaitCancellation`,
+ * so the worker stops it (T3 Code's `signalCancellations`).
  */
 export class EffectOutboxV2 extends Context.Service<
   EffectOutboxV2,
@@ -76,14 +93,24 @@ export class EffectOutboxV2 extends Context.Service<
       now: string,
     ) => Effect.Effect<void, EffectOutboxError>;
     /**
-     * Cancels a thread's process-bound effects that are pending or running.
-     * Call inside the transaction that settles the thread's work.
+     * Cancels a thread's process-bound effects (or only those of
+     * `effectTypes`) that are pending or running, and returns their ids.
+     * Call inside the transaction that settles the thread's work, then
+     * `signalCancellations` once it has committed.
      */
     readonly cancelUnsettled: (input: {
       readonly threadId: ThreadId;
       readonly reason: string;
       readonly now: string;
-    }) => Effect.Effect<number, EffectOutboxError>;
+      readonly effectTypes?: ReadonlyArray<OrchestrationEffectRequestV2["type"]>;
+    }) => Effect.Effect<ReadonlyArray<string>, EffectOutboxError>;
+    /** Tells the worker running any of these effects that they were cancelled. */
+    readonly signalCancellations: (effectIds: ReadonlyArray<string>) => Effect.Effect<void>;
+    /**
+     * Resolves when the effect is cancelled, while the worker runs it; the
+     * scope's end stops listening.
+     */
+    readonly awaitCancellation: (effectId: string) => Effect.Effect<void, never, Scope.Scope>;
     /**
      * Cancels every process-bound effect still marked running, which only a
      * process that has gone could have claimed (T3 Code's
@@ -200,27 +227,48 @@ const make = Effect.gen(function* () {
     error: string | null,
     now: string,
   ) =>
+    // A cancelled effect stays cancelled, whatever its work reports after.
     sql`
       UPDATE orchestration_v2_effect_outbox
       SET status = ${status}, last_error = ${error}, updated_at = ${now}
-      WHERE effect_id = ${effectId}
+      WHERE effect_id = ${effectId} AND status = 'running'
     `.pipe(Effect.asVoid, Effect.mapError(failWith(status === "succeeded" ? "succeed" : "fail")));
 
   const cancelUnsettled = (input: {
     readonly threadId: ThreadId;
     readonly reason: string;
     readonly now: string;
+    readonly effectTypes?: ReadonlyArray<OrchestrationEffectRequestV2["type"]>;
   }) =>
     sql<{ readonly effectId: string }>`
       UPDATE orchestration_v2_effect_outbox
       SET status = 'cancelled', last_error = ${input.reason}, updated_at = ${input.now}
       WHERE thread_id = ${input.threadId}
         AND status IN ('pending', 'running')
-        AND ${sql.in("effect_type", PROCESS_BOUND_EFFECT_TYPES)}
+        AND ${sql.in("effect_type", input.effectTypes ?? PROCESS_BOUND_EFFECT_TYPES)}
       RETURNING effect_id AS "effectId"
     `.pipe(
-      Effect.map((rows) => rows.length),
+      Effect.map((rows) => rows.map((row) => row.effectId)),
       Effect.mapError(failWith("cancelUnsettled")),
+    );
+
+  // The effects the worker is running, each with the signal that cancels it.
+  const running = new Map<string, Deferred.Deferred<void>>();
+  const awaitCancellation = (effectId: string) =>
+    Effect.acquireRelease(
+      Effect.tap(Deferred.make<void>(), (signal) =>
+        Effect.sync(() => running.set(effectId, signal)),
+      ),
+      () => Effect.sync(() => running.delete(effectId)),
+    ).pipe(Effect.flatMap(Deferred.await));
+  const signalCancellations = (effectIds: ReadonlyArray<string>) =>
+    Effect.forEach(
+      effectIds,
+      (effectId) => {
+        const signal = running.get(effectId);
+        return signal === undefined ? Effect.void : Deferred.succeed(signal, undefined);
+      },
+      { discard: true },
     );
 
   const reconcileAfterProcessLoss = (input: { readonly reason: string; readonly now: string }) =>
@@ -239,6 +287,8 @@ const make = Effect.gen(function* () {
     enqueue,
     claimNext,
     cancelUnsettled,
+    signalCancellations,
+    awaitCancellation,
     reconcileAfterProcessLoss,
     succeed: (effectId, now) => settle("succeeded", effectId, null, now),
     fail: (effectId, error, now) => settle("failed", effectId, error, now),

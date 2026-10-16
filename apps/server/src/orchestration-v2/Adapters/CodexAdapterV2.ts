@@ -10,6 +10,7 @@ import * as CodexClient from "@playstead/effect-codex-app-server/client";
 import type { CodexAppServerError } from "@playstead/effect-codex-app-server/errors";
 import type * as CodexSchema from "@playstead/effect-codex-app-server/schema";
 import {
+  INTERRUPT_TERMINAL_TIMEOUT,
   type ProviderAdapterV2,
   ProviderAdapterV2Error,
   type ProviderAdapterV2Event,
@@ -19,6 +20,7 @@ import {
 import type { ProcessEnvironment } from "@playstead/shared/shell";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -46,10 +48,13 @@ import { codexClientInfo, spawnCodexAppServer } from "../../provider/CodexProvid
  * - A file Codex adds is a `file_change` item carrying the file's name and
  *   content, which T3 Code's item keeps only as a diff.
  *
- * Absent until their tickets: interrupt (#24), user-input requests (#25),
- * model changes (#23), resuming a thread (#26); and, as in the slice as a
- * whole, MCP, plans, reasoning, collaboration modes, subagents, goals,
- * approvals and usage. A server request nobody handles gets "method not
+ * - An interrupt is `turn/interrupt` (T3 Code's `interruptTurn`); the turn
+ *   ends interrupted on Codex's `turn/completed`, even one that says
+ *   completed, or after `INTERRUPT_TERMINAL_TIMEOUT` without one.
+ *
+ * Absent until their tickets: user-input requests (#25), resuming a thread
+ * after a restart; and, as in the slice as a whole, MCP, plans, reasoning,
+ * collaboration modes, subagents, goals, approvals and usage. A server request nobody handles gets "method not
  * found" from the client, so an unexpected approval fails loudly.
  */
 
@@ -150,6 +155,9 @@ interface ActiveTurn {
   /** Codex's id for the turn, once `turn/start` answers or a notification names it. */
   nativeTurnId: string | undefined;
   readonly items: Map<string, OrchestrationV2TurnItem>;
+  /** Set once the person asked to stop it (T3 Code's `interruptingNativeTurns`). */
+  interrupting: boolean;
+  readonly ended: Deferred.Deferred<void>;
 }
 
 const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
@@ -169,7 +177,8 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (input: 
   const clients = yield* CodexAppServerClientFactory;
 
   const adapterError =
-    (operation: "open-session" | "ensure-thread" | "start-turn") => (cause: unknown) =>
+    (operation: "open-session" | "ensure-thread" | "start-turn" | "interrupt-turn") =>
+    (cause: unknown) =>
       new ProviderAdapterV2Error({
         driver: CODEX,
         operation,
@@ -194,10 +203,14 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (input: 
 
       const publish = (event: ProviderAdapterV2Event) => PubSub.publish(events, event);
 
+      // Turns already ended, so a late notification of one is not taken
+      // for the next turn's.
+      const endedNativeTurns = new Set<string>();
+
       /** The running turn, if the notification is about it. */
       const turnFor = (nativeTurnId: string) =>
         Effect.map(Ref.get(activeTurn), (turn) => {
-          if (turn === undefined) return undefined;
+          if (turn === undefined || endedNativeTurns.has(nativeTurnId)) return undefined;
           if (turn.nativeTurnId === undefined) turn.nativeTurnId = nativeTurnId;
           return turn.nativeTurnId === nativeTurnId ? turn : undefined;
         });
@@ -333,6 +346,9 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (input: 
         failure: OrchestrationV2ProviderFailure | null,
       ) =>
         Effect.gen(function* () {
+          // Ends once: Codex's answer and the interrupt's timeout may race.
+          if ((yield* Ref.get(activeTurn)) !== turn) return;
+          if (turn.nativeTurnId !== undefined) endedNativeTurns.add(turn.nativeTurnId);
           // Anything still open ends with the turn.
           const now = yield* nowIso;
           for (const [key, item] of turn.items) {
@@ -346,6 +362,7 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (input: 
             );
           }
           yield* Ref.set(activeTurn, undefined);
+          yield* Deferred.succeed(turn.ended, undefined);
           yield* publish(
             status === "failed"
               ? {
@@ -404,7 +421,7 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (input: 
           const message = payload.turn.error?.message?.trim();
           switch (payload.turn.status) {
             case "completed":
-              return yield* endTurn(turn, "completed", null);
+              return yield* endTurn(turn, turn.interrupting ? "interrupted" : "completed", null);
             case "interrupted":
               return yield* endTurn(turn, "interrupted", null);
             case "failed":
@@ -491,6 +508,8 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (input: 
               input: turnInput,
               nativeTurnId: undefined,
               items: new Map(),
+              interrupting: false,
+              ended: yield* Deferred.make<void>(),
             };
             yield* Ref.set(activeTurn, turn);
             const started = yield* client
@@ -500,6 +519,39 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (input: 
                 Effect.mapError(adapterError("start-turn")),
               );
             turn.nativeTurnId ??= started.turn.id;
+          }),
+        interruptTurn: ({ providerTurnId }) =>
+          Effect.gen(function* () {
+            const turn = yield* Ref.get(activeTurn);
+            if (turn === undefined || turn.input.providerTurnId !== providerTurnId) return;
+            turn.interrupting = true;
+            const threadId = yield* Ref.get(nativeThreadId);
+            // Before `turn/start` has answered, Codex's id for the turn may
+            // not be known; then only the timeout ends it.
+            const ask =
+              threadId === undefined || turn.nativeTurnId === undefined
+                ? Effect.void
+                : client
+                    .request("turn/interrupt", { threadId, turnId: turn.nativeTurnId })
+                    .pipe(Effect.asVoid);
+            const stopped = yield* ask.pipe(
+              Effect.andThen(Deferred.await(turn.ended)),
+              Effect.timeoutOption(INTERRUPT_TERMINAL_TIMEOUT),
+              Effect.mapError(adapterError("interrupt-turn")),
+              Effect.ensuring(
+                // Codex never answered: the turn ends here, so the next can start.
+                Effect.suspend(() =>
+                  Deferred.isDone(turn.ended).pipe(
+                    Effect.flatMap((ended) =>
+                      ended ? Effect.void : endTurn(turn, "interrupted", null),
+                    ),
+                  ),
+                ),
+              ),
+            );
+            if (stopped._tag === "None") {
+              yield* Effect.logWarning("Codex did not end an interrupted turn in time.");
+            }
           }),
       };
       return runtime;

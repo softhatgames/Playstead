@@ -2,7 +2,7 @@ import type { ModelSelection } from "@playstead/contracts/orchestrationV2";
 import { type KeyboardEvent, useState } from "react";
 
 import { ArrowUpIcon } from "../icons.tsx";
-import type { ModelPickerEntry } from "./composer.logic.ts";
+import type { ComposerAction, ModelPickerEntry } from "./composer.logic.ts";
 import { ProviderModelPicker } from "./ProviderModelPicker.tsx";
 
 const errorMessage = (cause: unknown, fallback: string) =>
@@ -14,20 +14,38 @@ const errorMessage = (cause: unknown, fallback: string) =>
  * The plain-text composer, after T3 Code's `ChatComposer.tsx` and
  * `ComposerPrimaryActions.tsx` at 2577baf without rich text, attachments,
  * chips, commands, the queue or steering. Enter sends and Shift+Enter starts
- * a new line. While a run is active nothing can be sent; the interrupt is #24's.
+ * a new line. While a run is active nothing can be sent: the one action is
+ * **Interrupt**, and once pressed the composer says the run is stopping.
  */
 export function ChatComposer(props: {
   readonly entries: ReadonlyArray<ModelPickerEntry>;
   readonly selection: ModelSelection | undefined;
   readonly onSelectModel: (selection: ModelSelection) => void | Promise<void>;
-  readonly working: boolean;
+  readonly action: ComposerAction;
   readonly onSend: (text: string) => Promise<void>;
+  readonly onInterrupt: (
+    runId: Extract<ComposerAction, { kind: "interrupt" }>["runId"],
+  ) => Promise<void>;
 }) {
+  const { action } = props;
   const [text, setText] = useState("");
   const [sending, setSending] = useState(false);
+  const [interrupting, setInterrupting] = useState(false);
   const [error, setError] = useState<string | undefined>(undefined);
   const canSend =
-    text.trim().length > 0 && !props.working && !sending && props.selection !== undefined;
+    text.trim().length > 0 && action.kind === "send" && !sending && props.selection !== undefined;
+
+  const interrupt = async (runId: Extract<ComposerAction, { kind: "interrupt" }>["runId"]) => {
+    setInterrupting(true);
+    setError(undefined);
+    try {
+      await props.onInterrupt(runId);
+    } catch (cause) {
+      setError(errorMessage(cause, "The run could not be interrupted."));
+    } finally {
+      setInterrupting(false);
+    }
+  };
 
   const send = async () => {
     if (!canSend) return;
@@ -82,8 +100,12 @@ export function ChatComposer(props: {
             selection={props.selection}
             onSelect={(selection) => void selectModel(selection)}
           />
-          {props.working ? (
-            <span className="px-2 text-xs text-neutral-500 dark:text-neutral-400">Working…</span>
+          {action.kind === "interrupt" ? (
+            <InterruptButton disabled={interrupting} onClick={() => void interrupt(action.runId)} />
+          ) : action.kind === "interrupting" ? (
+            <span className="px-2 text-xs text-neutral-500 dark:text-neutral-400">
+              Interrupting…
+            </span>
           ) : (
             <button
               type="button"
@@ -98,5 +120,23 @@ export function ChatComposer(props: {
         </div>
       </div>
     </div>
+  );
+}
+
+/** T3 Code's stop button: a filled square in a red circle, labelled **Interrupt**. */
+function InterruptButton(props: { readonly disabled: boolean; readonly onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      aria-label="Interrupt"
+      title="Interrupt"
+      disabled={props.disabled}
+      onClick={props.onClick}
+      className="flex size-7 items-center justify-center rounded-full bg-red-600 text-white hover:bg-red-700 disabled:opacity-50"
+    >
+      <svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor" aria-hidden="true">
+        <rect x="2" y="2" width="8" height="8" rx="1.5" />
+      </svg>
+    </button>
   );
 }

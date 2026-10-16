@@ -22,10 +22,13 @@ import {
  * `makeReplayQueryRunner` and `recordClaudeAgentSdkReplayTranscript`).
  *
  * A recording is the frames the adapter sent (`query.open` with the options
- * it decides, then each `query.set_model` and `prompt.offer`) and every message Claude Code sent
- * back, in order. A replay compares each frame the adapter sends with the
- * next recorded one, strictly, and plays Claude's messages up to the next
- * frame it expects. `assertComplete` fails unless the whole recording was
+ * it decides, then each `query.set_model`, `prompt.offer` and
+ * `query.interrupt`) and every message Claude Code sent back, in order. A
+ * replay compares each frame the adapter sends with the next recorded one,
+ * strictly, and plays Claude's messages up to the next frame it expects.
+ * A prompt's uuid is new each run, so the replay pairs the recorded uuid
+ * with the one sent and puts it in Claude's messages, as T3 Code's replay
+ * remaps prompt uuids. `assertComplete` fails unless the whole recording was
  * used and every frame matched.
  */
 
@@ -91,6 +94,25 @@ export const makeClaudeReplay = Effect.fn("makeClaudeReplay")(function* (
   const failure = yield* Ref.make<ClaudeReplayError | undefined>(undefined);
   const advanced = yield* Queue.sliding<void>(1);
 
+  // Recorded prompt uuid -> the uuid the adapter sent in its place.
+  const promptUuids = new Map<string, string>();
+  const promptUuidOf = (frame: unknown): string | undefined => {
+    if (typeof frame !== "object" || frame === null) return undefined;
+    if (Reflect.get(frame, "type") !== "prompt.offer") return undefined;
+    const uuid: unknown = Reflect.get(Reflect.get(frame, "message") ?? {}, "uuid");
+    return typeof uuid === "string" ? uuid : undefined;
+  };
+  const withPromptUuids = (value: unknown): unknown => {
+    if (typeof value === "string") return promptUuids.get(value) ?? value;
+    if (Array.isArray(value)) return value.map(withPromptUuids);
+    if (typeof value === "object" && value !== null) {
+      return Object.fromEntries(
+        Object.entries(value).map(([key, item]) => [key, withPromptUuids(item)]),
+      );
+    }
+    return value;
+  };
+
   const fail = (error: ClaudeReplayError) =>
     Effect.andThen(
       Ref.update(failure, (first) => first ?? error),
@@ -123,7 +145,12 @@ export const makeClaudeReplay = Effect.fn("makeClaudeReplay")(function* (
           }),
         );
       }
-      if (!sameFrame(entry.frame, actual)) {
+      const recordedUuid = promptUuidOf(entry.frame);
+      const sentUuid = promptUuidOf(actual);
+      if (recordedUuid !== undefined && sentUuid !== undefined) {
+        promptUuids.set(recordedUuid, sentUuid);
+      }
+      if (!sameFrame(withPromptUuids(entry.frame), actual)) {
         return yield* fail(
           new ClaudeReplayError({
             scenario,
@@ -154,7 +181,7 @@ export const makeClaudeReplay = Effect.fn("makeClaudeReplay")(function* (
             return yield* Effect.never;
           }
           yield* Ref.set(cursor, at + 1);
-          return entry.frame as SDKMessage;
+          return withPromptUuids(entry.frame) as SDKMessage;
         }
         yield* Queue.take(advanced);
       }
@@ -178,6 +205,9 @@ export const makeClaudeReplay = Effect.fn("makeClaudeReplay")(function* (
             expectOutbound({ type: "prompt.offer", message }).pipe(Effect.mapError(asRunnerError)),
           setModel: (model: string) =>
             expectOutbound({ type: "query.set_model", model }).pipe(Effect.mapError(asRunnerError)),
+          interrupt: expectOutbound({ type: "query.interrupt" }).pipe(
+            Effect.mapError(asRunnerError),
+          ),
         };
       }).pipe(
         Effect.mapError((cause) => new ClaudeAgentSdkQueryRunnerError({ method: "replay", cause })),
@@ -249,6 +279,12 @@ export const makeRecordingQueryRunner = (inner: ClaudeAgentSdkQueryRunner["Servi
               ),
               session.setModel(model),
             ),
+          interrupt: Effect.andThen(
+            Effect.sync(() =>
+              entries.push({ type: "expect_outbound", frame: { type: "query.interrupt" } }),
+            ),
+            session.interrupt,
+          ),
         };
       }),
   });

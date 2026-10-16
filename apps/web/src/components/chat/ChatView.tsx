@@ -1,4 +1,4 @@
-import { CommandId, MessageId, type ThreadId } from "@playstead/contracts/baseSchemas";
+import { CommandId, MessageId, type RunId, type ThreadId } from "@playstead/contracts/baseSchemas";
 import { ACTIVE_RUN_STATUSES, type ModelSelection } from "@playstead/contracts/orchestrationV2";
 import { useNavigate } from "@tanstack/react-router";
 import { useMemo } from "react";
@@ -11,6 +11,7 @@ import { ChatComposer } from "./ChatComposer.tsx";
 import {
   buildSendCommands,
   defaultModelSelection,
+  deriveComposerAction,
   deriveModelPickerEntries,
   type SendTarget,
 } from "./composer.logic.ts";
@@ -43,6 +44,17 @@ const setThreadModelSelection = (threadId: ThreadId, modelSelection: ModelSelect
     }),
   );
 
+/** **Interrupt** for the thread's active run (T3 Code's `run.interrupt`). */
+const interruptRun = (threadId: ThreadId, runId: RunId) =>
+  requestPrimary((client) =>
+    client["orchestration.dispatchCommand"]({
+      type: "run.interrupt",
+      commandId: CommandId.make(`command:${newId()}`),
+      threadId,
+      runId,
+    }),
+  );
+
 /**
  * The thread view: the chat column only, after T3 Code's `ChatView.tsx` at
  * 2577baf without its right-hand panel, terminal, diffs, branch toolbar or
@@ -68,6 +80,7 @@ export function ChatView(
     [projection?.turnItems, project?.workspaceRoot],
   );
   const working = projection?.runs.some((run) => ACTIVE_RUN_STATUSES.has(run.status)) ?? false;
+  const action = deriveComposerAction(projection?.runs ?? [], projection?.turnItems ?? []);
   const lockedInstanceId = projection?.thread.providerInstanceId;
   const entries = deriveModelPickerEntries(providers, lockedInstanceId);
   const selection =
@@ -134,8 +147,9 @@ export function ChatView(
             ? (next) => setDraftModelSelection(props.draft.draftId, next)
             : (next) => setThreadModelSelection(props.threadId, next).then(() => undefined)
         }
-        working={working}
+        action={action}
         onSend={onSend}
+        onInterrupt={(runId) => interruptRun(threadId, runId).then(() => undefined)}
       />
     </div>
   );
