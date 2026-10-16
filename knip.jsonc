@@ -4,6 +4,8 @@
   "rules": { "types": "off", "nsTypes": "off" },
   // Named in tsconfig plugins; @effect/tsgo patches it into the compiler.
   "ignoreDependencies": ["@effect/language-service"],
+  // Effect's vendored source has its own workspace, which this repository never installs.
+  "ignore": [".repos/**"],
   "workspaces": {
     ".": {
       // Keep the vendored Effect source out of the root project.
