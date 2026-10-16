@@ -3,7 +3,8 @@ import type { ServerProvider } from "@playstead/contracts/server";
 /**
  * What a provider card says, following T3 Code's
  * `apps/web/src/components/settings/providerStatus.ts` at 2577baf, without
- * the disabled state and update advisories.
+ * the disabled state and update advisories. A signed-out provider says so
+ * before any other problem, with the server's hint on how to sign in.
  */
 export function getProviderSummary(provider: ServerProvider | undefined): {
   readonly headline: string;
@@ -18,10 +19,10 @@ export function getProviderSummary(provider: ServerProvider | undefined): {
   if (!provider.installed) {
     return { headline: "Not found", detail: provider.message ?? "CLI not detected on PATH." };
   }
-  const authLabel = provider.auth.label ?? provider.auth.type;
   if (provider.auth.status === "unauthenticated") {
+    const account = provider.auth.label ?? provider.auth.type;
     return {
-      headline: authLabel ? `Not authenticated · ${authLabel}` : "Not authenticated",
+      headline: account ? `Not authenticated · ${account}` : "Not authenticated",
       detail: provider.message ?? null,
     };
   }
@@ -39,8 +40,9 @@ export function getProviderSummary(provider: ServerProvider | undefined): {
     };
   }
   if (provider.auth.status === "authenticated") {
+    const account = provider.auth.label ?? provider.auth.type;
     return {
-      headline: authLabel ? `Authenticated · ${authLabel}` : "Authenticated",
+      headline: account ? `Authenticated · ${account}` : "Authenticated",
       detail: provider.message ?? null,
     };
   }

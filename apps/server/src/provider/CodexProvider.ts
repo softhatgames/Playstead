@@ -1,6 +1,9 @@
 import type { ServerProviderAuth, ServerProviderModel } from "@playstead/contracts/server";
 import * as CodexClient from "@playstead/effect-codex-app-server/client";
-import { CodexAppServerSpawnError } from "@playstead/effect-codex-app-server/errors";
+import {
+  type CodexAppServerError,
+  CodexAppServerSpawnError,
+} from "@playstead/effect-codex-app-server/errors";
 import type * as CodexSchema from "@playstead/effect-codex-app-server/schema";
 import type { ProviderProbeResult } from "@playstead/provider-core/server/driver";
 import {
@@ -14,6 +17,7 @@ import * as Effect from "effect/Effect";
 import type * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Result from "effect/Result";
+import type * as Scope from "effect/Scope";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
 import packageJson from "../../package.json" with { type: "json" };
@@ -162,30 +166,35 @@ const listCodexModels = Effect.fn("listCodexModels")(function* (
   return models;
 });
 
-const probeCodexAppServer = Effect.fn("probeCodexAppServer")(function* (input: CodexProbeInput) {
+const probeCodexAppServer = Effect.fn("probeCodexAppServer")(function* (
+  input: CodexProbeInput,
+): Effect.fn.Return<
+  CodexStatus,
+  CodexAppServerError,
+  ChildProcessSpawner.ChildProcessSpawner | FileSystem.FileSystem | Scope.Scope
+> {
   const { client, initialize } = yield* startCodexAppServer(input);
   const version = /\/([^\s]+)/.exec(initialize.userAgent)?.[1] ?? null;
   const { account, requiresOpenaiAuth } = yield* client.request("account/read", {});
-  if (account === undefined || account === null) {
-    return requiresOpenaiAuth
-      ? {
-          version,
-          status: "error" as const,
-          auth: { status: "unauthenticated" as const },
-          models: [],
-          message: "Codex CLI is not authenticated. Run `codex login` and try again.",
-        }
-      : {
-          version,
-          status: "ready" as const,
-          auth: { status: "unknown" as const },
-          models: yield* listCodexModels(client),
-        };
+  if ((account === undefined || account === null) && requiresOpenaiAuth) {
+    return {
+      probe: {
+        installed: true,
+        version,
+        status: "error",
+        auth: { status: "unauthenticated" },
+        message: "Codex CLI is not authenticated. Run `codex login` and try again.",
+      },
+      models: [],
+    };
   }
   return {
-    version,
-    status: "ready" as const,
-    auth: codexAuth(account),
+    probe: {
+      installed: true,
+      version,
+      status: "ready",
+      auth: account === undefined || account === null ? { status: "unknown" } : codexAuth(account),
+    },
     models: yield* listCodexModels(client),
   };
 });
@@ -196,46 +205,58 @@ const notFoundMessage = (binaryPath: string) =>
     ? " Installing ChatGPT or Codex desktop may not add codex to PATH."
     : " Make sure the configured executable exists and can be run.");
 
+/** What a Codex check finds: the probe, and the models Codex lists. */
+export interface CodexStatus {
+  readonly probe: ProviderProbeResult;
+  readonly models: ReadonlyArray<ServerProviderModel>;
+}
+
 /** `checkCodexProviderStatus` at 2577baf. */
 export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(function* (
   input: CodexProbeInput,
 ): Effect.fn.Return<
-  ProviderProbeResult,
+  CodexStatus,
   never,
   ChildProcessSpawner.ChildProcessSpawner | FileSystem.FileSystem
 > {
-  const probe = yield* probeCodexAppServer(input).pipe(
+  const result = yield* probeCodexAppServer(input).pipe(
     Effect.scoped,
     Effect.timeoutOption(Duration.millis(AUTH_PROBE_TIMEOUT_MS)),
     Effect.result,
   );
-  if (Result.isFailure(probe)) {
-    const error = probe.failure;
+  if (Result.isFailure(result)) {
+    const error = result.failure;
     const notFound =
       error._tag === "CodexAppServerSpawnError" ||
       (error._tag === "CodexAppServerProcessExitedError" &&
         isWindowsCommandNotFound(input.platform, error.code, error.stderr));
-    return notFound
-      ? {
-          installed: false,
-          version: null,
-          status: "error",
-          message: notFoundMessage(input.binaryPath),
-        }
-      : {
-          installed: true,
-          version: null,
-          status: "error",
-          message: `Codex app-server provider probe failed: ${error.message}.`,
-        };
-  }
-  if (Option.isNone(probe.success)) {
     return {
-      installed: true,
-      version: null,
-      status: "error",
-      message: "Timed out while checking Codex app-server provider status.",
+      probe: notFound
+        ? {
+            installed: false,
+            version: null,
+            status: "error",
+            message: notFoundMessage(input.binaryPath),
+          }
+        : {
+            installed: true,
+            version: null,
+            status: "error",
+            message: `Codex app-server provider probe failed: ${error.message}.`,
+          },
+      models: [],
     };
   }
-  return { installed: true, ...probe.success.value };
+  if (Option.isNone(result.success)) {
+    return {
+      probe: {
+        installed: true,
+        version: null,
+        status: "error",
+        message: "Timed out while checking Codex app-server provider status.",
+      },
+      models: [],
+    };
+  }
+  return result.success.value;
 });

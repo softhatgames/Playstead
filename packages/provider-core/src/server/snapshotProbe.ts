@@ -1,5 +1,5 @@
 import type { ProviderDriverKind, ProviderInstanceId } from "@playstead/contracts/providerInstance";
-import type { ServerProvider } from "@playstead/contracts/server";
+import type { ServerProvider, ServerProviderModel } from "@playstead/contracts/server";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as PlatformError from "effect/PlatformError";
@@ -90,11 +90,15 @@ export function parseGenericCliVersion(output: string): string | null {
   return /\bv?(\d+\.\d+\.\d+)\b/.exec(output)?.[1] ?? null;
 }
 
-/** A snapshot from a check, stamped with the instance and the time, as T3 Code's `buildServerProvider`. */
+/**
+ * A snapshot from a check, stamped with the instance and the time, as T3
+ * Code's `buildServerProvider`. Without `models` the provider offers none yet.
+ */
 export const buildServerProvider = (input: {
   readonly instanceId: ProviderInstanceId;
   readonly driver: ProviderDriverKind;
   readonly displayName: string;
+  readonly models?: ReadonlyArray<ServerProviderModel>;
   readonly probe: ProviderProbeResult;
 }) =>
   Effect.map(DateTime.now, (now): ServerProvider => ({
@@ -107,7 +111,7 @@ export const buildServerProvider = (input: {
     auth: input.probe.auth ?? { status: "unknown" },
     checkedAt: DateTime.formatIso(now),
     ...(input.probe.message === undefined ? {} : { message: input.probe.message }),
-    models: input.probe.models ?? [],
+    models: input.models ?? [],
   }));
 
 /**

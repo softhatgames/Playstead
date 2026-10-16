@@ -9,7 +9,7 @@ import { resolveServerConfig } from "./config.ts";
 const resolveWith = (env: Record<string, string>) =>
   Effect.gen(function* () {
     const path = yield* Path.Path;
-    const homeDirectory = path.join(path.sep, "Users", "person");
+    const homeDirectory = path.resolve(path.sep, "Users", "person");
     const config = yield* resolveServerConfig({
       cwd: homeDirectory,
       homeDirectory,
@@ -43,7 +43,7 @@ describe("server config", () => {
     it.effect("keeps a worktree's development state in the home the runner names", () =>
       Effect.gen(function* () {
         const path = yield* Path.Path;
-        const worktreeHome = path.join(path.sep, "work", "playstead", ".playstead");
+        const worktreeHome = path.resolve(path.sep, "work", "playstead", ".playstead");
         const { config } = yield* resolveWith({
           PLAYSTEAD_HOME: worktreeHome,
           PLAYSTEAD_DEV_URL: "http://localhost:5833/",

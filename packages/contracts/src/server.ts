@@ -28,13 +28,12 @@ export const ServerProviderCompatibilityAdvisory = Schema.Struct({
 export type ServerProviderCompatibilityAdvisory = typeof ServerProviderCompatibilityAdvisory.Type;
 
 const ServerProviderAuthStatus = Schema.Literals(["authenticated", "unauthenticated", "unknown"]);
-export type ServerProviderAuthStatus = typeof ServerProviderAuthStatus.Type;
 
 /**
- * Whether the person is signed in to the provider, T3 Code's
- * `ServerProviderAuth` at 2577baf without its sign-in actions, profiles and
- * workspaces: the kind of account (`type`), what to call it (`label`) and its
- * e-mail when the provider gives one.
+ * Whether the provider's CLI is signed in, as T3 Code's `ServerProviderAuth`
+ * at 2577baf without its sign-in actions: `type` is the account kind the
+ * provider reports, `label` names it for people, and `email` is the account's
+ * when the provider gives one.
  */
 export const ServerProviderAuth = Schema.Struct({
   status: ServerProviderAuthStatus,
@@ -44,10 +43,7 @@ export const ServerProviderAuth = Schema.Struct({
 });
 export type ServerProviderAuth = typeof ServerProviderAuth.Type;
 
-/**
- * A model the provider offers, T3 Code's `ServerProviderModel` at 2577baf
- * without custom models and capabilities (reasoning and service tiers).
- */
+/** A model the provider runs, as T3 Code's `ServerProviderModel` without custom models or capabilities. */
 export const ServerProviderModel = Schema.Struct({
   slug: TrimmedNonEmptyString,
   name: TrimmedNonEmptyString,
@@ -57,8 +53,8 @@ export type ServerProviderModel = typeof ServerProviderModel.Type;
 
 /**
  * A provider instance's status, trimmed from T3 Code's `ServerProvider` at
- * 2577baf: whether it is installed, its version, the compatibility advisory,
- * whether the person is signed in, and its models.
+ * 2577baf: whether it is installed, its version, whether it is signed in, its
+ * models and the compatibility advisory.
  */
 export const ServerProvider = Schema.Struct({
   instanceId: ProviderInstanceId,

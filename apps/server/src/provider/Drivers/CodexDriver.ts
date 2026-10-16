@@ -46,7 +46,7 @@ export const CodexDriver: ProviderDriver<
           environment: input.environment,
           platform: input.platform,
           cwd: input.cwd,
-        }).pipe(Effect.flatMap((probe) => buildServerProvider({ ...stamp, probe }))),
+        }).pipe(Effect.flatMap((status) => buildServerProvider({ ...stamp, ...status }))),
       });
       return {
         instanceId: input.instanceId,

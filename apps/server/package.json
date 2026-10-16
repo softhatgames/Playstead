@@ -10,6 +10,7 @@
     "test": "vp test run"
   },
   "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "catalog:",
     "@effect/platform-node": "catalog:",
     "@effect/sql-sqlite-node": "catalog:",
     "@playstead/contracts": "workspace:*",

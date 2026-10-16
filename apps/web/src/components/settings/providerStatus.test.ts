@@ -46,35 +46,30 @@ describe("getProviderSummary", () => {
     );
   });
 
-  it("says a signed-out provider is not authenticated, with the server's advice", () => {
+  it("says a signed-out provider is not authenticated, with the server's hint", () => {
     assert.deepStrictEqual(
       getProviderSummary(
         codex({
           status: "error",
           auth: { status: "unauthenticated" },
-          message: "Codex CLI is not authenticated. Run `codex login` and try again.",
+          message: "Claude Code is not authenticated. Run `claude auth login` and try again.",
         }),
       ),
       {
         headline: "Not authenticated",
-        detail: "Codex CLI is not authenticated. Run `codex login` and try again.",
+        detail: "Claude Code is not authenticated. Run `claude auth login` and try again.",
       },
     );
   });
 
-  it("says a signed-in provider is authenticated, naming the account's kind", () => {
+  it("says a signed-in provider is authenticated, naming the account", () => {
     assert.deepStrictEqual(
       getProviderSummary(
         codex({
-          auth: {
-            status: "authenticated",
-            type: "chatgpt",
-            label: "ChatGPT Plus Subscription",
-            email: "person@example.com",
-          },
+          auth: { status: "authenticated", type: "max", label: "Claude Max Subscription" },
         }),
       ),
-      { headline: "Authenticated · ChatGPT Plus Subscription", detail: null },
+      { headline: "Authenticated · Claude Max Subscription", detail: null },
     );
   });
 
