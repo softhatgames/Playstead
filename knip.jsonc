@@ -1,0 +1,25 @@
+{
+  "$schema": "https://unpkg.com/knip@6/schema.json",
+  // Exported types are part of the contracts even before they have consumers.
+  "rules": { "types": "off", "nsTypes": "off" },
+  // Named in tsconfig plugins; @effect/tsgo patches it into the compiler.
+  "ignoreDependencies": ["@effect/language-service"],
+  "workspaces": {
+    ".": {
+      // Keep the vendored Effect source out of the root project.
+      "project": ["*.{js,mjs,cjs,ts,mts,cts}"],
+    },
+    "scripts": {
+      // Run directly by the root sync:repos script.
+      "entry": ["sync-reference-repos.ts"],
+    },
+    "oxlint-plugin-playstead": {
+      // Loaded by oxlint through jsPlugins in the root vite.config.ts.
+      "entry": ["index.ts"],
+    },
+    "packages/*": {
+      // These workspace packages are private to this monorepo.
+      "includeEntryExports": true,
+    },
+  },
+}

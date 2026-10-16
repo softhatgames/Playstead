@@ -1,0 +1,53 @@
+packages:
+  - apps/*
+  - oxlint-plugin-playstead
+  - packages/*
+  - scripts
+
+# pnpm 11: true lets a dependency run its install scripts.
+allowBuilds:
+  esbuild: true
+  tsc-rs: true
+
+catalog:
+  "@effect/platform-node": 4.0.5
+  "@effect/tsgo": 0.51.1
+  "@effect/vitest": 4.0.5
+  "@types/node": 24.12.4
+  effect: 4.0.5
+  typescript: 7.0.2
+  vite-plus: 1.0.0
+  yaml: ^2.9.0
+
+minimumReleaseAgeExclude:
+  - tsc-rs
+  - "@tsc-rs/*"
+  - "@effect/platform-node@4.0.5"
+  - "@effect/platform-node-shared@4.0.5"
+  - "@effect/vitest@4.0.5"
+  - effect@4.0.5
+
+overrides:
+  "@effect/platform-node": "catalog:"
+  "@effect/vitest": "catalog:"
+  # Vite+ brings the test runner; the patch below points @effect/vitest at it.
+  "@effect/vitest>vitest": "-"
+  "@types/node": "catalog:"
+  effect: "catalog:"
+  # Every vite in the tree is the Vite+ core.
+  vite: npm:@voidzero-dev/vite-plus-core@1.0.0
+  vite-plus: "catalog:"
+
+packageExtensions:
+  "@effect/vitest@*":
+    dependencies:
+      vite-plus: "catalog:"
+
+patchedDependencies:
+  "@effect/vitest@4.0.5": patches/@effect__vitest@4.0.5.patch
+
+peerDependencyRules:
+  allowAny:
+    - vite
+  allowedVersions:
+    vite: "*"

@@ -1,2 +1,6 @@
-# Check text files out with LF on every platform.
+# Check text files out with LF on every platform: Git's autocrlf would turn
+# them into CRLF on Windows, which the formatter then reports.
 * text=auto eol=lf
+# cmd.exe parses batch files reliably only with CRLF.
+*.cmd text eol=crlf
+*.bat text eol=crlf

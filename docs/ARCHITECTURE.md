@@ -30,22 +30,22 @@ Playstead's database starts at its own first migration in `apps/server/src/persi
 
 Each workspace sits at the path of the T3 Code workspace it follows, under Playstead's own package name; the spec sets the names.
 
-| Path | Holds |
-| --- | --- |
-| `apps/server` | The server: RPC, orchestration, persistence, providers and checkpoints. Its entry, `src/bin.ts`, runs it for the desktop app or, in development, for a browser. |
-| `apps/web` | The React interface, one build for the desktop app and the browser. |
-| `apps/desktop` | The Electron app. It starts the server, shows the interface and adds desktop features through its bridge. |
-| `packages/contracts` | Effect Schema contracts for everything that crosses a process boundary: the RPC contract, orchestration commands and events, settings and the desktop bridge. |
-| `packages/client-runtime` | The clients' connection and shared state: one connection owner per environment, reconnecting, RPC sessions and thread streams. |
-| `packages/shared` | Runtime utilities as subpath exports, including Playstead's identity module. |
-| `packages/provider-core` | The driver, adapter and host interfaces that providers implement. |
-| `packages/effect-codex-app-server`, `packages/effect-acp` | Protocol clients for Codex's app-server and the Agent Client Protocol. |
-| `packages/provider-*` | One provider each: Cursor, Grok, OpenCode, Pi, Muse and the ACP Registry. `provider-acp` is the ACP runtime that Grok, Antigravity and the ACP Registry share. Codex, Claude and Antigravity have no package: their drivers are in `apps/server/src/provider/Drivers/` and their adapters in `apps/server/src/orchestration-v2/Adapters/`. |
-| `packages/provider-testing` | The provider test kit; see [Testing](#testing). |
-| `scripts` | The development runner, the desktop build that makes installers, and the icon export. |
-| `assets` | The icon's source. |
-| The lint plugin | Playstead's own lint rules, where T3 Code has `oxlint-plugin-t3code`. |
-| `.repos/effect-smol` | Effect's source, vendored read-only for agents, as in T3 Code. |
+| Path                                                      | Holds                                                                                                                                                                                                                                                                                                                                      |
+| --------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `apps/server`                                             | The server: RPC, orchestration, persistence, providers and checkpoints. Its entry, `src/bin.ts`, runs it for the desktop app or, in development, for a browser.                                                                                                                                                                            |
+| `apps/web`                                                | The React interface, one build for the desktop app and the browser.                                                                                                                                                                                                                                                                        |
+| `apps/desktop`                                            | The Electron app. It starts the server, shows the interface and adds desktop features through its bridge.                                                                                                                                                                                                                                  |
+| `packages/contracts`                                      | Effect Schema contracts for everything that crosses a process boundary: the RPC contract, orchestration commands and events, settings and the desktop bridge.                                                                                                                                                                              |
+| `packages/client-runtime`                                 | The clients' connection and shared state: one connection owner per environment, reconnecting, RPC sessions and thread streams.                                                                                                                                                                                                             |
+| `packages/shared`                                         | Runtime utilities as subpath exports, including Playstead's identity module.                                                                                                                                                                                                                                                               |
+| `packages/provider-core`                                  | The driver, adapter and host interfaces that providers implement.                                                                                                                                                                                                                                                                          |
+| `packages/effect-codex-app-server`, `packages/effect-acp` | Protocol clients for Codex's app-server and the Agent Client Protocol.                                                                                                                                                                                                                                                                     |
+| `packages/provider-*`                                     | One provider each: Cursor, Grok, OpenCode, Pi, Muse and the ACP Registry. `provider-acp` is the ACP runtime that Grok, Antigravity and the ACP Registry share. Codex, Claude and Antigravity have no package: their drivers are in `apps/server/src/provider/Drivers/` and their adapters in `apps/server/src/orchestration-v2/Adapters/`. |
+| `packages/provider-testing`                               | The provider test kit; see [Testing](#testing).                                                                                                                                                                                                                                                                                            |
+| `scripts`                                                 | The development runner, the desktop build that makes installers, and the icon export.                                                                                                                                                                                                                                                      |
+| `assets`                                                  | The icon's source.                                                                                                                                                                                                                                                                                                                         |
+| `oxlint-plugin-playstead`                                 | Playstead's own lint rules, where T3 Code has `oxlint-plugin-t3code`.                                                                                                                                                                                                                                                                      |
+| `.repos/effect-smol`                                      | Effect's source, vendored read-only for agents, as in T3 Code.                                                                                                                                                                                                                                                                             |
 
 Each provider Playstead enables takes its T3 Code place. The first slice has Codex and Claude, as [First working slice](https://github.com/softhatgames/playstead/issues/8) decided; the other providers are absent until their slice.
 
@@ -53,23 +53,23 @@ Each provider Playstead enables takes its T3 Code place. The first slice has Cod
 
 An area Playstead leaves out is absent: it has no workspace, contract, RPC method, setting, migration, route or interface. It comes in when the founder adds it to [the followed table](t3-code.md#what-is-followed), from T3 Code's code at that time. Server folders below are under `apps/server/src/`.
 
-| Area | T3 Code paths |
-| --- | --- |
-| Mobile app | `apps/mobile` |
-| Marketing | `apps/marketing` |
-| T3 Connect and relay | `infra/relay`; server `cloud/` and `relay/`; `packages/client-runtime/src/relay/`; Clerk sign-in |
+| Area                                   | T3 Code paths                                                                                                                                                     |
+| -------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Mobile app                             | `apps/mobile`                                                                                                                                                     |
+| Marketing                              | `apps/marketing`                                                                                                                                                  |
+| T3 Connect and relay                   | `infra/relay`; server `cloud/` and `relay/`; `packages/client-runtime/src/relay/`; Clerk sign-in                                                                  |
 | Source control hosts and pull requests | `packages/source-control-*`; server `sourceControl/`, `pullRequest/` and the pull request reactors in `orchestration-v2/`; `apps/web/src/components/pullRequest/` |
-| SSH and Tailscale | `packages/ssh`, `packages/tailscale`, `apps/desktop/src/ssh/` |
-| Right-hand panels | `apps/web/src/components/RightPanelTabs.tsx` and its panels; server `preview/`, `terminal/` and `review/`; `apps/desktop/src/preview/` |
-| Scheduled tasks | server `scheduledTasks/` |
-| Devices | server `device/` and the device panel |
-| Voice | `packages/client-runtime/src/voice-input/` |
-| HTML renders | server `htmlRender/` |
-| Snap-shot | `apps/desktop/src/snapShot/` and `apps/desktop/src/permissions/` |
-| Native helpers | `native/`: the Rust resource monitor behind process telemetry, and Linux capture helpers |
-| Linux packages | `packaging/` |
-| Product analytics | server `telemetry/` |
-| WSL backend, to be considered later | `apps/desktop/src/wsl/` |
+| SSH and Tailscale                      | `packages/ssh`, `packages/tailscale`, `apps/desktop/src/ssh/`                                                                                                     |
+| Right-hand panels                      | `apps/web/src/components/RightPanelTabs.tsx` and its panels; server `preview/`, `terminal/` and `review/`; `apps/desktop/src/preview/`                            |
+| Scheduled tasks                        | server `scheduledTasks/`                                                                                                                                          |
+| Devices                                | server `device/` and the device panel                                                                                                                             |
+| Voice                                  | `packages/client-runtime/src/voice-input/`                                                                                                                        |
+| HTML renders                           | server `htmlRender/`                                                                                                                                              |
+| Snap-shot                              | `apps/desktop/src/snapShot/` and `apps/desktop/src/permissions/`                                                                                                  |
+| Native helpers                         | `native/`: the Rust resource monitor behind process telemetry, and Linux capture helpers                                                                          |
+| Linux packages                         | `packaging/`                                                                                                                                                      |
+| Product analytics                      | server `telemetry/`                                                                                                                                               |
+| WSL backend, to be considered later    | `apps/desktop/src/wsl/`                                                                                                                                           |
 
 Features inside followed areas come in slice by slice. [First working slice](https://github.com/softhatgames/playstead/issues/8) lists what the first slice includes and orders the slices that wait, such as worktrees, the orchestrator's MCP server, auto-update, signing and publishing the server as a command. Until its slice, a feature is absent, as a left-out area is.
 
@@ -89,15 +89,15 @@ Playstead's identity is defined once, in `packages/shared/src/identity.ts`, and 
 
 The module follows T3 Code's pattern, and the spec sets its values:
 
-| Identity | T3 Code's value |
-| --- | --- |
-| Product name, with a development variant | "T3 Code (Beta)"; "T3 Code (Dev)" |
-| App id, used as the macOS bundle id and Windows AppUserModelID, with a development id | `com.t3tools.t3code`; `com.t3tools.t3code.dev` |
-| URL scheme, which also serves the interface to the desktop window, with a development scheme | `t3code`, the window loading `t3code://app/`; `t3code-dev` |
-| **Playstead home**: the base data directory and the variable that moves it. Runtime state is under `userdata` and development state under `dev`; a worktree in development has its own. | T3 home: `~/.t3`, `T3CODE_HOME`, a worktree's `.t3` |
-| Electron's user-data folder, with a development variant | `t3code-v2`; `t3code-dev` |
-| Environment variable prefix | `T3CODE_` |
-| Environment descriptor path | `/.well-known/t3/environment` (`packages/contracts/src/environmentHttp.ts`) |
+| Identity                                                                                                                                                                                | T3 Code's value                                                             |
+| --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------- |
+| Product name, with a development variant                                                                                                                                                | "T3 Code (Beta)"; "T3 Code (Dev)"                                           |
+| App id, used as the macOS bundle id and Windows AppUserModelID, with a development id                                                                                                   | `com.t3tools.t3code`; `com.t3tools.t3code.dev`                              |
+| URL scheme, which also serves the interface to the desktop window, with a development scheme                                                                                            | `t3code`, the window loading `t3code://app/`; `t3code-dev`                  |
+| **Playstead home**: the base data directory and the variable that moves it. Runtime state is under `userdata` and development state under `dev`; a worktree in development has its own. | T3 home: `~/.t3`, `T3CODE_HOME`, a worktree's `.t3`                         |
+| Electron's user-data folder, with a development variant                                                                                                                                 | `t3code-v2`; `t3code-dev`                                                   |
+| Environment variable prefix                                                                                                                                                             | `T3CODE_`                                                                   |
+| Environment descriptor path                                                                                                                                                             | `/.well-known/t3/environment` (`packages/contracts/src/environmentHttp.ts`) |
 
 No value may match T3 Code's. Playstead runs beside the installed T3 Code, and agents work on Playstead inside T3 Code, whose shells already carry `T3CODE_*` variables.
 

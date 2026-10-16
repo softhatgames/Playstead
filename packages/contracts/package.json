@@ -1,0 +1,6 @@
+{
+  "name": "@playstead/contracts",
+  "private": true,
+  "description": "Effect Schema contracts for everything that crosses a process boundary: the RPC contract, orchestration commands and events, settings and the desktop bridge.",
+  "type": "module"
+}

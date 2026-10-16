@@ -1,0 +1,7 @@
+{
+  "name": "@playstead/desktop",
+  "version": "0.1.0",
+  "private": true,
+  "description": "The Electron app: it starts the server, shows the interface and adds desktop features through its bridge.",
+  "type": "module"
+}

@@ -1,0 +1,18 @@
+{
+  "name": "@playstead/web",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vp dev",
+    "build": "vp build",
+    "typecheck": "tsc-rs --noEmit",
+    "test": "vp test run --passWithNoTests"
+  },
+  "dependencies": {
+    "@playstead/shared": "workspace:*"
+  },
+  "devDependencies": {
+    "vite-plus": "catalog:"
+  }
+}

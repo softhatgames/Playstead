@@ -1,0 +1,28 @@
+{
+  "name": "@playstead/monorepo",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "prepare": "effect-tsgo patch && vp config --no-agent",
+    "build": "vp run --filter './apps/*' build",
+    "typecheck": "vp run -r --concurrency-limit 2 typecheck",
+    "lint": "vp lint --report-unused-disable-directives",
+    "knip:check": "knip --no-config-hints",
+    "test": "vp run -r test",
+    "fmt": "vp fmt",
+    "fmt:check": "vp fmt --check",
+    "sync:repos": "node scripts/sync-reference-repos.ts"
+  },
+  "devDependencies": {
+    "@effect/tsgo": "catalog:",
+    "@types/node": "catalog:",
+    "knip": "6.34.0",
+    "tsc-rs": "0.7.0",
+    "typescript": "catalog:",
+    "vite-plus": "catalog:"
+  },
+  "engines": {
+    "node": "^24.13.1"
+  },
+  "packageManager": "pnpm@11.10.0"
+}
