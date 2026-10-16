@@ -1,0 +1,76 @@
+{
+  "probe": "preview",
+  "format": 1,
+  "recordedAt": "2026-10-15T17:24:49.683Z",
+  "subject": {
+    "id": "monogame-desktopgl",
+    "name": "MonoGame DesktopGL",
+    "technology": {
+      "language": "C#",
+      "runtime": ".NET 10",
+      "library": "MonoGame.Framework.DesktopGL 3.8.6",
+      "graphicsApi": "OpenGL",
+      "codeReload": "dotnet watch Hot Reload"
+    }
+  },
+  "machine": {
+    "platform": "win32",
+    "arch": "x64",
+    "os": "Windows 11 Pro",
+    "osRelease": "10.0.26200",
+    "cpu": "Intel(R) Core(TM) Ultra 7 155U",
+    "cores": 14,
+    "memoryGb": 32,
+    "displayHz": 60
+  },
+  "playstead": {
+    "commit": "8bfafcf",
+    "uncommittedChanges": false
+  },
+  "tools": {
+    "node": "v24.22.0",
+    "dotnet": "10.0.401",
+    "electron": "44.7.1"
+  },
+  "settings": {
+    "sandbox": true,
+    "steadySeconds": 10,
+    "passMarks": {
+      "displayedFps": 57,
+      "longGapShare": 0.01,
+      "addedDelayP95Ms": 50,
+      "reloadMs": 2000,
+      "calibrationToleranceMs": 10,
+      "clockToleranceMs": 2
+    }
+  },
+  "note": "Windows laptop, node_repl stopped",
+  "ran": false,
+  "startup": {
+    "buildMs": 38733.9
+  },
+  "problems": [
+    "The game did not connect within three minutes. Its output ends:\ndotnet watch 🔥 Hot reload enabled. For a list of supported edits, see https://aka.ms/dotnet/hot-reload.\r\ndotnet watch 💡 Press Ctrl+R to restart.\r\n  Determining projects to restore...\r\nC:\\Program Files\\dotnet\\sdk\\10.0.401\\NuGet.targets(782,5): error : Failed to read NuGet.Config due to unauthorized access. Path: '~\\AppData\\Roaming\\NuGet\\NuGet.Config'. [C:\\dev\\Playstead\\dev\\preview-probe\\subjects\\monogame-desktopgl\\PreviewProbe.csproj]\r\nC:\\Program Files\\dotnet\\sdk\\10.0.401\\NuGet.targets(782,5): error :   Access to the path '~\\AppData\\Roaming\\NuGet\\NuGet.Config' is denied. [C:\\dev\\Playstead\\dev\\preview-probe\\subjects\\monogame-desktopgl\\PreviewProbe.csproj]\r\n\r\nBuild FAILED.\r\n\r\nC:\\Program Files\\dotnet\\sdk\\10.0.401\\NuGet.targets(782,5): error : Failed to read NuGet.Config due to unauthorized access. Path: '~\\AppData\\Roaming\\NuGet\\NuGet.Config'. [C:\\dev\\Playstead\\dev\\preview-probe\\subjects\\monogame-desktopgl\\PreviewProbe.csproj]\r\nC:\\Program Files\\dotnet\\sdk\\10.0.401\\NuGet.targets(782,5): error :   Access to the path '~\\AppData\\Roaming\\NuGet\\NuGet.Config' is denied. [C:\\dev\\Playstead\\dev\\preview-probe\\subjects\\monogame-desktopgl\\PreviewProbe.csproj]\r\n    0 Warning(s)\r\n    1 Error(s)\r\n\r\nTime Elapsed 00:00:00.50\r\ndotnet watch ⌚ Loading projects ...\r\ndotnet watch ⌚ Loaded 1 project(s) in 0,4s.\r\ndotnet watch ⌚ Fix the error to continue or press Ctrl+C to exit.",
+    "Codex's Windows sandbox log ends:\n[2026-10-15T17:25:24.865696100+00:00] firewall rule configured name=codex_sandbox_offline_block_loopback_tcp protocol=6 RemoteAddresses=127.0.0.0/8,::/127 RemotePorts=* LocalUserAuthorizedList=O:LSD:(A;;CC;;;S-1-5-21-2870565007-4083560455-1873020088-1007)\n[2026-10-15T17:25:25.362939300+00:00] firewall rule configured name=codex_sandbox_offline_block_loopback_tcp protocol=6 RemoteAddresses=127.0.0.0/8,::/127 RemotePorts=1-65535 LocalUserAuthorizedList=O:LSD:(A;;CC;;;S-1-5-21-2870565007-4083560455-1873020088-1007)\n[2026-10-15T17:25:25.560323800+00:00] firewall rule configured name=codex_sandbox_offline_block_outbound protocol=256 RemoteAddresses=0.0.0.0-126.255.255.255,128.0.0.0-255.255.255.255,::,::2-ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff RemotePorts=* LocalUserAuthorizedList=O:LSD:(A;;CC;;;S-1-5-21-2870565007-4083560455-1873020088-1007)\n[2026-10-15T17:25:25.769971900+00:00] firewall rule configured name=codex_sandbox_offline_block_inbound protocol=256 RemoteAddresses=0.0.0.0-126.255.255.255,128.0.0.0-255.255.255.255,::,::2-ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff RemotePorts=* LocalUserAuthorizedList=O:LSD:(A;;CC;;;S-1-5-21-2870565007-4083560455-1873020088-1007)\n[2026-10-15T17:25:25.791562700+00:00] WFP setup succeeded for CodexSandboxOffline with 12 installed filters\n[2026-10-15 20:25:25.794 codex-windows-sandbox-setup.exe] setup provisioning binary completed\n[2026-10-15 20:25:25.892 codex.exe] setup refresh: spawning ~\\.codex\\packages\\standalone\\releases\\0.162.1-x86_64-pc-windows-msvc\\codex-resources\\codex-windows-sandbox-setup.exe (cwd=C:\\dev\\Playstead\\dev\\preview-probe\\subjects\\monogame-desktopgl, payload_len=7340)\n[2026-10-15T17:25:26.153708400+00:00] read-acl-only mode: applying read ACLs\n[2026-10-15T17:25:26.160949+00:00] read ACL run completed\n[2026-10-15T17:25:26.420879800+00:00] setup refresh: processed 2 write roots (read roots delegated); errors=[]\n[2026-10-15 20:25:26.420 codex-windows-sandbox-setup.exe] setup binary completed\n[2026-10-15 20:25:26.430 codex.exe] helper copy: validating command-runner source=~\\.codex\\packages\\standalone\\releases\\0.162.1-x86_64-pc-windows-msvc\\codex-resources\\codex-command-runner.exe destination=~\\.playstead\\codex\\.sandbox-bin\\codex-command-runner-0.162.1.exe\n[2026-10-15 20:25:26.430 codex.exe] helper copy: reused command-runner source=~\\.codex\\packages\\standalone\\releases\\0.162.1-x86_64-pc-windows-msvc\\codex-resources\\codex-command-runner.exe destination=~\\.playstead\\codex\\.sandbox-bin\\codex-command-runner-0.162.1.exe\n[2026-10-15 20:25:26.431 codex.exe] helper launch resolution: using copied command-runner path ~\\.playstead\\codex\\.sandbox-bin\\codex-command-runner-0.162.1.exe\n[2026-10-15 20:25:26.744 codex-command-runner-0.162.1.exe] hide users: failed to hide current user profile dir (C:\\Users\\Default): SetFileAttributesW failed for C:\\Users\\Default: 5 (Access is denied.)\n[2026-10-15 20:25:31.439 codex.exe] START: dotnet watch --non-interactive run -- --preview \\\\.\\pipe\\playstead-preview-9880d6860b6a\n[2026-10-15 20:25:31.723 codex.exe] setup refresh: spawning ~\\.codex\\packages\\standalone\\releases\\0.162.1-x86_64-pc-windows-msvc\\codex-resources\\codex-windows-sandbox-setup.exe (cwd=C:\\dev\\Playstead\\dev\\preview-probe\\subjects\\monogame-desktopgl, payload_len=7420)\n[2026-10-15T17:25:32.148775300+00:00] read-acl-only mode: applying read ACLs\n[2026-10-15T17:25:32.167282+00:00] read ACL run completed\n[2026-10-15T17:25:32.790835400+00:00] setup refresh: processed 2 write roots (read roots delegated); errors=[]\n[2026-10-15 20:25:32.791 codex-windows-sandbox-setup.exe] setup binary completed\n[2026-10-15 20:25:33.077 codex.exe] helper copy: validating command-runner source=~\\.codex\\packages\\standalone\\releases\\0.162.1-x86_64-pc-windows-msvc\\codex-resources\\codex-command-runner.exe destination=~\\.playstead\\codex\\.sandbox-bin\\codex-command-runner-0.162.1.exe\n[2026-10-15 20:25:33.077 codex.exe] helper copy: reused command-runner source=~\\.codex\\packages\\standalone\\releases\\0.162.1-x86_64-pc-windows-msvc\\codex-resources\\codex-command-runner.exe destination=~\\.playstead\\codex\\.sandbox-bin\\codex-command-runner-0.162.1.exe\n[2026-10-15 20:25:33.078 codex.exe] helper launch resolution: using copied command-runner path ~\\.playstead\\codex\\.sandbox-bin\\codex-command-runner-0.162.1.exe\n[2026-10-15 20:25:33.198 codex-command-runner-0.162.1.exe] hide users: failed to hide current user profile dir (C:\\Users\\Default): SetFileAttributesW failed for C:\\Users\\Default: 5 (Access is denied.)"
+  ],
+  "sandbox": {
+    "tool": "codex sandbox",
+    "codex": "codex-cli 0.162.1",
+    "profile": ":workspace",
+    "codexHome": "Playstead's",
+    "windowsMode": "elevated",
+    "allowedUnixSockets": [],
+    "packagesRestoredOutside": true,
+    "denials": {
+      "build": null,
+      "game": null
+    }
+  },
+  "verdict": {
+    "ran": "no",
+    "frameRate": "not measured",
+    "delay": "not measured",
+    "reload": "not measured",
+    "measurement": "not checked"
+  }
+}

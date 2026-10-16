@@ -1,0 +1,125 @@
+{
+  "probe": "preview",
+  "format": 1,
+  "recordedAt": "2026-10-15T16:42:43.347Z",
+  "subject": {
+    "id": "monogame-desktopgl",
+    "name": "MonoGame DesktopGL",
+    "technology": {
+      "language": "C#",
+      "runtime": ".NET 10",
+      "library": "MonoGame.Framework.DesktopGL 3.8.6",
+      "graphicsApi": "OpenGL",
+      "codeReload": "dotnet watch Hot Reload"
+    }
+  },
+  "machine": {
+    "platform": "darwin",
+    "arch": "arm64",
+    "os": "macOS 26.6.2",
+    "osRelease": "25.6.0",
+    "cpu": "Apple M3 Max",
+    "cores": 14,
+    "memoryGb": 36,
+    "displayHz": 120
+  },
+  "playstead": {
+    "commit": "f20f170",
+    "uncommittedChanges": false
+  },
+  "tools": {
+    "node": "v24.15.0",
+    "dotnet": "10.0.103",
+    "electron": "44.7.1"
+  },
+  "settings": {
+    "sandbox": true,
+    "steadySeconds": 10,
+    "passMarks": {
+      "displayedFps": 57,
+      "longGapShare": 0.01,
+      "addedDelayP95Ms": 50,
+      "reloadMs": 2000,
+      "calibrationToleranceMs": 10,
+      "clockToleranceMs": 2
+    }
+  },
+  "note": "Development run by the agent while building the probe",
+  "ran": false,
+  "startup": {
+    "buildMs": 1297.1
+  },
+  "problems": [
+    "The game stopped before it connected:\ndotnet watch 🔥 Hot reload enabled. For a list of supported edits, see https://aka.ms/dotnet/hot-reload.\ndotnet watch 💡 Press Ctrl+R to restart.\ndotnet watch 🔨 Building ~/.t3/worktrees/Playstead/t3code-8dcc66a9/dev/preview-probe/subjects/monogame-desktopgl/PreviewProbe.csproj ...\ndotnet watch 🔨 Build succeeded: ~/.t3/worktrees/Playstead/t3code-8dcc66a9/dev/preview-probe/subjects/monogame-desktopgl/PreviewProbe.csproj\n2026-10-15 19:42:46.848 PreviewProbe[44703:29084541] Failure on line 688 in function id scheduleApplicationNotification(LSNotificationCode, NSWorkspaceNotificationCenter *): noErr == _LSModifyNotification(notificationID, 1, &code, 0, NULL, NULL, NULL)\n2026-10-15 19:42:46.900 PreviewProbe[44703:29084541] Error received in message reply handler: Connection invalid\n2026-10-15 19:42:46.900 PreviewProbe[44703:29084557] Connection Invalid error for service com.apple.hiservices-xpcservice.\nUnhandled exception. Microsoft.Xna.Framework.Graphics.NoSuitableGraphicsDeviceException: Failed to create graphics device!\n ---> System.NullReferenceException: Object reference not set to an instance of an object.\n   at MonoGame.OpenGL.GL.GetString(StringName name)\n   at MonoGame.OpenGL.GL.LoadExtensions()\n   at MonoGame.OpenGL.GL.LoadEntryPoints()\n   at MonoGame.OpenGL.GraphicsContext..ctor(IWindowInfo info)\n   at MonoGame.OpenGL.GL.PlatformCreateContext(IWindowInfo info)\n   at MonoGame.OpenGL.GL.CreateContext(IWindowInfo info)\n   at Microsoft.Xna.Framework.Graphics.GraphicsDevice.PlatformSetup()\n   at Microsoft.Xna.Framework.Graphics.GraphicsDevice.Setup()\n   at Microsoft.Xna.Framework.Graphics.GraphicsDevice..ctor(GraphicsAdapter adapter, GraphicsProfile graphicsProfile, Boolean preferHalfPixelOffset, PresentationParameters presentationParameters)\n   at Microsoft.Xna.Framework.GraphicsDeviceManager.CreateDevice(GraphicsDeviceInformation gdi)\n   at Microsoft.Xna.Framework.GraphicsDeviceManager.CreateDevice()\n   --- End of inner exception stack trace ---\n   at Microsoft.Xna.Framework.GraphicsDeviceManager.CreateDevice()\n   at Microsoft.Xna.Framework.GraphicsDeviceManager.Microsoft.Xna.Framework.IGraphicsDeviceManager.CreateDevice()\n   at Microsoft.Xna.Framework.Game.DoInitialize()\n   at Microsoft.Xna.Framework.Game.Run(GameRunBehavior runBehavior)\n   at Microsoft.Xna.Framework.Game.Run()\n   at Program.<Main>$(String[] args) in ~/.t3/worktrees/Playstead/t3code-8dcc66a9/dev/preview-probe/subjects/monogame-desktopgl/Program.cs:line 16\ndotnet watch ❌ [PreviewProbe (net10.0)] Exited with error code 134"
+  ],
+  "sandbox": {
+    "tool": "codex sandbox",
+    "codex": "codex-cli 0.162.1",
+    "profile": ":workspace",
+    "codexHome": "a new one for the run",
+    "windowsMode": null,
+    "allowedUnixSockets": [
+      "the run folder"
+    ],
+    "packagesRestoredOutside": true,
+    "denials": {
+      "build": [
+        "(dotnet) mach-lookup com.apple.logd",
+        "(dotnet) file-write-create /usr/local/share/dotnet/metadata",
+        "(dotnet) sysctl-read kern.memorystatus_level",
+        "(dotnet) sysctl-read vm.swapusage",
+        "(dotnet) network-outbound /private/tmp/9Q3HnF4RDNr5IYhDESdBOnUAs_vvzQXVyj+PB0CZ7xE",
+        "(csc) sysctl-read security.mac.lockdown_mode_state",
+        "(csc) sysctl-read kern.bootargs",
+        "(csc) file-write-data /dev/dtracehelper",
+        "(csc) sysctl-read kern.iossupportversion",
+        "(csc) sysctl-read kern.memorystatus_level",
+        "(csc) mach-lookup com.apple.system.notification_center",
+        "(csc) mach-lookup com.apple.logd",
+        "(dotnet) mach-lookup com.apple.analyticsd.messagetracer",
+        "(dotnet) mach-lookup com.apple.system.logger"
+      ],
+      "game": [
+        "(dotnet) sysctl-read security.mac.lockdown_mode_state",
+        "(dotnet) sysctl-read kern.bootargs",
+        "(dotnet) file-write-data /dev/dtracehelper",
+        "(dotnet) sysctl-read kern.iossupportversion",
+        "(dotnet) sysctl-read kern.memorystatus_level",
+        "(dotnet) mach-lookup com.apple.system.notification_center",
+        "(dotnet) mach-lookup com.apple.logd",
+        "(dotnet) file-write-create /usr/local/share/dotnet/metadata",
+        "(dotnet) sysctl-read vm.swapusage",
+        "(dotnet) mach-lookup com.apple.analyticsd",
+        "(dotnet) ipc-posix-shm-write-create com.apple.AppleDatabaseChanged",
+        "(PreviewProbe) sysctl-read security.mac.lockdown_mode_state",
+        "(PreviewProbe) sysctl-read kern.bootargs",
+        "(PreviewProbe) file-write-data /dev/dtracehelper",
+        "(PreviewProbe) sysctl-read kern.iossupportversion",
+        "(PreviewProbe) sysctl-read kern.memorystatus_level",
+        "(PreviewProbe) mach-lookup com.apple.logd",
+        "(PreviewProbe) mach-lookup com.apple.system.notification_center",
+        "(PreviewProbe) mach-lookup com.apple.pasteboard.1",
+        "(PreviewProbe) mach-lookup com.apple.distributed_notifications@Uv3",
+        "(PreviewProbe) mach-lookup com.apple.tccd.system",
+        "(PreviewProbe) mach-lookup com.apple.windowserver.active",
+        "(PreviewProbe) sysctl-read kern.willshutdown",
+        "(PreviewProbe) mach-lookup com.apple.coreservices.launchservicesd",
+        "(PreviewProbe) mach-lookup com.apple.CoreServices.coreservicesd",
+        "(PreviewProbe) mach-lookup com.apple.DiskArbitration.diskarbitrationd",
+        "(PreviewProbe) mach-lookup com.apple.dock.server",
+        "(PreviewProbe) mach-lookup com.apple.analyticsd",
+        "(PreviewProbe) mach-register com.apple.axserver (per-pid)",
+        "(dotnet) network-bind /private/tmp/692cd7e4-3771-4929-bedd-3856da1223d4",
+        "(PreviewProbe) mach-lookup com.apple.hiservices-xpcservice (xpc)",
+        "(PreviewProbe) mach-register com.apple.tsm.portname (per-pid)"
+      ]
+    }
+  },
+  "verdict": {
+    "ran": "no",
+    "frameRate": "not measured",
+    "delay": "not measured",
+    "reload": "not measured",
+    "measurement": "not checked"
+  }
+}

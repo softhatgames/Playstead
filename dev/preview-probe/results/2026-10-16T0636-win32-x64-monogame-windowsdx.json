@@ -1,0 +1,239 @@
+{
+  "probe": "preview",
+  "format": 1,
+  "recordedAt": "2026-10-16T06:36:32.390Z",
+  "subject": {
+    "id": "monogame-windowsdx",
+    "name": "MonoGame WindowsDX",
+    "technology": {
+      "language": "C#",
+      "runtime": ".NET 10",
+      "library": "MonoGame.Framework.WindowsDX 3.8.6",
+      "graphicsApi": "Direct3D 11",
+      "codeReload": "dotnet watch Hot Reload"
+    }
+  },
+  "machine": {
+    "platform": "win32",
+    "arch": "x64",
+    "os": "Windows 11 Pro",
+    "osRelease": "10.0.26200",
+    "cpu": "Intel(R) Core(TM) Ultra 7 155U",
+    "cores": 14,
+    "memoryGb": 32,
+    "displayHz": 60
+  },
+  "playstead": {
+    "commit": "4c6cc94",
+    "uncommittedChanges": false
+  },
+  "tools": {
+    "node": "v24.22.0",
+    "dotnet": "10.0.401",
+    "electron": "44.7.1"
+  },
+  "settings": {
+    "frames": "d3d11",
+    "sandbox": false,
+    "steadySeconds": 10,
+    "passMarks": {
+      "displayedFps": 57,
+      "longGapShare": 0.01,
+      "addedDelayP95Ms": 50,
+      "reloadMs": 2000,
+      "calibrationToleranceMs": 10,
+      "clockToleranceMs": 2
+    }
+  },
+  "note": "WindowsDX shared",
+  "ran": true,
+  "startup": {
+    "buildMs": 2590.1,
+    "launchToConnectedMs": 6636.8,
+    "launchToFirstFrameMs": 6851.3
+  },
+  "problems": [],
+  "game": {
+    "protocol": 1,
+    "width": 1280,
+    "height": 720,
+    "runtime": ".NET 10.0.12",
+    "os": "Microsoft Windows 10.0.26200",
+    "arch": "X64",
+    "library": "MonoGame.Framework.WindowsDX 3.8.6+c610a529667336f63da323c6057274258727664b",
+    "graphics": "Intel(R) Graphics",
+    "graphicsApi": "Direct3D 11",
+    "build": "Debug",
+    "windowHidden": true,
+    "frames": "raw",
+    "framesError": "SharpDXException: HRESULT: [0x80070057], Module: [General], ApiCode: [E_INVALIDARG/Invalid Arguments], Message: The parameter is incorrect.\r\n",
+    "keyInput": "the game's own input layer",
+    "mouseInput": "the game's own input layer",
+    "audio": {
+      "ok": true,
+      "error": null
+    }
+  },
+  "clocks": {
+    "game": {
+      "offsetMs": 0.24,
+      "roundTripMs": 0.4
+    },
+    "viewer": {
+      "offsetMs": 0.19,
+      "roundTripMs": 1.85
+    }
+  },
+  "reload": {
+    "edits": [
+      {
+        "edit": "method body",
+        "restartExpected": false,
+        "shown": true,
+        "restarted": false,
+        "editToAppliedMs": 1145,
+        "editToVisibleMs": 1146.4
+      },
+      {
+        "edit": "new method",
+        "restartExpected": false,
+        "shown": true,
+        "restarted": false,
+        "editToAppliedMs": 79.3,
+        "editToVisibleMs": 113.8
+      },
+      {
+        "edit": "lambda",
+        "restartExpected": false,
+        "shown": true,
+        "restarted": false,
+        "editToAppliedMs": 172.1,
+        "editToVisibleMs": 192.6
+      },
+      {
+        "edit": "change that needs a restart",
+        "restartExpected": true,
+        "shown": true,
+        "restarted": true,
+        "editToAppliedMs": null,
+        "editToVisibleMs": 5087.2
+      }
+    ],
+    "restoredMs": 4362.9
+  },
+  "freeze": {
+    "frozenFrame": 332,
+    "shownFrame": 332,
+    "arrivedWhileFrozen": 57,
+    "ok": true
+  },
+  "audio": {
+    "played": 4,
+    "ok": true,
+    "errors": []
+  },
+  "frames": {
+    "renderedFps": 60,
+    "displayedFps": 46.8,
+    "intervalMs": {
+      "count": 467,
+      "p50": 16.7,
+      "p95": 49.7,
+      "max": 76.4
+    },
+    "longGaps": 66,
+    "delayMs": {
+      "count": 468,
+      "p50": 24.7,
+      "p95": 43.3,
+      "max": 78
+    },
+    "stagesMs": {
+      "readback": {
+        "count": 468,
+        "p50": 2.1,
+        "p95": 3.4,
+        "max": 7.1
+      },
+      "waitToSend": {
+        "count": 468,
+        "p50": 0,
+        "p95": 1.8,
+        "max": 3.7
+      },
+      "gameToRelay": {
+        "count": 468,
+        "p50": 4.2,
+        "p95": 7.6,
+        "max": 12.4
+      },
+      "relay": {
+        "count": 468,
+        "p50": 1.6,
+        "p95": 6,
+        "max": 13.7
+      },
+      "relayToViewer": {
+        "count": 468,
+        "p50": 8.6,
+        "p95": 28.7,
+        "max": 40.7
+      },
+      "viewerToDrawn": {
+        "count": 468,
+        "p50": 6.4,
+        "p95": 13.5,
+        "max": 57.6
+      }
+    },
+    "frames": {
+      "rendered": 598,
+      "reachedRelay": 599,
+      "droppedAtRelay": 57,
+      "receivedByViewer": 543,
+      "skippedByViewer": 74,
+      "displayed": 468
+    },
+    "pixelRowsChecked": 1573,
+    "pixelRowsMismatched": 0
+  },
+  "input": {
+    "inputToGameMs": {
+      "count": 51,
+      "p50": 1.6,
+      "p95": 14.4,
+      "max": 84.2
+    },
+    "addedDelayMs": {
+      "count": 51,
+      "p50": 24.5,
+      "p95": 52.4,
+      "max": 103.6
+    },
+    "inputToDisplayMs": {
+      "count": 51,
+      "p50": 41.6,
+      "p95": 69.9,
+      "max": 124.3
+    },
+    "unmatched": 0
+  },
+  "calibration": {
+    "addedMs": 100,
+    "measuredMs": 101,
+    "delayMs": {
+      "count": 179,
+      "p50": 125.7,
+      "p95": 145.2,
+      "max": 226.1
+    },
+    "ok": true
+  },
+  "verdict": {
+    "ran": "yes",
+    "frameRate": "fail",
+    "delay": "fail",
+    "reload": "pass",
+    "measurement": "checked"
+  }
+}

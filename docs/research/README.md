@@ -2,11 +2,12 @@
 
 Playstead's own investigations, with sources, versions, findings and limits. Accepted conclusions move into the design documents and [decisions](https://github.com/softhatgames/playstead-v0/blob/v0/docs/adr/README.md); these notes keep the evidence and the open points.
 
-| Note                                          | Question                                                                                                                                        |
-| --------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
-| [Codex App Server](codex-app-server.md)       | How the host runs Codex: versions, transport, sign-in, persistence, permission requests, sandboxing, isolation and Windows.                     |
-| [Claude Agent SDK](claude-agent-sdk.md)       | How the host could run Claude: versions, processes, sign-in and terms, isolation, sessions, events, permissions, sandbox, limits and Windows.   |
-| [Effect 4](effect-schema.md)                  | Effect Schema in place of Zod, Effect's host modules and their stability, and T3 Code's choices.                                                |
-| [Interface prior art](interface-prior-art.md) | How agentic coding products, game tools, creative tools and human–AI research present agent work, running software, alternatives and authority. |
-| [Interface concepts](interface-concepts.md)   | The interface concepts considered for making a game with Playstead, and the founder's decisions.                                                |
-| [Game stacks](game-stacks.md)                 | Languages and libraries for code-first games: web builds, reload speed, desktop, phones, consoles, and REDox.                                   |
+| Note                                                  | Question                                                                                                                                                                         |
+| ----------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [Codex App Server](codex-app-server.md)               | How the host runs Codex: versions, transport, sign-in, persistence, permission requests, sandboxing, isolation and Windows.                                                      |
+| [Claude Agent SDK](claude-agent-sdk.md)               | How the host could run Claude: versions, processes, sign-in and terms, isolation, sessions, events, permissions, sandbox, limits and Windows.                                    |
+| [Effect 4](effect-schema.md)                          | Effect Schema in place of Zod, Effect's host modules and their stability, and T3 Code's choices.                                                                                 |
+| [Interface prior art](interface-prior-art.md)         | How agentic coding products, game tools, creative tools and human–AI research present agent work, running software, alternatives and authority.                                  |
+| [Interface concepts](interface-concepts.md)           | The interface concepts considered for making a game with Playstead, and the founder's decisions.                                                                                 |
+| [Game stacks](game-stacks.md)                         | Languages and libraries for code-first games: web builds, reload speed, desktop, phones, consoles, and REDox.                                                                    |
+| [Preview frame transport](preview-frame-transport.md) | The fastest way to get a native game's frames into the preview: shared GPU textures, shared memory, hardware video, faster hops and window embedding, with the sandbox's limits. |

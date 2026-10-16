@@ -5,3 +5,8 @@ dist/
 !.env.example
 coverage/
 .DS_Store
+
+# The preview probe's .NET and native build output
+dev/preview-probe/subjects/*/bin/
+dev/preview-probe/subjects/*/obj/
+dev/preview-probe/viewer/native/build/

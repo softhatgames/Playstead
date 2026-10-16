@@ -76,6 +76,8 @@ Playstead shows one running game at a time: the game or the prototype the person
 
 A **scenario** is a named starting situation, such as a boss's second phase with three hearts, kept in the game project. Prototypes, playtests and checks can start from one instead of replaying the game to that point. The agent makes scenarios with the game's capabilities, or proposes integration work when those are missing. Anything played from a scenario records it, because a scenario skips the journey there. Scenarios that depend on changed content are marked as possibly outdated until checked.
 
+The person can point at or draw over the game to give the agent feedback. Choosing to draw freezes the preview on the current frame and pauses the game; the person marks the frame and can add words. The game stays paused while they and the agent talk, until the person resumes it. The agent receives the frame, the marks in the game's own coordinates, the person's exact words, and the revision and scenario the frame came from. A game that cannot pause keeps running behind the frozen frame, and Playstead says so. Nothing from Playstead covers Play, so there the game's mark key captures the moment, and the person draws on that frame afterwards in Playstead.
+
 Feedback remains attached to what the person actually played, and records whether it came from the preview, Play or a clip. Show which source changes exist and which revision the running game has loaded. An edited file is not evidence that the running game changed. The [harness contract](HARNESS.md#apply-changes-to-a-running-game) governs application, state compatibility and recovery.
 
 ## Judge the right thing

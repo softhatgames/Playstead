@@ -3,9 +3,9 @@
 - **Question:** Which language and libraries should be the default stack for code-first games made with Playstead? Games need a fast edit-to-see cycle, native desktop builds and, for some games, iPhone and Android; consoles are welcome. At the start of the investigation every game was also expected to build to WebAssembly for the preview. [Decision 0020](https://github.com/softhatgames/playstead-v0/blob/v0/docs/adr/0020-native-games-send-frames-to-the-preview.md) later removed that requirement.
 - **Date:** 2026-10-15. All sources were accessed on this date.
 - **Outcome:** [decision 0021](https://github.com/softhatgames/playstead-v0/blob/v0/docs/adr/0021-csharp-as-the-default-stack.md) chose C# on the .NET long-term support release, with MonoGame for now.
-- **Local evidence:** two small timing runs on a macOS (Apple silicon) development computer, in a throwaway folder that was then deleted. They are marked **Observed**.
+- **Local evidence:** two small timing runs on a macOS (Apple silicon) development computer, in a throwaway folder that was then deleted, and the [preview probe](../../dev/preview-probe/README.md)'s recorded runs. They are marked **Observed**.
 
-Labels: **Documented** (official documentation, repositories or release notes), **Observed** (the local runs), **Inference** (reasoning, not a source) and **Unconfirmed** (not established).
+Labels: **Documented** (official documentation, repositories or release notes), **Observed** (local runs), **Inference** (reasoning, not a source) and **Unconfirmed** (not established).
 
 ## C# and .NET
 
@@ -58,14 +58,34 @@ Labels: **Documented** (official documentation, repositories or release notes), 
 | TypeScript          | Native                           | Fastest                          | Wrapper | Wrapper | None found          |
 | C or C++ with SDL 3 | Mature (Emscripten)              | Rebuild and restart              | Strong  | Yes     | Ports under licence |
 
+## Preview probe runs
+
+The [preview probe](../../dev/preview-probe/README.md) measures the technical prototype's questions and records each run in `dev/preview-probe/results`. The runs below were made by the agent on 2026-10-15 at commit `f20f170`, on the founder's Mac: Apple M3 Max, macOS 26.6.2, 120 Hz display, .NET SDK 10.0.103 (runtime 10.0.3), MonoGame DesktopGL 3.8.6, Electron 44.7.1 and Codex 0.162.1. The founder's own runs on macOS and Windows follow.
+
+- **Preview (Observed, [run][run-mac]).** 1280×720 frames, read back and sent raw over a Unix socket and a WebSocket, reached the preview at 60 per second with no gap over two frames and none dropped. The frame delay was 15.0 ms at the median and 16.2 ms at the 95th percentile, of which reading back took 2.3 ms; the rest went on the socket, the WebSocket and waiting for the display's refresh. The added delay over a game in its own window was 16.9 ms at the 95th percentile, within the proposed 50 ms. The measurement check found the 100 ms added in the relay as 95.6 ms, and the three clocks agreed within 0.1 ms.
+- **Input (Observed, [run][run-mac]).** Keys sent from the preview as SDL events reached MonoGame's own `Keyboard.GetState()`. From the key event to the first frame drawn after the game handled it took 37 ms at the median and 46.7 ms at the 95th percentile; most of it is MonoGame reading events only at the start of each 60 Hz frame, as it does for a keyboard. MonoGame's DesktopGL reads the mouse from the system rather than from events, so clicks went through the game's own code.
+- **Hot Reload (Observed, [run][run-mac]).** Under `dotnet watch`, a changed method body reached the running game's screen after 2.1 s, then a new method after 0.13 s and a changed lambda after 0.11 s, all without a restart. The first change after starting was the slowest in every development run, between 0.7 and 2.1 s; in this run it missed the proposed 2 s mark. A change that needs a restart restarted the game automatically and showed after 1.5 s.
+- **Sandbox on macOS (Observed, [run][run-mac-sandbox]).** Inside `codex sandbox` with the `:workspace` profile, a clean build compiled in 1.3 s: the sandbox refused the shared compiler server's socket, and the compiler ran in its own process. The game could not create its OpenGL context, because the sandbox denied `com.apple.windowserver.active` and other window and launch services. It also denied the socket `dotnet watch` binds in `/private/tmp` for Hot Reload. Codex's permission profiles cover files, network and workspace roots, with nothing for the window server (read from the 0.162.1 binary's configuration names, Unconfirmed in its documentation).
+- **Windows (Observed).** On the founder's laptop (Intel Core Ultra 7 155U with Intel graphics, 60 Hz display, Windows 11 Pro 26200, .NET SDK 10.0.401, runtime 10.0.12), the [first run][run-win-1] measured nothing: the game opened its named pipe synchronously, Windows serialises a synchronous handle's reads and writes, and its waiting read held back its first message. The pipe is now asynchronous. Two [sandboxed][run-win-sandbox-1] [runs][run-win-sandbox-2] stopped before building: Codex's permission refresh could not update another Codex installation's running computer-use runtime, `AppData\Local\OpenAI\Codex\runtimes\cua_node\…\node_repl.exe` ("being used by another process", os error 32). That refresh precedes every sandboxed command, so Playstead's own Codex threads would fail the same way while that runtime runs.
+- **Windows preview (Observed, [run][run-win]).** The game rendered 60 frames per second, but the preview showed 51, with 42 gaps longer than two frames: the WebSocket leg took 6.9 ms at the median and 19.3 ms at the 95th percentile, so frames bunched, 23 were replaced at the relay and 67 arrived within one refresh of the next and were never drawn. Reading back took 5.3 ms. The frame delay was 25.6 ms at the median and 37.7 ms at the 95th percentile, and the added delay over a game in its own window 36.7 ms at the 95th percentile: within the proposed delay mark, below the proposed frame-rate mark. The runner had hidden the preview window, though: Node's `windowsHide`, set for every process the probe started, hides a Windows program's first window. A hidden window is not drawn on the display's refresh, so the frame rate may understate the route; it was found and fixed on 2026-10-16. Keys reached `Keyboard.GetState()` through SDL, the founder heard the beeps, and the clocks agreed within 0.3 ms. Hot Reload applied a changed method body after 1.5 s, then a new method and a changed lambda in 0.1–0.2 s. With this SDK, turning a method into an iterator, which restarted the game with SDK 10.0.103, applied in place; the probe's restart check now changes a class's base type instead.
+- **Windows sandbox (Observed, [run][run-win-sandbox-3]).** With the computer-use runtime stopped, the refresh succeeded and the build compiled inside the elevated sandbox, but `dotnet watch`'s package restore could not read `AppData\Roaming\NuGet\NuGet.Config` ("unauthorized access"): unlike macOS's, Codex's Windows sandbox also limits reads of the person's profile. The probe now runs `dotnet watch --no-restore`, after restoring outside. Whether the game gets graphics, sound and its pipe inside the Windows sandbox is still untested.
+- **Measurement (Observed).** Playwright, used at first to drive the preview, reports every WebSocket frame over the DevTools protocol; that alone slowed the page to about 45 frames per second, so the probe drives Electron directly.
+
 ## Open points
 
-- Whether Hot Reload takes effect inside a running MonoGame game, and how long a change takes to appear.
-- The delay of frames sent from a MonoGame game into the Electron preview.
-- Whether a game gets a GPU context, audio and input under Codex's sandbox on macOS and Windows.
+- The founder's own run on macOS, including how the preview feels compared with Play.
+- Even frame delivery on lower-powered computers: raw frames over a WebSocket reached the Windows laptop's preview unevenly.
+- Running games isolated from the person's computer: deferred by [decision 0022](https://github.com/softhatgames/playstead-v0/blob/research/preview-probe/docs/adr/0022-games-run-unsandboxed-for-now.md). Still unknown: whether a game gets a GPU context, audio and input under Codex's sandbox on Windows, and a sandbox that allows the window server on macOS.
 - REDox under ahead-of-time compilation.
 - Rust on consoles under non-disclosure agreements.
 
+[run-mac]: ../../dev/preview-probe/results/2026-10-15T1641-darwin-arm64-monogame-desktopgl.json
+[run-mac-sandbox]: ../../dev/preview-probe/results/2026-10-15T1642-darwin-arm64-monogame-desktopgl-sandbox.json
+[run-win-1]: ../../dev/preview-probe/results/2026-10-15T1653-win32-x64-monogame-desktopgl.json
+[run-win-sandbox-1]: ../../dev/preview-probe/results/2026-10-15T1704-win32-x64-monogame-desktopgl-sandbox.json
+[run-win-sandbox-2]: ../../dev/preview-probe/results/2026-10-15T1715-win32-x64-monogame-desktopgl-sandbox.json
+[run-win]: ../../dev/preview-probe/results/2026-10-15T1722-win32-x64-monogame-desktopgl.json
+[run-win-sandbox-3]: ../../dev/preview-probe/results/2026-10-15T1724-win32-x64-monogame-desktopgl-sandbox.json
 [dotnet-releases]: https://github.com/dotnet/core/tree/main/release-notes
 [blazor-aot]: https://learn.microsoft.com/aspnet/core/blazor/webassembly-build-tools-and-aot
 [dotnet11]: https://github.com/dotnet/core/tree/main/release-notes/11.0/preview

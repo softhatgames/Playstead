@@ -1,0 +1,15 @@
+{
+  "name": "playstead-preview-probe",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=24.15.0"
+  },
+  "scripts": {
+    "probe:preview": "node run.mjs"
+  },
+  "devDependencies": {
+    "electron": "44.7.1",
+    "ws": "8.22.0"
+  }
+}

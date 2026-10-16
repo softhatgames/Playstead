@@ -1,0 +1,71 @@
+{
+  "name": "MonoGame DesktopGL",
+  "technology": {
+    "language": "C#",
+    "runtime": ".NET 10",
+    "library": "MonoGame.Framework.DesktopGL 3.8.6",
+    "graphicsApi": "OpenGL",
+    "codeReload": "dotnet watch Hot Reload"
+  },
+  "frames": ["raw", "iosurface"],
+  "versions": {
+    "dotnet": ["dotnet", "--version"]
+  },
+  "environment": {
+    "DOTNET_NOLOGO": "1",
+    "DOTNET_CLI_TELEMETRY_OPTOUT": "1",
+    "DOTNET_WATCH_RESTART_ON_RUDE_EDIT": "1"
+  },
+  "restore": ["dotnet", "restore"],
+  "build": ["dotnet", "build", "--no-restore"],
+  "preview": [
+    "dotnet",
+    "watch",
+    "--non-interactive",
+    "--no-restore",
+    "run",
+    "--",
+    "--preview",
+    "{address}",
+    "--frames",
+    "{frames}"
+  ],
+  "showWindowArgument": "--show-window",
+  "crashPattern": "Exited with error code",
+  "play": ["dotnet", "run", "-c", "Release"],
+  "reload": {
+    "file": "ReloadMarker.cs",
+    "initial": 1,
+    "edits": [
+      {
+        "name": "method body",
+        "expect": 2,
+        "replace": [["+ 1 +", "+ 2 +"]]
+      },
+      {
+        "name": "new method",
+        "expect": 3,
+        "replace": [
+          ["+ 2 +", "+ Added() +"],
+          [
+            "    // The runtime cannot change",
+            "    static int Added() => 3;\n\n    // The runtime cannot change"
+          ]
+        ]
+      },
+      {
+        "name": "lambda",
+        "expect": 4,
+        "replace": [["() => 0", "() => 1"]]
+      },
+      {
+        "name": "change that needs a restart",
+        "expect": 5,
+        "restartExpected": true,
+        "replace": [
+          ["class RestartMarker { }", "class RestartMarker : OneMore { }"]
+        ]
+      }
+    ]
+  }
+}

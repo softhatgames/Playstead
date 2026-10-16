@@ -1,0 +1,62 @@
+{
+  "probe": "preview",
+  "format": 1,
+  "recordedAt": "2026-10-15T16:53:17.774Z",
+  "subject": {
+    "id": "monogame-desktopgl",
+    "name": "MonoGame DesktopGL",
+    "technology": {
+      "language": "C#",
+      "runtime": ".NET 10",
+      "library": "MonoGame.Framework.DesktopGL 3.8.6",
+      "graphicsApi": "OpenGL",
+      "codeReload": "dotnet watch Hot Reload"
+    }
+  },
+  "machine": {
+    "platform": "win32",
+    "arch": "x64",
+    "os": "Windows 11 Pro",
+    "osRelease": "10.0.26200",
+    "cpu": "Intel(R) Core(TM) Ultra 7 155U",
+    "cores": 14,
+    "memoryGb": 32,
+    "displayHz": 60
+  },
+  "playstead": {
+    "commit": "39819f6",
+    "uncommittedChanges": false
+  },
+  "tools": {
+    "node": "v24.22.0",
+    "dotnet": "10.0.401",
+    "electron": "44.7.1"
+  },
+  "settings": {
+    "sandbox": false,
+    "steadySeconds": 10,
+    "passMarks": {
+      "displayedFps": 57,
+      "longGapShare": 0.01,
+      "addedDelayP95Ms": 50,
+      "reloadMs": 2000,
+      "calibrationToleranceMs": 10,
+      "clockToleranceMs": 2
+    }
+  },
+  "note": "Windows laptop",
+  "ran": false,
+  "startup": {
+    "buildMs": 3025.6
+  },
+  "problems": [
+    "The game did not connect within three minutes."
+  ],
+  "verdict": {
+    "ran": "no",
+    "frameRate": "not measured",
+    "delay": "not measured",
+    "reload": "not measured",
+    "measurement": "not checked"
+  }
+}
