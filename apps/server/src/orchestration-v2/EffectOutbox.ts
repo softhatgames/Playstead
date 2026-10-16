@@ -18,6 +18,16 @@ const OrchestrationEffectRequestV2 = Schema.Union([
 ]);
 export type OrchestrationEffectRequestV2 = typeof OrchestrationEffectRequestV2.Type;
 
+/**
+ * Effects whose work dies with the process that ran them (T3 Code's
+ * `PROCESS_BOUND_EFFECT_TYPES`): a provider turn started by a server that
+ * has gone cannot be picked up again, so recovery cancels them. Every
+ * effect Playstead has is one; none is replayed after a restart.
+ */
+const PROCESS_BOUND_EFFECT_TYPES: ReadonlyArray<OrchestrationEffectRequestV2["type"]> = [
+  "provider-turn.start",
+];
+
 export interface PendingEffect {
   readonly id: string;
   readonly request: OrchestrationEffectRequestV2;
@@ -65,6 +75,24 @@ export class EffectOutboxV2 extends Context.Service<
       error: string,
       now: string,
     ) => Effect.Effect<void, EffectOutboxError>;
+    /**
+     * Cancels a thread's process-bound effects that are pending or running.
+     * Call inside the transaction that settles the thread's work.
+     */
+    readonly cancelUnsettled: (input: {
+      readonly threadId: ThreadId;
+      readonly reason: string;
+      readonly now: string;
+    }) => Effect.Effect<number, EffectOutboxError>;
+    /**
+     * Cancels every process-bound effect still marked running, which only a
+     * process that has gone could have claimed (T3 Code's
+     * `reconcileAfterProcessLoss`, with nothing to requeue).
+     */
+    readonly reconcileAfterProcessLoss: (input: {
+      readonly reason: string;
+      readonly now: string;
+    }) => Effect.Effect<number, EffectOutboxError>;
     readonly notifyAvailable: Effect.Effect<void>;
     /** Waits until something was enqueued since the last wait. */
     readonly awaitAvailable: Effect.Effect<void>;
@@ -178,9 +206,40 @@ const make = Effect.gen(function* () {
       WHERE effect_id = ${effectId}
     `.pipe(Effect.asVoid, Effect.mapError(failWith(status === "succeeded" ? "succeed" : "fail")));
 
+  const cancelUnsettled = (input: {
+    readonly threadId: ThreadId;
+    readonly reason: string;
+    readonly now: string;
+  }) =>
+    sql<{ readonly effectId: string }>`
+      UPDATE orchestration_v2_effect_outbox
+      SET status = 'cancelled', last_error = ${input.reason}, updated_at = ${input.now}
+      WHERE thread_id = ${input.threadId}
+        AND status IN ('pending', 'running')
+        AND ${sql.in("effect_type", PROCESS_BOUND_EFFECT_TYPES)}
+      RETURNING effect_id AS "effectId"
+    `.pipe(
+      Effect.map((rows) => rows.length),
+      Effect.mapError(failWith("cancelUnsettled")),
+    );
+
+  const reconcileAfterProcessLoss = (input: { readonly reason: string; readonly now: string }) =>
+    sql<{ readonly effectId: string }>`
+      UPDATE orchestration_v2_effect_outbox
+      SET status = 'cancelled', last_error = ${input.reason}, updated_at = ${input.now}
+      WHERE status = 'running'
+        AND ${sql.in("effect_type", PROCESS_BOUND_EFFECT_TYPES)}
+      RETURNING effect_id AS "effectId"
+    `.pipe(
+      Effect.map((rows) => rows.length),
+      Effect.mapError(failWith("reconcileAfterProcessLoss")),
+    );
+
   return EffectOutboxV2.of({
     enqueue,
     claimNext,
+    cancelUnsettled,
+    reconcileAfterProcessLoss,
     succeed: (effectId, now) => settle("succeeded", effectId, null, now),
     fail: (effectId, error, now) => settle("failed", effectId, error, now),
     notifyAvailable: Queue.offer(available, undefined).pipe(Effect.asVoid),

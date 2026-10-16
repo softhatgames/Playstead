@@ -138,6 +138,12 @@ export class ProjectionStoreV2 extends Context.Service<
       ReadonlyArray<OrchestrationV2ThreadShell>,
       ProjectionStoreV2Error
     >;
+    /**
+     * Threads whose projection still says a provider is at work: an active
+     * run, a provider session not stopped, or an active provider thread
+     * (T3 Code's `getRecoveryThreadIds("runtime")`).
+     */
+    readonly listRecoveryThreadIds: Effect.Effect<ReadonlyArray<ThreadId>, ProjectionStoreV2Error>;
     /** The ordinal a stored turn item has, for the sink to keep it. */
     readonly getTurnItemOrdinal: (
       itemId: TurnItemId,
@@ -256,6 +262,20 @@ const make = Effect.gen(function* () {
     );
   }).pipe(Effect.mapError(failWith("listThreadShells")));
 
+  const listRecoveryThreadIds = sql<{ readonly threadId: ThreadId }>`
+    SELECT thread_id AS "threadId" FROM orchestration_v2_projection_runs
+    WHERE json_extract(payload_json, '$.status') IN ${sql.in([...ACTIVE_RUN_STATUSES])}
+    UNION
+    SELECT thread_id AS "threadId" FROM orchestration_v2_projection_provider_sessions
+    WHERE json_extract(payload_json, '$.status') NOT IN ('stopped', 'error')
+    UNION
+    SELECT thread_id AS "threadId" FROM orchestration_v2_projection_provider_threads
+    WHERE json_extract(payload_json, '$.status') = 'active'
+  `.pipe(
+    Effect.map((rows) => rows.map((row) => row.threadId)),
+    Effect.mapError(failWith("listRecoveryThreadIds")),
+  );
+
   const getTurnItemOrdinal = (itemId: TurnItemId) =>
     sql<{ readonly ordinal: number }>`
       SELECT json_extract(payload_json, '$.ordinal') AS ordinal
@@ -281,6 +301,7 @@ const make = Effect.gen(function* () {
     getThread,
     getThreadShell,
     listThreadShells,
+    listRecoveryThreadIds,
     getTurnItemOrdinal,
     maxTurnItemOrdinal,
   });

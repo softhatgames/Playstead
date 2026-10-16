@@ -30,6 +30,13 @@ import {
   FILE_CREATE_SCENARIO,
   runFileCreateScenario,
 } from "../src/orchestration-v2/testkit/fixtures/fileCreate.ts";
+import {
+  RESTART_RESUME_IDS,
+  RESTART_RESUME_SCENARIO,
+  runFirstTurn,
+  runSecondTurn,
+} from "../src/orchestration-v2/testkit/fixtures/restartResume.ts";
+import { makeTestServerConfig } from "../src/testUtils/testServer.ts";
 
 /**
  * Playstead's Claude Agent SDK recorder (T3 Code's
@@ -39,7 +46,10 @@ import {
  * adapter sends). It uses the signed-in `claude` on PATH, in a temporary
  * empty folder, and writes `src/orchestration-v2/testkit/fixtures/<scenario>.claude.ndjson`.
  *
- *   node apps/server/scripts/record-claude-replay.ts
+ *   node apps/server/scripts/record-claude-replay.ts [file_create | restart_resume]
+ *
+ * `restart_resume` builds the services a second time over the same home
+ * between its two turns, as a restarted server would.
  *
  * The header carries `claude --version` and the capture date. The frames are
  * scrubbed of the folder (which becomes `<workspace>`), this machine's home,
@@ -189,10 +199,61 @@ const trimmedInbound = (frame: unknown): unknown => {
   return frame;
 };
 
+type HarnessOptions = Parameters<typeof makeOrchestrationHarness>[0];
+
+/** One file-creating turn. */
+const recordFileCreate = (options: HarnessOptions) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const harness = yield* makeOrchestrationHarness(options);
+    const { workspace, run } = yield* runFileCreateScenario(harness);
+    const written = path.join(workspace, FILE_CREATE_SCENARIO.fileName);
+    yield* Effect.logInfo("The turn ended.").pipe(
+      Effect.annotateLogs({
+        run: run.status,
+        file: (yield* fs.exists(written))
+          ? JSON.stringify(yield* fs.readFileString(written))
+          : "missing",
+      }),
+    );
+    if (run.status !== "completed") return yield* Effect.die(`The run ended ${run.status}.`);
+    return { harness, workspace };
+  });
+
+/** A turn, a restart over the same home, and a turn that needs the first one's context. */
+const recordRestartResume = (options: HarnessOptions) =>
+  Effect.gen(function* () {
+    const config = yield* makeTestServerConfig();
+    const first = yield* Effect.scoped(
+      Effect.flatMap(makeOrchestrationHarness({ ...options, config }), runFirstTurn),
+    );
+    if (first.run.status !== "completed") {
+      return yield* Effect.die(`The first run ended ${first.run.status}.`);
+    }
+    const harness = yield* makeOrchestrationHarness({ ...options, config, recoverOnStartup: true });
+    const second = yield* runSecondTurn(harness);
+    const projection = yield* harness.orchestrator.getThreadProjection(RESTART_RESUME_IDS.threadId);
+    const reply =
+      projection._tag === "Some"
+        ? projection.value.messages.findLast((message) => message.role === "assistant")?.text
+        : undefined;
+    yield* Effect.logInfo("The turn after the restart ended.").pipe(
+      Effect.annotateLogs({ run: second.status, reply: JSON.stringify(reply) }),
+    );
+    if (second.status !== "completed" || !reply?.toLowerCase().includes("tangerine")) {
+      return yield* Effect.die("Claude did not remember the code word after the restart.");
+    }
+    return { harness, workspace: first.workspace };
+  });
+
 const program = Effect.gen(function* () {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const scenario = FILE_CREATE_SCENARIO.scenario;
+  const scenario = process.argv[2] ?? FILE_CREATE_SCENARIO.scenario;
+  if (scenario !== FILE_CREATE_SCENARIO.scenario && scenario !== RESTART_RESUME_SCENARIO.scenario) {
+    return yield* Effect.die(`No scenario is called ${scenario}.`);
+  }
   const version = yield* claudeVersion;
   const sdkEntry = yield* path.fromFileUrl(
     new URL(import.meta.resolve("@anthropic-ai/claude-agent-sdk")),
@@ -212,22 +273,15 @@ const program = Effect.gen(function* () {
   const environment = Object.fromEntries(
     Object.entries(process.env).filter(([name]) => !isAgentShellVariable(name)),
   );
-  const harness = yield* makeOrchestrationHarness({
+  const harnessOptions = {
     claudeRunner: recording.runner,
     claudeBinaryPath: "claude",
     environment,
-  });
-  const { workspace, run } = yield* runFileCreateScenario(harness);
-  const written = path.join(workspace, FILE_CREATE_SCENARIO.fileName);
-  yield* Effect.logInfo("The turn ended.").pipe(
-    Effect.annotateLogs({
-      run: run.status,
-      file: (yield* fs.exists(written))
-        ? JSON.stringify(yield* fs.readFileString(written))
-        : "missing",
-    }),
-  );
-  if (run.status !== "completed") return yield* Effect.die(`The run ended ${run.status}.`);
+  } as const;
+  const { harness, workspace } =
+    scenario === RESTART_RESUME_SCENARIO.scenario
+      ? yield* recordRestartResume(harnessOptions)
+      : yield* recordFileCreate(harnessOptions);
 
   const home = NodeOS.homedir();
   const user = NodeOS.userInfo().username;
@@ -264,8 +318,12 @@ const program = Effect.gen(function* () {
       scenario,
       metadata: {
         sdkVersion,
-        model: FILE_CREATE_SCENARIO.model,
-        prompt: FILE_CREATE_SCENARIO.prompt,
+        ...(scenario === RESTART_RESUME_SCENARIO.scenario
+          ? {
+              model: RESTART_RESUME_SCENARIO.model,
+              prompts: [RESTART_RESUME_SCENARIO.firstPrompt, RESTART_RESUME_SCENARIO.secondPrompt],
+            }
+          : { model: FILE_CREATE_SCENARIO.model, prompt: FILE_CREATE_SCENARIO.prompt }),
         nativeSessionId: recording.sessionIds[0],
         recorder: "apps/server/scripts/record-claude-replay.ts",
       },

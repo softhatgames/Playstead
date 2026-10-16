@@ -3,6 +3,7 @@ import type {
   ProviderReplayEntry,
   ProviderReplayTranscript,
 } from "@playstead/provider-testing/replayTranscript";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
@@ -67,13 +68,25 @@ const sameFrame = (left: unknown, right: unknown) =>
 export interface ClaudeReplay {
   readonly runner: ClaudeAgentSdkQueryRunner["Service"];
   readonly assertComplete: Effect.Effect<void, ClaudeReplayError>;
+  /** Waits until the replay reaches the message it holds back. */
+  readonly awaitHeld: Effect.Effect<void>;
+}
+
+export interface ClaudeReplayOptions {
+  /**
+   * Claude's first message this matches is never sent, as if the server
+   * stopped while Claude was still working (T3 Code's `ProviderReplayGate`).
+   */
+  readonly holdBefore?: (frame: unknown) => boolean;
 }
 
 export const makeClaudeReplay = Effect.fn("makeClaudeReplay")(function* (
   transcript: ProviderReplayTranscript,
+  options: ClaudeReplayOptions = {},
 ) {
   const scenario = transcript.header.scenario;
   const entries = transcript.entries;
+  const held = yield* Deferred.make<void>();
   const cursor = yield* Ref.make(0);
   const failure = yield* Ref.make<ClaudeReplayError | undefined>(undefined);
   const advanced = yield* Queue.sliding<void>(1);
@@ -136,6 +149,10 @@ export const makeClaudeReplay = Effect.fn("makeClaudeReplay")(function* (
         const entry = entries[at];
         if (entry === undefined) return undefined;
         if (entry.type === "emit_inbound") {
+          if (options.holdBefore?.(entry.frame) === true) {
+            yield* Deferred.succeed(held, undefined);
+            return yield* Effect.never;
+          }
           yield* Ref.set(cursor, at + 1);
           return entry.frame as SDKMessage;
         }
@@ -181,7 +198,7 @@ export const makeClaudeReplay = Effect.fn("makeClaudeReplay")(function* (
     }
   });
 
-  return { runner, assertComplete } satisfies ClaudeReplay;
+  return { runner, assertComplete, awaitHeld: Deferred.await(held) } satisfies ClaudeReplay;
 });
 
 /** A copy that holds plain JSON, as the recording will. */

@@ -165,13 +165,15 @@ const permissionModeForRuntimeMode = (runtimeMode: RuntimeMode) => {
 /**
  * The options a session's query opens with (T3 Code's `makeClaudeQueryOptions`):
  * Claude Code's own tools and system prompt, partial messages, the session id
- * the thread will keep, and the person's `claude` with the server's
+ * the thread will keep (or resumes), and the person's `claude` with the server's
  * environment, in the project's folder.
  */
 const makeClaudeQueryOptions = (input: {
   readonly modelSelection: ModelSelection;
   readonly runtimeMode: RuntimeMode;
   readonly nativeSessionId: string;
+  /** Continue the session Claude Code saved under that id, instead of starting it. */
+  readonly resume: boolean;
   readonly cwd: string;
   readonly executablePath: string;
   readonly environment: ProcessEnvironment;
@@ -180,7 +182,7 @@ const makeClaudeQueryOptions = (input: {
   tools: { type: "preset", preset: "claude_code" },
   ...permissionModeForRuntimeMode(input.runtimeMode),
   includePartialMessages: true,
-  sessionId: input.nativeSessionId,
+  ...(input.resume ? { resume: input.nativeSessionId } : { sessionId: input.nativeSessionId }),
   systemPrompt: { type: "preset", preset: "claude_code" },
   cwd: input.cwd,
   additionalDirectories: [input.cwd],
@@ -199,6 +201,7 @@ export const recordedQueryOptions = (options: ClaudeAgentSdkQueryOptions) => ({
   allowDangerouslySkipPermissions: options.allowDangerouslySkipPermissions,
   includePartialMessages: options.includePartialMessages,
   sessionId: options.sessionId,
+  resume: options.resume,
   systemPrompt: options.systemPrompt,
   cwd: options.cwd,
   additionalDirectories: options.additionalDirectories,
@@ -287,11 +290,16 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (input
 
   const openSession: ProviderAdapterV2["openSession"] = (open) =>
     Effect.gen(function* () {
-      const nativeSessionId = yield* runner.allocateSessionId;
+      // A thread that has talked to Claude before resumes that session, as
+      // T3 Code's `makeClaudeQueryOptions` does with `resume`; a new one
+      // gets a session id of its own.
+      const resume = open.initialNativeThreadId !== undefined;
+      const nativeSessionId = open.initialNativeThreadId ?? (yield* runner.allocateSessionId);
       const options = makeClaudeQueryOptions({
         modelSelection: open.modelSelection,
         runtimeMode: open.runtimePolicy.runtimeMode,
         nativeSessionId,
+        resume,
         cwd: open.runtimePolicy.cwd,
         executablePath,
         environment: input.environment,

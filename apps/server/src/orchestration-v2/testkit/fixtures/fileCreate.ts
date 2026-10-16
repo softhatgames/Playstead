@@ -59,20 +59,13 @@ export const FILE_CREATE_IDS = {
 type Harness = Effect.Success<ReturnType<typeof makeOrchestrationHarness>>;
 
 /**
- * Sends what the interface sends for this turn and waits for the run to end.
- * `whileStarting` runs after the message is accepted and before the effect
- * worker starts the turn, while the run is active.
+ * Sends what the interface sends for this turn: the project, the thread and
+ * the message. The run is then starting, and the effect worker has not
+ * started its turn.
  */
-export const runFileCreateScenario = <A = undefined, E = never, R = never>(
+export const sendFileCreateMessage = (
   harness: Harness,
-  whileStarting?: Effect.Effect<A, E, R>,
-) => runProviderFileCreateScenario(harness, FILE_CREATE_SCENARIO, whileStarting);
-
-/** The same turn with the given provider's scenario. */
-export const runProviderFileCreateScenario = <A = undefined, E = never, R = never>(
-  harness: Harness,
-  scenario: FileCreateScenario,
-  whileStarting?: Effect.Effect<A, E, R>,
+  scenario: FileCreateScenario = FILE_CREATE_SCENARIO,
 ) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
@@ -102,8 +95,29 @@ export const runProviderFileCreateScenario = <A = undefined, E = never, R = neve
       text: scenario.prompt,
       titleSeed: scenario.titleSeed,
     });
+    return { workspace: project.workspaceRoot, sent };
+  });
+
+/**
+ * Sends Claude's turn and waits for the run to end. `whileStarting` runs
+ * after the message is accepted and before the effect worker starts the
+ * turn, while the run is active.
+ */
+export const runFileCreateScenario = <A = undefined, E = never, R = never>(
+  harness: Harness,
+  whileStarting?: Effect.Effect<A, E, R>,
+) => runProviderFileCreateScenario(harness, FILE_CREATE_SCENARIO, whileStarting);
+
+/** The same turn with the given provider's scenario. */
+export const runProviderFileCreateScenario = <A = undefined, E = never, R = never>(
+  harness: Harness,
+  scenario: FileCreateScenario,
+  whileStarting?: Effect.Effect<A, E, R>,
+) =>
+  Effect.gen(function* () {
+    const { workspace, sent } = yield* sendFileCreateMessage(harness, scenario);
     const interjected = whileStarting === undefined ? undefined : yield* whileStarting;
     yield* harness.worker.drain;
     const run = yield* harness.awaitRunEnded(FILE_CREATE_IDS.threadId, sent.sequence);
-    return { workspace: project.workspaceRoot, run, interjected };
+    return { workspace, run, interjected };
   });
