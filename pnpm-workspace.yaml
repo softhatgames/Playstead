@@ -6,7 +6,6 @@ packages:
 
 # pnpm 11: true lets a dependency run its install scripts.
 allowBuilds:
-  esbuild: true
   tsc-rs: true
 
 catalog:
