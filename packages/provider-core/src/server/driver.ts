@@ -3,21 +3,22 @@ import type {
   ProviderInstanceId,
   ProviderInstanceSettings,
 } from "@playstead/contracts/providerInstance";
-import type { ServerProviderState } from "@playstead/contracts/server";
+import type { ServerProviderAuth, ServerProviderState } from "@playstead/contracts/server";
 import type * as Effect from "effect/Effect";
 import type * as Scope from "effect/Scope";
 
 import type { ManagedServerProvider } from "./managedProvider.ts";
 
 /**
- * What a driver's check finds. T3 Code's `ProviderProbeResult` at 2577baf
- * also carries `auth`, and its snapshot `models`; they come with the sign-in
- * and model tickets, from the same check.
+ * What a driver's check finds, as T3 Code's `ProviderProbeResult` at 2577baf.
+ * A check that cannot tell whether the provider is signed in leaves `auth`
+ * out, which reads as unknown.
  */
 export interface ProviderProbeResult {
   readonly installed: boolean;
   readonly version: string | null;
   readonly status: ServerProviderState;
+  readonly auth?: ServerProviderAuth;
   readonly message?: string;
 }
 
