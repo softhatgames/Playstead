@@ -4,6 +4,10 @@
   "description": "The clients' connection and shared state: one connection owner per environment, reconnecting, RPC sessions and thread streams.",
   "type": "module",
   "exports": {
+    "./auth": {
+      "types": "./src/auth/index.ts",
+      "import": "./src/auth/index.ts"
+    },
     "./connection": {
       "types": "./src/connection/index.ts",
       "import": "./src/connection/index.ts"
