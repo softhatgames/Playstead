@@ -3,6 +3,14 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./devHome": {
+      "types": "./src/devHome.ts",
+      "import": "./src/devHome.ts"
+    },
+    "./devProxy": {
+      "types": "./src/devProxy.ts",
+      "import": "./src/devProxy.ts"
+    },
     "./identity": {
       "types": "./src/identity.ts",
       "import": "./src/identity.ts"
@@ -11,6 +19,9 @@
   "scripts": {
     "typecheck": "tsc-rs --noEmit",
     "test": "vp test run --config ../../vite.config.ts --dir ."
+  },
+  "dependencies": {
+    "effect": "catalog:"
   },
   "devDependencies": {
     "@effect/vitest": "catalog:",

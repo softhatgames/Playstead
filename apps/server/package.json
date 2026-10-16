@@ -5,10 +5,20 @@
   "description": "The server: RPC, orchestration, persistence and providers.",
   "type": "module",
   "scripts": {
+    "dev": "node --watch src/bin.ts",
     "typecheck": "tsc-rs --noEmit",
-    "test": "vp test run --passWithNoTests"
+    "test": "vp test run"
+  },
+  "dependencies": {
+    "@effect/platform-node": "catalog:",
+    "@effect/sql-sqlite-node": "catalog:",
+    "@playstead/contracts": "workspace:*",
+    "@playstead/shared": "workspace:*",
+    "effect": "catalog:"
   },
   "devDependencies": {
+    "@effect/vitest": "catalog:",
+    "@playstead/client-runtime": "workspace:*",
     "@types/node": "catalog:",
     "vite-plus": "catalog:"
   }

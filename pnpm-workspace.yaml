@@ -10,10 +10,13 @@ allowBuilds:
 
 catalog:
   "@effect/platform-node": 4.0.5
+  "@effect/sql-sqlite-node": 4.0.5
   "@effect/tsgo": 0.51.1
   "@effect/vitest": 4.0.5
+  "@tailwindcss/vite": 4.3.3
   "@types/node": 24.12.4
   effect: 4.0.5
+  tailwindcss: 4.3.3
   typescript: 7.0.2
   vite-plus: 1.0.0
   yaml: ^2.9.0
@@ -23,6 +26,7 @@ minimumReleaseAgeExclude:
   - "@tsc-rs/*"
   - "@effect/platform-node@4.0.5"
   - "@effect/platform-node-shared@4.0.5"
+  - "@effect/sql-sqlite-node@4.0.5"
   - "@effect/vitest@4.0.5"
   - effect@4.0.5
 

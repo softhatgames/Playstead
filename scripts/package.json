@@ -8,6 +8,7 @@
   },
   "dependencies": {
     "@effect/platform-node": "catalog:",
+    "@playstead/shared": "workspace:*",
     "effect": "catalog:",
     "yaml": "catalog:"
   },
