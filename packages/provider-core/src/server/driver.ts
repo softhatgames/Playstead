@@ -36,7 +36,7 @@ export interface ProviderDriverCreateInput {
 /**
  * One provider instance, built by its driver from its settings. Changing the
  * settings builds a new one, with a new adapter. An instance without an
- * orchestration adapter cannot run threads: Codex's arrives with #22.
+ * orchestration adapter cannot run threads.
  */
 export interface ProviderInstance {
   readonly instanceId: ProviderInstanceId;

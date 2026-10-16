@@ -12,6 +12,7 @@ import * as ProjectService from "../../project/ProjectService.ts";
 import { makeTestServerConfig } from "../../testUtils/testServer.ts";
 import * as WorkspacePaths from "../../workspace/WorkspacePaths.ts";
 import { ClaudeAgentSdkQueryRunner, makeClaudeAdapter } from "../Adapters/ClaudeAdapterV2.ts";
+import { CodexAppServerClientFactory, makeCodexAdapter } from "../Adapters/CodexAdapterV2.ts";
 import * as EffectWorker from "../EffectWorker.ts";
 import * as EventStore from "../EventStore.ts";
 import * as Orchestrator from "../Orchestrator.ts";
@@ -22,27 +23,51 @@ import * as OrchestrationRuntime from "../runtimeLayer.ts";
  * Seam 1: the real server services at the orchestrator's command boundary
  * (T3 Code's `ProviderReplayHarness.ts` `layerWithRegistry` at 2577baf,
  * without checkpoints, Git or handoffs). The orchestrator, event sink,
- * effect worker, Claude adapter, projections, project service and SQLite
- * are real, in a temporary Playstead home; only the adapter's `query()`
- * runner is given: a replay in tests, the recording wrapper in the recorder.
+ * effect worker, provider adapters, projections, project service and SQLite
+ * are real, in a temporary Playstead home; only each adapter's seam to its
+ * provider is given (Claude's `query()` runner, Codex's app-server clients):
+ * a replay in tests, the recording wrapper in the recorders. A provider
+ * given no seam has no adapter, so it cannot run threads.
  */
 export const makeOrchestrationHarness = Effect.fn("makeOrchestrationHarness")(function* (input: {
-  readonly claudeRunner: ClaudeAgentSdkQueryRunner["Service"];
-  /** The recorder runs the person's `claude` with their environment; replays need neither. */
+  readonly claudeRunner?: ClaudeAgentSdkQueryRunner["Service"];
+  readonly codexClients?: CodexAppServerClientFactory["Service"];
+  /** The recorders run the person's CLI with their environment; replays need neither. */
   readonly claudeBinaryPath?: string;
+  readonly codexBinaryPath?: string;
   readonly environment?: ProcessEnvironment;
 }) {
   const config = yield* makeTestServerConfig();
   const platform = yield* HostProcess.Platform;
+  const environment = input.environment ?? {};
+  const claude =
+    input.claudeRunner === undefined
+      ? Effect.succeed([])
+      : makeClaudeAdapter({
+          instanceId: "claudeAgent",
+          binaryPath: input.claudeBinaryPath ?? "claude",
+          environment,
+          platform,
+        }).pipe(
+          Effect.provideService(ClaudeAgentSdkQueryRunner, input.claudeRunner),
+          Effect.map((adapter) => [adapter]),
+        );
+  const codex =
+    input.codexClients === undefined
+      ? Effect.succeed([])
+      : makeCodexAdapter({
+          instanceId: "codex",
+          binaryPath: input.codexBinaryPath ?? "codex",
+          environment,
+          platform,
+          cwd: config.baseDir,
+        }).pipe(
+          Effect.provideService(CodexAppServerClientFactory, input.codexClients),
+          Effect.map((adapter) => [adapter]),
+        );
   const adapters = Layer.unwrap(
-    makeClaudeAdapter({
-      instanceId: "claudeAgent",
-      binaryPath: input.claudeBinaryPath ?? "claude",
-      environment: input.environment ?? {},
-      platform,
-    }).pipe(
-      Effect.provideService(ClaudeAgentSdkQueryRunner, input.claudeRunner),
-      Effect.map((claude) => ProviderAdapterRegistry.layerFromAdapters([claude])),
+    Effect.map(Effect.all([claude, codex]), (lists) =>
+      ProviderAdapterRegistry.layerFromAdapters(lists.flat()),
     ),
   );
   const context = yield* Layer.build(

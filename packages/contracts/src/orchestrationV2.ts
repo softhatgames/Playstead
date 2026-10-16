@@ -162,7 +162,7 @@ export const OrchestrationV2ProviderThread = Schema.Struct({
   providerInstanceId: ProviderInstanceId,
   providerSessionId: Schema.NullOr(ProviderSessionId),
   appThreadId: ThreadId,
-  /** Claude's session id, once a session has run the thread. */
+  /** Claude's session id or Codex's thread id, once a session has run the thread. */
   nativeThreadRef: Schema.NullOr(OrchestrationV2ProviderRef),
   status: Schema.Literals(["not_loaded", "idle", "active", "closed", "error"]),
   firstRunOrdinal: Schema.NullOr(PositiveInt),

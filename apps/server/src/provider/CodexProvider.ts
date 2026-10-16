@@ -43,25 +43,32 @@ const codexAppServerEnvironment = (environment: ProcessEnvironment) => ({
   ...environment,
 });
 
-/** `buildCodexInitializeParams` at 2577baf. */
+/** `buildCodexInitializeParams`'s client info at 2577baf. */
+export const codexClientInfo: CodexSchema.InitializeParams["clientInfo"] = {
+  name: identity.urlScheme.production,
+  title: identity.productName.production,
+  version: packageJson.version,
+};
+
 const initializeParams: CodexSchema.InitializeParams = {
-  clientInfo: {
-    name: identity.urlScheme.production,
-    title: identity.productName.production,
-    version: packageJson.version,
-  },
+  clientInfo: codexClientInfo,
   capabilities: { experimentalApi: true },
 };
 
-/** Starts `codex app-server` in the current scope and returns the client, initialized. */
-const startCodexAppServer = Effect.fn("startCodexAppServer")(function* (input: CodexProbeInput) {
+/**
+ * Spawns `codex app-server` in the current scope with the server's
+ * environment, through `resolveSpawnCommand` so a `.cmd` on Windows runs.
+ */
+export const spawnCodexAppServer = Effect.fn("spawnCodexAppServer")(function* (
+  input: CodexProbeInput,
+) {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const environment = codexAppServerEnvironment(input.environment);
   const spawnCommand = yield* resolveSpawnCommand(input.binaryPath, ["app-server"], {
     platform: input.platform,
     env: environment,
   });
-  const child = yield* spawner
+  return yield* spawner
     .spawn(
       ChildProcess.make(spawnCommand.command, spawnCommand.args, {
         cwd: input.cwd,
@@ -77,7 +84,11 @@ const startCodexAppServer = Effect.fn("startCodexAppServer")(function* (input: C
           new CodexAppServerSpawnError({ command: `${input.binaryPath} app-server`, cause }),
       ),
     );
-  const client = yield* CodexClient.fromChildProcess(child);
+});
+
+/** Starts `codex app-server` in the current scope and returns the client, initialized. */
+const startCodexAppServer = Effect.fn("startCodexAppServer")(function* (input: CodexProbeInput) {
+  const client = yield* CodexClient.fromChildProcess(yield* spawnCodexAppServer(input));
   const initialize = yield* client.request("initialize", initializeParams);
   yield* client.notify("initialized", undefined);
   return { client, initialize };

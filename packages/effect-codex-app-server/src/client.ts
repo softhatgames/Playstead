@@ -79,6 +79,11 @@ export class CodexAppServerClient extends Context.Service<
       method: M,
       handler: (params: ServerNotificationParams<M>) => Effect.Effect<void>,
     ) => Effect.Effect<void>;
+    /**
+     * Waits until Codex's output has ended, after every message before the
+     * end was handled, and gives what requests now fail with.
+     */
+    readonly terminated: Effect.Effect<CodexAppServerError>;
   }
 >()("@playstead/effect-codex-app-server/client/CodexAppServerClient") {}
 
@@ -147,6 +152,7 @@ export const make = Effect.fn("CodexAppServerClient.make")(function* (
   const notificationHandlers = new Map<string, Array<NotificationHandler>>();
   const nextId = yield* Ref.make(1);
   const terminated = yield* Ref.make(Option.none<CodexAppServerError>());
+  const ended = yield* Deferred.make<CodexAppServerError>();
 
   const send = (message: Record<string, unknown>) =>
     Effect.gen(function* () {
@@ -165,6 +171,7 @@ export const make = Effect.fn("CodexAppServerClient.make")(function* (
       for (const { deferred } of pending.values()) yield* Deferred.fail(deferred, error);
       pending.clear();
       yield* Queue.end(outgoing);
+      yield* Deferred.succeed(ended, error);
     });
 
   const answerRequest = (id: string | number, method: string, params: unknown) => {
@@ -329,6 +336,7 @@ export const make = Effect.fn("CodexAppServerClient.make")(function* (
           handler as NotificationHandler,
         ]);
       }),
+    terminated: Deferred.await(ended),
   });
 });
 
@@ -336,11 +344,12 @@ const STDERR_TAIL_LENGTH = 4096;
 const encoder = new TextEncoder();
 
 /**
- * A client over a spawned `codex app-server`. Its error output is drained and
- * the end of it kept, so that when Codex's output ends, requests fail with the
- * exit code and what Codex said, as T3 Code's `layerChildProcess` drains it.
+ * A spawned `codex app-server`'s stdio, from Codex's side, with what requests
+ * fail with once its output ends. Its error output is drained and the end of
+ * it kept, so that requests fail with the exit code and what Codex said, as
+ * T3 Code's `layerChildProcess` drains it. A recorder taps this stdio.
  */
-export const fromChildProcess = Effect.fn("CodexAppServerClient.fromChildProcess")(function* (
+export const childProcessStdio = Effect.fn("CodexAppServerClient.childProcessStdio")(function* (
   handle: ChildProcessSpawner.ChildProcessHandle,
 ) {
   const stderr = yield* handle.stderr.pipe(
@@ -352,23 +361,29 @@ export const fromChildProcess = Effect.fn("CodexAppServerClient.fromChildProcess
     Effect.orElseSucceed(() => ""),
     Effect.forkScoped,
   );
-  const terminationError = Effect.gen(function* () {
+  const terminationError: Effect.Effect<CodexAppServerError> = Effect.gen(function* () {
     const code = yield* handle.exitCode.pipe(
       Effect.map(Number),
       Effect.orElseSucceed(() => null),
     );
     return new CodexAppServerProcessExitedError({ code, stderr: yield* Fiber.join(stderr) });
   });
-  return yield* make(
-    Stdio.make({
-      args: Effect.succeed([]),
-      stdin: handle.stdout,
-      stdout: () =>
-        Sink.mapInput(handle.stdin, (chunk: string | Uint8Array) =>
-          typeof chunk === "string" ? encoder.encode(chunk) : chunk,
-        ),
-      stderr: () => Sink.drain,
-    }),
-    { terminationError },
-  );
+  const stdio = Stdio.make({
+    args: Effect.succeed([]),
+    stdin: handle.stdout,
+    stdout: () =>
+      Sink.mapInput(handle.stdin, (chunk: string | Uint8Array) =>
+        typeof chunk === "string" ? encoder.encode(chunk) : chunk,
+      ),
+    stderr: () => Sink.drain,
+  });
+  return { stdio, terminationError };
+});
+
+/** A client over a spawned `codex app-server`. */
+export const fromChildProcess = Effect.fn("CodexAppServerClient.fromChildProcess")(function* (
+  handle: ChildProcessSpawner.ChildProcessHandle,
+) {
+  const { stdio, terminationError } = yield* childProcessStdio(handle);
+  return yield* make(stdio, { terminationError });
 });

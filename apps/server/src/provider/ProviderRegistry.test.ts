@@ -9,6 +9,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Stream from "effect/Stream";
+import { ProviderSessionId, ThreadId } from "@playstead/contracts/baseSchemas";
 import type { ProviderInstanceId } from "@playstead/contracts/providerInstance";
 import type { ServerProviders } from "@playstead/contracts/server";
 
@@ -264,6 +265,35 @@ describe("ProviderRegistry", () => {
           ],
         });
         assert.notProperty(providerById(providers, "codex"), "message");
+      }).pipe(Effect.scoped),
+    );
+
+    it.effect("opens a Codex session over the app-server of the Codex it found", () =>
+      Effect.gen(function* () {
+        const bin = yield* makeTempDirectory("playstead-bin-");
+        const workspace = yield* makeTempDirectory("playstead-workspace-");
+        yield* writeFakeCodex({ directory: bin, version: "0.163.0" });
+        const { registry } = yield* startRegistry([bin]);
+        const adapter = Option.getOrThrow(yield* registry.getAdapter("codex"));
+
+        // The session starts its own app-server and initializes it, after the
+        // registry finished building the instance. A session bound to a
+        // finished scope never gets its app-server's answer, hence the bound.
+        const session = yield* adapter
+          .openSession({
+            threadId: ThreadId.make("thread:codex-session"),
+            providerSessionId: ProviderSessionId.make("provider-session:codex-session"),
+            modelSelection: { instanceId: "codex", model: "gpt-fake" },
+            runtimePolicy: {
+              runtimeMode: "full-access",
+              interactionMode: "default",
+              cwd: workspace,
+            },
+          })
+          .pipe(Effect.timeout("30 seconds"));
+
+        assert.strictEqual(session.providerSession.driver, "codex");
+        assert.isTrue(yield* session.isLive);
       }).pipe(Effect.scoped),
     );
 

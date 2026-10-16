@@ -12,7 +12,7 @@ import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
  * `apps/server/src/orchestration-v2/ProviderAdapterRegistry.ts` at 2577baf).
  * The server reads it from the provider registry, whose instances rebuild
  * their adapter when **Binary path** changes; tests give a replaying one.
- * An instance without an adapter cannot run threads: Codex until #22.
+ * An instance without an adapter cannot run threads.
  */
 export class ProviderAdapterRegistryV2 extends Context.Service<
   ProviderAdapterRegistryV2,

@@ -6,6 +6,10 @@ import * as Effect from "effect/Effect";
 import type * as FileSystem from "effect/FileSystem";
 import type { ChildProcessSpawner } from "effect/process";
 
+import {
+  layerAppServerClientFactory,
+  makeCodexAdapter,
+} from "../../orchestration-v2/Adapters/CodexAdapterV2.ts";
 import { checkCodexProviderStatus } from "../CodexProvider.ts";
 
 const DISPLAY_NAME = "Codex";
@@ -13,7 +17,8 @@ const DISPLAY_NAME = "Codex";
 /**
  * Codex, following T3 Code's `CodexDriver`
  * (`apps/server/src/provider/Drivers/CodexDriver.ts` at 2577baf) without the
- * managed runtime, home layout or launch arguments.
+ * managed runtime, home layout or launch arguments. Its orchestration adapter
+ * runs threads over `codex app-server` with the same `codex`.
  */
 export const CodexDriver: ProviderDriver<
   ChildProcessSpawner.ChildProcessSpawner | FileSystem.FileSystem
@@ -48,11 +53,19 @@ export const CodexDriver: ProviderDriver<
           cwd: input.cwd,
         }).pipe(Effect.flatMap((status) => buildServerProvider({ ...stamp, ...status }))),
       });
+      const orchestrationAdapter = yield* makeCodexAdapter({
+        instanceId: input.instanceId,
+        binaryPath,
+        environment: input.environment,
+        platform: input.platform,
+        cwd: input.cwd,
+      }).pipe(Effect.provide(layerAppServerClientFactory));
       return {
         instanceId: input.instanceId,
         driverKind: "codex",
         displayName: DISPLAY_NAME,
         snapshot,
+        orchestrationAdapter,
       };
     }),
 };
