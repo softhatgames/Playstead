@@ -27,11 +27,7 @@ export const ServerProviderCompatibilityAdvisory = Schema.Struct({
 });
 export type ServerProviderCompatibilityAdvisory = typeof ServerProviderCompatibilityAdvisory.Type;
 
-const ServerProviderAuthStatus = Schema.Literals([
-  "authenticated",
-  "unauthenticated",
-  "unknown",
-]);
+const ServerProviderAuthStatus = Schema.Literals(["authenticated", "unauthenticated", "unknown"]);
 
 /**
  * Whether the provider's CLI is signed in, as T3 Code's `ServerProviderAuth`
