@@ -23,6 +23,7 @@ Paths are in T3 Code's repository. The review reads commits under them.
 | Interface: Settings | `apps/web/src/components/settings/`, `apps/web/src/routes/settings*.tsx` |
 | Interface: Usage | `apps/web/src/components/usage/`, `apps/web/src/routes/usage.tsx`, `apps/server/src/usage/` |
 | Interface: components and themes | `apps/web/src/components/ui/`, `apps/web/src/index.css` |
+| Desktop app | `apps/desktop/` |
 
 Not followed for now: the right-hand panels (diffs, files, browser preview, terminal), the mobile app, marketing, T3 Connect and relay, source control hosts and pull requests, scheduled tasks, devices, voice, HTML renders and snap-shot. The founder moves an area in by adding it to the table.
 

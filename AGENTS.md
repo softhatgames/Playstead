@@ -8,6 +8,7 @@ Playstead follows [T3 Code](https://github.com/pingdotgg/t3code) for working wit
 
 ## Where things are
 
+- [docs/adr/](docs/adr/): Playstead's decisions. Read the ADRs for the area you are deciding or building in.
 - [docs/PRODUCT.md](docs/PRODUCT.md) and [docs/HARNESS.md](docs/HARNESS.md): the intended experience and the game connection, carried from v0. Their terms predate the rebuild's glossary.
 - [docs/research/](docs/research/README.md): what v0 learned about providers, Effect, game stacks and the interface. Read the note for the area you are deciding.
 - [Contributor skills](dev/skills/README.md): Matt Pocock's workflow. Use the repository copy when a personal skill has the same name.
