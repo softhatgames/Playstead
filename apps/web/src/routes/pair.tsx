@@ -2,7 +2,8 @@ import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 
 import { APP_DISPLAY_NAME } from "../branding.ts";
-import { exchangePairingLink, type PairingResult } from "../environments/primary/auth.ts";
+import { exchangePairingLink } from "../environments/primary/auth.ts";
+import type { PairingResult } from "../pairingExchange.ts";
 
 const messages: Record<Exclude<PairingResult["_tag"], "Paired">, string> = {
   MissingToken: "This pairing link has no token. Open the link the server printed.",
@@ -15,7 +16,7 @@ function PairRouteView() {
   const [problem, setProblem] = useState<string | undefined>();
   useEffect(() => {
     let cancelled = false;
-    exchangePairingLink(new URL(window.location.href)).then(
+    exchangePairingLink().then(
       (result) => {
         if (cancelled) return;
         if (result._tag === "Paired") void navigate({ to: "/", replace: true });

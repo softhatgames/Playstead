@@ -6,7 +6,9 @@ import {
   type LocalConnectionTarget,
   makeLocalConnection,
 } from "@playstead/client-runtime/connection";
+import { fetchSessionState, signInWithPairingToken } from "@playstead/client-runtime/auth";
 import { assert, describe, it } from "@effect/vitest";
+import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -137,6 +139,39 @@ describe("server", () => {
         );
         assert.strictEqual(ready.config?.auth.policy, "loopback-browser");
         assert.strictEqual(ready.lifecycle?.payload.environment.serverVersion, "0.1.0");
+      }).pipe(Effect.scoped),
+    );
+
+    it.effect("tells the interface's session check whether the browser is signed in", () =>
+      Effect.gen(function* () {
+        const server = yield* startTestServer();
+        const token = yield* awaitPairingToken(server);
+        const before = yield* fetchSessionState({ httpBaseUrl: server.baseUrl });
+        assert.isFalse(before.authenticated);
+
+        const signIn = yield* postJson(`${server.baseUrl}/api/auth/browser-session`, {
+          credential: token,
+        });
+        const cookie = signIn.headers["set-cookie"]!.split(";")[0]!;
+        const after = yield* fetchSessionState({
+          httpBaseUrl: server.baseUrl,
+          headers: { cookie },
+        });
+
+        assert.isTrue(after.authenticated);
+        assert.strictEqual(after.sessionMethod, "browser-session-cookie");
+        assert.isTrue(after.expiresAt !== undefined && DateTime.isDateTime(after.expiresAt));
+      }).pipe(Effect.scoped),
+    );
+
+    it.effect("tells the interface when a pairing link was already used", () =>
+      Effect.gen(function* () {
+        const server = yield* startTestServer();
+        const token = yield* awaitPairingToken(server);
+        const target = { httpBaseUrl: server.baseUrl };
+
+        assert.strictEqual(yield* signInWithPairingToken(target, token), "Paired");
+        assert.strictEqual(yield* signInWithPairingToken(target, token), "Rejected");
       }).pipe(Effect.scoped),
     );
 

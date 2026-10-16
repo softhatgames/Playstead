@@ -15,7 +15,8 @@ import { useSyncExternalStore } from "react";
 
 import { desktopBridge } from "../env.ts";
 
-const runtime = ManagedRuntime.make(
+/** The page's Effect runtime: HTTP through fetch, sockets through the browser's WebSocket. */
+export const runtime = ManagedRuntime.make(
   Layer.mergeAll(FetchHttpClient.layer, Socket.layerWebSocketConstructorGlobal),
 );
 
