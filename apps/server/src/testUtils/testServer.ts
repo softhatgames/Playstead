@@ -11,6 +11,8 @@ import * as References from "effect/References";
 import * as Schedule from "effect/Schedule";
 import * as HttpServer from "effect/http/HttpServer";
 
+import * as HostProcess from "@playstead/shared/hostProcess";
+
 import * as ServerConfig from "../config.ts";
 import { layerServer } from "../server.ts";
 import type { StartupOptions } from "../serverRuntimeStartup.ts";
@@ -40,6 +42,11 @@ const makeTempHome = Effect.gen(function* () {
 export interface TestServerOptions extends StartupOptions {
   readonly devUrl?: URL;
   readonly desktopBootstrapToken?: string;
+  /**
+   * The environment providers are found and started with. By default PATH is
+   * empty, so no test reaches a provider installed on the machine.
+   */
+  readonly providerEnvironment?: Readonly<Record<string, string | undefined>>;
 }
 
 export interface TestServer {
@@ -82,6 +89,9 @@ export const startTestServer = Effect.fn("startTestServer")(function* (
         NodeHttpServer.layer(NodeHttp.createServer, { host: "127.0.0.1", port: 0 }),
       ),
       Layer.provide(ServerConfig.layer(config)),
+      Layer.provide(
+        Layer.succeed(HostProcess.Environment, options.providerEnvironment ?? { PATH: "" }),
+      ),
       Layer.provide(Logger.layer([captureLogs])),
       Layer.provide(Layer.succeed(References.MinimumLogLevel, "Debug")),
     ),

@@ -6,3 +6,4 @@ export {
   type LocalCredential,
   makeLocalConnection,
 } from "./local.ts";
+export type { WsRpcClient } from "../rpc/session.ts";

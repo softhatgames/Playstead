@@ -75,6 +75,9 @@ importers:
       '@playstead/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
+      '@playstead/provider-core':
+        specifier: workspace:*
+        version: link:../../packages/provider-core
       '@playstead/shared':
         specifier: workspace:*
         version: link:../../packages/shared
@@ -88,6 +91,9 @@ importers:
       '@playstead/client-runtime':
         specifier: workspace:*
         version: link:../../packages/client-runtime
+      '@playstead/provider-testing':
+        specifier: workspace:*
+        version: link:../../packages/provider-testing
       '@types/node':
         specifier: 24.12.4
         version: 24.12.4
@@ -186,9 +192,37 @@ importers:
 
   packages/effect-codex-app-server: {}
 
-  packages/provider-core: {}
+  packages/provider-core:
+    dependencies:
+      '@playstead/contracts':
+        specifier: workspace:*
+        version: link:../contracts
+      effect:
+        specifier: 4.0.5
+        version: 4.0.5
+    devDependencies:
+      '@effect/vitest':
+        specifier: 4.0.5
+        version: 4.0.5(patch_hash=08fdcec941923d8a7a36c4487e75a967e4662cccbf57fe54fce0bae91e5c2e02)(@types/node@24.12.4)(@vitest/ui@5.0.1(vitest@5.0.1))(effect@4.0.5)(jiti@2.7.0)(typescript@7.0.2)(yaml@2.9.1)
+      '@types/node':
+        specifier: 24.12.4
+        version: 24.12.4
+      vite-plus:
+        specifier: 1.0.0
+        version: 1.0.0(@types/node@24.12.4)(@vitest/ui@5.0.1)(jiti@2.7.0)(typescript@7.0.2)(yaml@2.9.1)
 
-  packages/provider-testing: {}
+  packages/provider-testing:
+    dependencies:
+      '@playstead/shared':
+        specifier: workspace:*
+        version: link:../shared
+      effect:
+        specifier: 4.0.5
+        version: 4.0.5
+    devDependencies:
+      '@types/node':
+        specifier: 24.12.4
+        version: 24.12.4
 
   packages/shared:
     dependencies:

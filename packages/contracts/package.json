@@ -24,9 +24,17 @@
       "types": "./src/rpc.ts",
       "import": "./src/rpc.ts"
     },
+    "./providerInstance": {
+      "types": "./src/providerInstance.ts",
+      "import": "./src/providerInstance.ts"
+    },
     "./server": {
       "types": "./src/server.ts",
       "import": "./src/server.ts"
+    },
+    "./settings": {
+      "types": "./src/settings.ts",
+      "import": "./src/settings.ts"
     }
   },
   "scripts": {

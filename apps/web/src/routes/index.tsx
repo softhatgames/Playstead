@@ -1,4 +1,4 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { Link, createFileRoute } from "@tanstack/react-router";
 
 import { APP_DISPLAY_NAME } from "../branding.ts";
 import { EnvironmentStatus } from "../components/EnvironmentStatus.tsx";
@@ -10,7 +10,12 @@ function HomeView() {
     <main className="mx-auto flex max-w-xl flex-col gap-6 px-6 py-16">
       <h1 className="text-2xl font-semibold">{APP_DISPLAY_NAME}</h1>
       {session.authenticated ? (
-        <EnvironmentStatus />
+        <>
+          <EnvironmentStatus />
+          <Link to="/settings/providers" className="text-sm underline">
+            Settings
+          </Link>
+        </>
       ) : (
         <p className="text-sm text-neutral-600 dark:text-neutral-300">
           This browser is not signed in. Open the pairing link the server printed when it started.

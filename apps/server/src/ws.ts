@@ -1,6 +1,7 @@
 import { WS_METHODS, WsRpcGroup } from "@playstead/contracts/rpc";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Stream from "effect/Stream";
 import * as HttpRouter from "effect/http/HttpRouter";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpServerRespondable from "effect/http/HttpServerRespondable";
@@ -10,7 +11,9 @@ import * as RpcServer from "effect/rpc/RpcServer";
 import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
 import { failEnvironmentAuthInvalid, failEnvironmentInternal } from "./auth/http.ts";
 import * as ServerEnvironment from "./environment/ServerEnvironment.ts";
+import * as ProviderRegistry from "./provider/ProviderRegistry.ts";
 import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
+import * as ServerSettings from "./serverSettings.ts";
 
 // RpcServer's default sends a socket-level Defect frame instead, and the client
 // ends every pending request on the socket with it.
@@ -25,12 +28,50 @@ const layerWsRpc = WsRpcGroup.toLayer(
     const auth = yield* EnvironmentAuth.EnvironmentAuth;
     const environment = yield* ServerEnvironment.ServerEnvironment;
     const lifecycleEvents = yield* ServerLifecycleEvents.ServerLifecycleEvents;
+    const providers = yield* ProviderRegistry.ProviderRegistry;
+    const settings = yield* ServerSettings.ServerSettingsService;
+    const getConfig = Effect.all({
+      environment: environment.getDescriptor,
+      auth: Effect.succeed(auth.descriptor),
+      providers: providers.getProviders,
+      settings: settings.getSettings,
+    });
     return WsRpcGroup.of({
-      [WS_METHODS.serverGetConfig]: () =>
-        Effect.map(environment.getDescriptor, (descriptor) => ({
-          environment: descriptor,
-          auth: auth.descriptor,
-        })),
+      [WS_METHODS.serverGetConfig]: () => getConfig,
+      [WS_METHODS.serverRefreshProviders]: ({ instanceId }) =>
+        Effect.map(providers.refresh(instanceId), (list) => ({ providers: list })),
+      [WS_METHODS.serverUpdateSettings]: ({ providerInstanceMutation }) =>
+        settings.updateProviderInstance(providerInstanceMutation),
+      // Both change streams start with their current value, which the
+      // snapshot already carries.
+      [WS_METHODS.subscribeServerConfig]: () =>
+        Stream.concat(
+          Stream.fromEffect(
+            Effect.map(getConfig, (config) => ({
+              version: 1 as const,
+              type: "snapshot" as const,
+              config,
+            })),
+          ),
+          Stream.merge(
+            providers.streamChanges.pipe(
+              Stream.drop(1),
+              Stream.map((list) => ({
+                version: 1 as const,
+                type: "providerStatuses" as const,
+                payload: { providers: list },
+              })),
+            ),
+            settings.streamChanges.pipe(
+              Stream.drop(1),
+              Stream.map((next) => ({
+                version: 1 as const,
+                type: "settingsUpdated" as const,
+                payload: { settings: next },
+              })),
+            ),
+          ),
+        ),
       [WS_METHODS.subscribeServerLifecycle]: () => lifecycleEvents.subscribe,
     });
   }),

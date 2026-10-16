@@ -35,7 +35,16 @@ const variable = (name: string) => `${identity.environmentVariablePrefix}${name}
  * programs, the home folder, temporary files, the locale and the terminal need
  * on macOS, Linux and Windows. Everything else stays behind, including
  * T3 Code's `T3CODE_*`, `ELECTRON_RUN_AS_NODE` and the agent's own variables.
- * Provider credentials such as `ANTHROPIC_API_KEY` are not passed either.
+ *
+ * Providers run with the server's environment, as in T3 Code, so this list is
+ * also what Codex and Claude get. Finding them needs only PATH, PATHEXT and
+ * the Windows folders below (`APPDATA`, `LOCALAPPDATA`, `USERPROFILE`) that
+ * T3 Code's known install folders are under. `CODEX_HOME` and
+ * `CLAUDE_CONFIG_DIR` pass because they say where the person's own
+ * `codex login` and `claude auth login` live. API keys such as
+ * `ANTHROPIC_API_KEY`, `OPENAI_API_KEY` and `CODEX_API_KEY` do not: one in a
+ * development shell is most likely the agent's or a stray, and an inherited
+ * key would sign Claude in with it.
  */
 export const INHERITED_VARIABLES = [
   "PATH",
@@ -72,6 +81,8 @@ export const INHERITED_VARIABLES = [
   "NUMBER_OF_PROCESSORS",
   "PROCESSOR_ARCHITECTURE",
   "OS",
+  "CODEX_HOME",
+  "CLAUDE_CONFIG_DIR",
 ] as const;
 
 const INHERITED = new Set<string>(INHERITED_VARIABLES);
