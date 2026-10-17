@@ -19,6 +19,7 @@ import {
   markThreadUnread,
   pinThread,
   regenerateThreadTitle,
+  setThreadAutoSettle,
   settleThread,
   type ThreadLifecycleTarget,
   unpinThread,
@@ -46,6 +47,8 @@ import {
  * - **Filter by project**, offered when `projectFilter` is on (the inbox
  *   sidebar row), scopes the sidebar to the thread's project, or to every
  *   project again when it already is.
+ * - **Auto-settle behavior → Enabled / Disabled** turns automatic
+ *   settlement on or off for the thread.
  * - **Copy → Path** copies the project's folder, and **Copy → Thread ID**
  *   the thread's id, each with a notice.
  * - Archiving asks first when **Confirm before archiving** is on, deleting
@@ -86,6 +89,7 @@ export function useThreadActionMenu(
                 isRegeneratingTitle,
                 isPinned: thread.pinnedAt !== null,
                 isSettled: thread.settledOverride === "settled",
+                autoSettleEnabled: thread.autoSettleDisabledAt === null,
                 projectFilter:
                   group === undefined
                     ? null
@@ -136,6 +140,12 @@ export function useThreadActionMenu(
               );
             }
             return;
+          case "auto-settle:enabled":
+          case "auto-settle:disabled":
+            await setThreadAutoSettle(thread.id, chosen === "auto-settle:enabled").catch(
+              (error: unknown) => failureToast("Failed to update auto-settle", error),
+            );
+            return;
           case "copy-path": {
             if (project === undefined) {
               failureToast(
@@ -175,6 +185,7 @@ export function useThreadActionMenu(
             );
             return;
           case "copy":
+          case "auto-settle":
           case null:
             return;
         }

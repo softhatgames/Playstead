@@ -110,7 +110,8 @@ export type OrchestrationV2TitleRegeneration = typeof OrchestrationV2TitleRegene
  * person un-settled has "active" and `unsettledAt`, which keeps automatic
  * settlement away until a message clears the override. A pinned thread has
  * `pinnedAt`. `pinOrderKey` and `activeOrderKey` are the pinned and active
- * lists' a–z order keys, which settling clears.
+ * lists' a–z order keys, which settling clears. `autoSettleDisabledAt` is
+ * set while the person has turned automatic settlement off for the thread.
  * `titleRegeneration` is set while a title is being generated.
  */
 export const OrchestrationV2AppThread = Schema.Struct({
@@ -133,6 +134,7 @@ export const OrchestrationV2AppThread = Schema.Struct({
   pinnedAt: NullOrTimeDefaultNull,
   pinOrderKey: NullOrOrderKeyDefaultNull,
   activeOrderKey: NullOrOrderKeyDefaultNull,
+  autoSettleDisabledAt: NullOrTimeDefaultNull,
   titleRegeneration: Schema.NullOr(OrchestrationV2TitleRegeneration).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
@@ -439,6 +441,7 @@ export const OrchestrationV2DomainEvent = Schema.Union([
   event("thread.unpinned", OrchestrationV2AppThread),
   event("thread.settled", OrchestrationV2AppThread),
   event("thread.unsettled", OrchestrationV2AppThread),
+  event("thread.auto-settle-set", OrchestrationV2AppThread),
   event("run.created", OrchestrationV2Run),
   event("run.updated", OrchestrationV2Run),
   event("run-attempt.created", OrchestrationV2RunAttempt),
@@ -511,6 +514,7 @@ export const OrchestrationV2ThreadShell = Schema.Struct({
   pinnedAt: Schema.NullOr(IsoDateTime),
   pinOrderKey: Schema.NullOr(TrimmedNonEmptyString),
   activeOrderKey: Schema.NullOr(TrimmedNonEmptyString),
+  autoSettleDisabledAt: Schema.NullOr(IsoDateTime),
   /** Set while a title is being generated; the sidebar dims the title. */
   titleRegeneration: Schema.NullOr(OrchestrationV2TitleRegeneration),
 });
@@ -624,6 +628,7 @@ export type OrchestrationV2ThreadStreamItem = typeof OrchestrationV2ThreadStream
  * and `thread.mark-unread` moves it back before the latest run's completion.
  * `thread.pin` and `thread.unpin` pin and unpin it; `thread.settle` moves it
  * out of active work and `thread.unsettle` brings it back.
+ * `thread.auto-settle.set` turns automatic settlement on or off for it.
  */
 export const OrchestrationV2Command = Schema.Union([
   Schema.Struct({
@@ -718,6 +723,12 @@ export const OrchestrationV2Command = Schema.Union([
     threadId: ThreadId,
     reason: Schema.Literal("user"),
   }),
+  Schema.Struct({
+    type: Schema.Literal("thread.auto-settle.set"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    enabled: Schema.Boolean,
+  }),
 ]);
 export type OrchestrationV2Command = typeof OrchestrationV2Command.Type;
 
@@ -727,7 +738,10 @@ export type OrchestrationV2Command = typeof OrchestrationV2Command.Type;
  * the `dispatchCommand` payload, so no client can send them.
  * `thread.title.regeneration.complete` ends a title request, with the
  * generated title or without one; it applies only while `requestId` is the
- * thread's current request.
+ * thread's current request. `thread.auto-settle` is the settlement sweep's
+ * settle, with the last activity as `settledAt`; it is refused when the thread
+ * has changed since `snapshotAt` (its `updatedAt` when the sweep read it) or
+ * carries any settled override, so it never races the person.
  */
 const OrchestrationV2InternalCommand = Schema.Union([
   Schema.Struct({
@@ -736,6 +750,13 @@ const OrchestrationV2InternalCommand = Schema.Union([
     threadId: ThreadId,
     requestId: CommandId,
     title: Schema.optionalKey(TrimmedNonEmptyString),
+  }),
+  Schema.Struct({
+    type: Schema.Literal("thread.auto-settle"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    snapshotAt: IsoDateTime,
+    settledAt: Schema.optionalKey(IsoDateTime),
   }),
 ]);
 export type OrchestrationV2InternalCommand = typeof OrchestrationV2InternalCommand.Type;

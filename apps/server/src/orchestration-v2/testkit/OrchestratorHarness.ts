@@ -20,6 +20,7 @@ import * as EventStore from "../EventStore.ts";
 import * as Orchestrator from "../Orchestrator.ts";
 import * as ProviderAdapterRegistry from "../ProviderAdapterRegistry.ts";
 import * as ProviderRuntimeRecoveryService from "../ProviderRuntimeRecoveryService.ts";
+import * as ThreadSettlementService from "../ThreadSettlementService.ts";
 import * as ThreadSearch from "../ThreadSearch.ts";
 import * as OrchestrationRuntime from "../runtimeLayer.ts";
 
@@ -39,7 +40,8 @@ const keepsTheSeed: TextGeneration.TextGeneration["Service"] = {
  * recorders. A provider given no seam has no adapter, so it cannot run
  * threads. Titles come from `textGeneration`, which stands in for the
  * providers' CLIs; without one every title comes back "New thread", which
- * keeps the seed. A restart is a second harness over the first one's
+ * keeps the seed. Automatic settlement runs only once a test calls
+ * `settlement.start()`. A restart is a second harness over the first one's
  * `config`.
  */
 export const makeOrchestrationHarness = Effect.fn("makeOrchestrationHarness")(function* (input: {
@@ -114,6 +116,8 @@ export const makeOrchestrationHarness = Effect.fn("makeOrchestrationHarness")(fu
     projects: ProjectService.ProjectService,
     eventStore: EventStore.EventStoreV2,
     recovery: ProviderRuntimeRecoveryService.ProviderRuntimeRecoveryService,
+    settlement: ThreadSettlementService.ThreadSettlementService,
+    settings: ServerSettings.ServerSettingsService,
     threadSearch: ThreadSearch.ThreadSearch,
   }).pipe(Effect.provideContext(context));
   if (input.recoverOnStartup === true) yield* services.recovery.recover;

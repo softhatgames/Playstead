@@ -24,7 +24,10 @@ export type ThreadActionTarget = Pick<
 
 /** A thread the sidebar or the thread view shows, which can be pinned and settled. */
 export type ThreadLifecycleTarget = ThreadActionTarget &
-  Pick<OrchestrationV2ThreadShell, "pinnedAt" | "pinOrderKey" | "settledOverride">;
+  Pick<
+    OrchestrationV2ThreadShell,
+    "pinnedAt" | "pinOrderKey" | "settledOverride" | "autoSettleDisabledAt"
+  >;
 
 const commandId = () => CommandId.make(`command:${newId()}`);
 
@@ -81,6 +84,20 @@ export const visitThread = (threadId: ThreadId, visitedAt: string) =>
 /** Shows the thread as unread again, until it is next viewed (T3 Code's `markThreadUnread`). */
 export const markThreadUnread = (threadId: ThreadId) =>
   dispatchThreadCommand("thread.mark-unread", threadId);
+
+/**
+ * Turns automatic settlement on or off for the thread (T3 Code's
+ * `setThreadAutoSettle`, `thread.auto-settle.set`).
+ */
+export const setThreadAutoSettle = (threadId: ThreadId, enabled: boolean) =>
+  requestPrimary((client) =>
+    client["orchestration.dispatchCommand"]({
+      type: "thread.auto-settle.set",
+      commandId: commandId(),
+      threadId,
+      enabled,
+    }),
+  );
 
 /**
  * Pins the thread (T3 Code's `pinThread`). A pin made from the interface
