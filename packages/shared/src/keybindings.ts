@@ -7,8 +7,33 @@
  * their features, and editing them (**Settings → Keybindings**) with slice 5.
  */
 
+/** `mod+1` to `mod+9`: the sidebar's first nine threads (T3 Code's `THREAD_JUMP_KEYBINDING_COMMANDS`). */
+export const THREAD_JUMP_KEYBINDING_COMMANDS = [
+  "thread.jump.1",
+  "thread.jump.2",
+  "thread.jump.3",
+  "thread.jump.4",
+  "thread.jump.5",
+  "thread.jump.6",
+  "thread.jump.7",
+  "thread.jump.8",
+  "thread.jump.9",
+] as const;
+export type ThreadJumpKeybindingCommand = (typeof THREAD_JUMP_KEYBINDING_COMMANDS)[number];
+
 /** The commands with shortcuts so far. */
-export type KeybindingCommand = "sidebar.toggle" | "thread.settle" | "thread.pin" | "thread.undo";
+export type KeybindingCommand =
+  | "sidebar.toggle"
+  | "commandPalette.toggle"
+  | "chat.new"
+  | "chat.newLocal"
+  | "thread.previous"
+  | "thread.next"
+  | "thread.copyReference"
+  | "thread.settle"
+  | "thread.pin"
+  | "thread.undo"
+  | ThreadJumpKeybindingCommand;
 
 export interface KeybindingRule {
   readonly key: string;
@@ -100,6 +125,28 @@ function eventKeys(event: ShortcutEventLike): ReadonlySet<string> {
     if (physical !== undefined) keys.add(physical);
   }
   return keys;
+}
+
+export interface ShortcutModifierStateLike {
+  readonly metaKey: boolean;
+  readonly ctrlKey: boolean;
+  readonly shiftKey: boolean;
+  readonly altKey: boolean;
+}
+
+/** Whether the held modifiers are exactly the shortcut's, whatever its key (T3 Code's). */
+export function matchesKeybindingShortcutModifiers(
+  modifiers: ShortcutModifierStateLike,
+  shortcut: KeybindingShortcut,
+  platform: string,
+): boolean {
+  const mac = isMacPlatform(platform);
+  return (
+    modifiers.metaKey === (shortcut.metaKey || (shortcut.modKey && mac)) &&
+    modifiers.ctrlKey === (shortcut.ctrlKey || (shortcut.modKey && !mac)) &&
+    modifiers.shiftKey === shortcut.shiftKey &&
+    modifiers.altKey === shortcut.altKey
+  );
 }
 
 export function matchesKeybindingShortcut(
@@ -263,12 +310,28 @@ function compileResolvedKeybindingsConfig(
   });
 }
 
-/** T3 Code's default bindings, for the commands Playstead has. */
+/**
+ * T3 Code's default bindings for the commands Playstead has, in T3 Code's
+ * order (a later rule wins). The jumps leave out T3 Code's
+ * `!modelPickerOpen`, which is there for the model picker's own jumps.
+ */
 const DEFAULT_KEYBINDINGS: ReadonlyArray<KeybindingRule> = [
   { key: "mod+b", command: "sidebar.toggle" },
+  { key: "mod+k", command: "commandPalette.toggle", when: "!terminalFocus" },
+  { key: "mod+n", command: "chat.new", when: "!terminalFocus" },
+  { key: "mod+shift+o", command: "chat.new", when: "!terminalFocus" },
+  { key: "mod+shift+n", command: "chat.newLocal", when: "!terminalFocus" },
+  { key: "mod+shift+[", command: "thread.previous" },
+  { key: "mod+shift+]", command: "thread.next" },
+  { key: "mod+shift+c", command: "thread.copyReference", when: "!terminalFocus" },
   { key: "mod+shift+s", command: "thread.settle", when: "!terminalFocus" },
   { key: "mod+shift+p", command: "thread.pin", when: "!terminalFocus" },
   { key: "mod+z", command: "thread.undo", when: "!terminalFocus && !editableFocus" },
+  ...THREAD_JUMP_KEYBINDING_COMMANDS.map((command, index) => ({
+    key: `mod+${index + 1}`,
+    command,
+    when: "isDesktop",
+  })),
 ];
 
 export const DEFAULT_RESOLVED_KEYBINDINGS = compileResolvedKeybindingsConfig(DEFAULT_KEYBINDINGS);

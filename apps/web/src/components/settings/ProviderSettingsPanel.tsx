@@ -52,7 +52,9 @@ export function ProviderSettingsPanel() {
   return (
     <div className="flex flex-col gap-4">
       <div className="flex items-center justify-between gap-4">
-        <h1 className="text-xl font-semibold">Providers</h1>
+        <h1 id="providers" className="text-xl font-semibold">
+          Providers
+        </h1>
         <button
           type="button"
           onClick={() => refresh("all")}
