@@ -1,3 +1,4 @@
+import { TextGenerationSettings } from "./TextGenerationSettings.tsx";
 import { type ClientSettings, DEFAULT_CLIENT_SETTINGS } from "@playstead/contracts/ipc";
 import type { ReactNode } from "react";
 
@@ -7,8 +8,8 @@ import { failureToast } from "../../toast.ts";
 /**
  * **Settings → General**, with only the rows Playstead has so far (T3 Code's
  * `GeneralSettingsPanel` in `apps/web/src/components/settings/SettingsPanels.tsx`
- * at 2577baf): the **Confirmations** section's archive and delete rows. The
- * slice's other rows (text generation, automatic settlement, the sidebar)
+ * at 2577baf): text generation and the archive/delete confirmations. The
+ * slice's other rows (automatic settlement and the sidebar)
  * join it with their features; the rest of General waits for slice 5.
  */
 export function GeneralSettingsPanel() {
@@ -21,6 +22,7 @@ export function GeneralSettingsPanel() {
   return (
     <div className="flex flex-col gap-6">
       <h1 className="text-xl font-semibold">General</h1>
+      <TextGenerationSettings />
       <section aria-labelledby="settings-confirmations" className="flex flex-col gap-2">
         <h2
           id="settings-confirmations"

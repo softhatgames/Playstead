@@ -19,6 +19,14 @@
     "./server/snapshotProbe": {
       "types": "./src/server/snapshotProbe.ts",
       "import": "./src/server/snapshotProbe.ts"
+    },
+    "./server/threadTitle": {
+      "types": "./src/server/threadTitle.ts",
+      "import": "./src/server/threadTitle.ts"
+    },
+    "./server/textGeneration": {
+      "types": "./src/server/textGeneration.ts",
+      "import": "./src/server/textGeneration.ts"
     }
   },
   "scripts": {

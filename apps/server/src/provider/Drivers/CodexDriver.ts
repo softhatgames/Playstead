@@ -1,3 +1,4 @@
+import { makeCliTextGeneration } from "../../textGeneration/CliTextGeneration.ts";
 import type { ProviderDriver } from "@playstead/provider-core/server/driver";
 import { makeManagedServerProvider } from "@playstead/provider-core/server/managedProvider";
 import { buildServerProvider, expandHomePath } from "@playstead/provider-core/server/snapshotProbe";
@@ -66,6 +67,12 @@ export const CodexDriver: ProviderDriver<
         displayName: DISPLAY_NAME,
         snapshot,
         orchestrationAdapter,
+        textGeneration: yield* makeCliTextGeneration({
+          driver: "codex",
+          binaryPath,
+          environment: input.environment,
+          platform: input.platform,
+        }),
       };
     }),
 };

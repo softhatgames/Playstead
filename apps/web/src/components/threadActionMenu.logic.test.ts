@@ -11,12 +11,21 @@ import {
 } from "./threadActionMenu.logic.ts";
 
 describe("buildThreadActionMenuItems", () => {
+  it("disables only regeneration while a title is being generated", () => {
+    const items = buildThreadActionMenuItems({ isRunning: false, isTitleRegenerating: true });
+    assert.deepStrictEqual(
+      items.find((item) => item.id === "regenerate-title"),
+      { id: "regenerate-title", label: "Regenerating…", disabled: true },
+    );
+    assert.notStrictEqual(items.find((item) => item.id === "rename")?.disabled, true);
+  });
   it("offers rename and mark unread before Archive thread and Delete", () => {
     const items = buildThreadActionMenuItems({ isRunning: false });
     assert.deepStrictEqual(
       items.map((item) => [item.id, item.label, item.disabled === true, item.destructive === true]),
       [
         ["rename", "Rename thread", false, false],
+        ["regenerate-title", "Regenerate title", false, false],
         ["mark-unread", "Mark unread", false, false],
         ["archive", "Archive thread", false, false],
         ["delete", "Delete", false, true],
@@ -30,6 +39,7 @@ describe("buildThreadActionMenuItems", () => {
       items.map((item) => [item.id, item.disabled === true]),
       [
         ["rename", false],
+        ["regenerate-title", false],
         ["mark-unread", false],
         ["archive", true],
         ["delete", false],

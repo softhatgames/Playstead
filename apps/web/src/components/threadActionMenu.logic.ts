@@ -10,14 +10,20 @@ import {
  * at 2577baf), opened from a sidebar row and the thread view's header. It
  * has T3 Code's items in T3 Code's order as each arrives: **Rename thread**,
  * **Mark unread**, **Archive thread** and **Delete**. Pin, settle, snooze,
- * regenerate title, filter by project, auto-settle and copy come with their
+ * filter by project, auto-settle and copy come with their
  * features, as fields of the state and ids here.
  */
-export type ThreadActionMenuId = "rename" | "mark-unread" | "archive" | "delete";
+export type ThreadActionMenuId =
+  | "rename"
+  | "regenerate-title"
+  | "mark-unread"
+  | "archive"
+  | "delete";
 
 export interface ThreadActionMenuState {
   /** Archive is disabled while the thread's run works, rather than let it stop the run. */
   readonly isRunning: boolean;
+  readonly isTitleRegenerating?: boolean;
 }
 
 export function buildThreadActionMenuItems(
@@ -25,6 +31,11 @@ export function buildThreadActionMenuItems(
 ): ReadonlyArray<ContextMenuItem<ThreadActionMenuId>> {
   return [
     { id: "rename", label: "Rename thread", separatorBefore: true },
+    {
+      id: "regenerate-title",
+      label: state.isTitleRegenerating ? "Regenerating…" : "Regenerate title",
+      disabled: state.isTitleRegenerating === true,
+    },
     { id: "mark-unread", label: "Mark unread" },
     {
       id: "archive",

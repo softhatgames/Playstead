@@ -183,7 +183,7 @@ function SidebarThreadRow({
   if (renamingTitle !== null) {
     return (
       <li>
-        <div className={rowClass}>
+        <div className={`${rowClass} ${thread.titleRegeneration ? "opacity-55" : ""}`}>
           {status}
           <input
             autoFocus
@@ -236,7 +236,7 @@ function SidebarThreadRow({
           openMenu({ x: event.clientX, y: event.clientY });
         }}
         aria-current={current ? "page" : undefined}
-        className={rowClass}
+        className={`${rowClass} ${thread.titleRegeneration ? "opacity-55" : ""}`}
       >
         {status}
         <span className="truncate" title={thread.title}>

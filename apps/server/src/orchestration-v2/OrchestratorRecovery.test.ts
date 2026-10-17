@@ -356,7 +356,8 @@ describe("Survive a restart", () => {
           recoverOnStartup: true,
         });
 
-        assert.strictEqual(yield* restarted.worker.drain, 0);
+        // The provider turn is cancelled; the replay-safe title still runs.
+        assert.strictEqual(yield* restarted.worker.drain, 1);
         const projection = Option.getOrThrow(
           yield* restarted.orchestrator.getThreadProjection(FILE_CREATE_IDS.threadId),
         );

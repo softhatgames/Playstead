@@ -1,3 +1,4 @@
+import * as ThreadTitles from "./ThreadTitleRegenerationService.ts";
 import * as Layer from "effect/Layer";
 
 import * as CommandReceiptStore from "./CommandReceiptStore.ts";
@@ -36,7 +37,9 @@ export const layer = EventSink.layer.pipe(
  * turns. They need the stores above and a `ProviderAdapterRegistryV2`: the
  * server's reads the provider registry, and tests give replaying adapters.
  */
-export const layerCore = Layer.mergeAll(Orchestrator.layer, EffectWorker.layer).pipe(
+export const layerCore = EffectWorker.layer.pipe(
+  Layer.provide(ThreadTitles.layer),
+  Layer.provideMerge(Orchestrator.layer),
   Layer.provide(ProviderTurnStartService.layer),
   Layer.provide(Layer.mergeAll(RunExecutionService.layer, ProviderSessionManager.layer)),
 );

@@ -7,6 +7,8 @@ import type { ServerProviderAuth, ServerProviderState } from "@playstead/contrac
 import type * as Effect from "effect/Effect";
 import type * as Scope from "effect/Scope";
 
+import type { ProviderTextGeneration } from "./textGeneration.ts";
+
 import type { ManagedServerProvider } from "./managedProvider.ts";
 import type { ProviderAdapterV2 } from "./ProviderAdapter.ts";
 
@@ -44,6 +46,7 @@ export interface ProviderInstance {
   readonly displayName: string;
   readonly snapshot: ManagedServerProvider;
   readonly orchestrationAdapter?: ProviderAdapterV2;
+  readonly textGeneration?: ProviderTextGeneration;
 }
 
 /**

@@ -9,7 +9,12 @@ import {
 } from "../components/threadActionMenu.logic.ts";
 import { readLocalApi } from "../localApi.ts";
 import { failureToast } from "../toast.ts";
-import { markThreadUnread, type ThreadActionTarget, useThreadActions } from "./useThreadActions.ts";
+import {
+  regenerateThreadTitle,
+  markThreadUnread,
+  type ThreadActionTarget,
+  useThreadActions,
+} from "./useThreadActions.ts";
 
 /**
  * Opens a thread's menu and runs what is chosen (T3 Code's
@@ -32,11 +37,17 @@ export function useThreadActionMenu(
         const api = readLocalApi();
         const items = buildThreadActionMenuItems({
           isRunning: !threadRuntimeCanArchive(thread.status),
+          isTitleRegenerating: thread.titleRegeneration != null,
         });
         const chosen = await api.contextMenu.show(items, position).catch(() => null);
         switch (chosen) {
           case "rename":
             onStartRename();
+            return;
+          case "regenerate-title":
+            await regenerateThreadTitle(thread.id).catch((error: unknown) =>
+              failureToast("Failed to regenerate title", error),
+            );
             return;
           case "mark-unread":
             await markThreadUnread(thread.id).catch(() => undefined);

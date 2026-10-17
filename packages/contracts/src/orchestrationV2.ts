@@ -44,10 +44,18 @@ export const ORCHESTRATION_V2_WS_METHODS = {
   subscribeThread: "orchestration.subscribeThread",
 } as const;
 
-/** The provider instance and model a thread runs (T3 Code's `ModelSelection`, without options). */
+/** The provider instance and model a thread runs (T3 Code's `ModelSelection`, including provider options). */
 export const ModelSelection = Schema.Struct({
   instanceId: ProviderInstanceId,
   model: TrimmedNonEmptyString,
+  options: Schema.optionalKey(
+    Schema.Array(
+      Schema.Struct({
+        id: TrimmedNonEmptyString,
+        value: Schema.Union([Schema.String, Schema.Boolean]),
+      }),
+    ),
+  ),
 });
 export type ModelSelection = typeof ModelSelection.Type;
 
@@ -80,6 +88,11 @@ const NullOrTimeDefaultNull = Schema.NullOr(IsoDateTime).pipe(
  * T3 Code's soft delete, and refuses every command. `lastVisitedAt` is the
  * read marker: the thread is unread while its latest run completed after it.
  */
+const ThreadTitleRegeneration = Schema.Struct({
+  requestId: CommandId,
+  startedAt: IsoDateTime,
+});
+
 export const OrchestrationV2AppThread = Schema.Struct({
   id: ThreadId,
   projectId: ProjectId,
@@ -94,6 +107,7 @@ export const OrchestrationV2AppThread = Schema.Struct({
   archivedAt: NullOrTimeDefaultNull,
   deletedAt: NullOrTimeDefaultNull,
   lastVisitedAt: NullOrTimeDefaultNull,
+  titleRegeneration: Schema.optionalKey(Schema.NullOr(ThreadTitleRegeneration)),
 });
 export type OrchestrationV2AppThread = typeof OrchestrationV2AppThread.Type;
 
@@ -457,6 +471,7 @@ export const OrchestrationV2ThreadShell = Schema.Struct({
   /** When the latest run completed, or null while it has not (T3 Code's `latestRunCompletedAt`). */
   latestRunCompletedAt: Schema.NullOr(IsoDateTime),
   lastVisitedAt: Schema.NullOr(IsoDateTime),
+  titleRegeneration: Schema.optionalKey(Schema.NullOr(ThreadTitleRegeneration)),
 });
 export type OrchestrationV2ThreadShell = typeof OrchestrationV2ThreadShell.Type;
 
@@ -631,6 +646,14 @@ export const OrchestrationV2Command = Schema.Union([
     type: Schema.Literal("thread.metadata.update"),
     commandId: CommandId,
     threadId: ThreadId,
+    title: Schema.optionalKey(TrimmedNonEmptyString),
+    regenerateTitle: Schema.optionalKey(Schema.Boolean),
+  }),
+  Schema.Struct({
+    type: Schema.Literal("thread.title.regeneration.complete"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    requestId: CommandId,
     title: Schema.optionalKey(TrimmedNonEmptyString),
   }),
 ]);

@@ -162,6 +162,7 @@ export function decideThreadCommand(input: {
       archivedAt: null,
       deletedAt: null,
       lastVisitedAt: null,
+      titleRegeneration: null,
     };
     return Result.succeed({
       events: [{ type: "thread.created", threadId: thread.id, occurredAt: now, payload: thread }],
@@ -176,6 +177,7 @@ export function decideThreadCommand(input: {
     return reject(command, `Thread ${command.threadId} is deleted.`);
   }
   switch (command.type) {
+    case "thread.title.regeneration.complete":
     case "thread.model-selection.set":
     case "thread.archive":
     case "thread.unarchive":
@@ -258,6 +260,7 @@ type ThreadMutationCommand = Extract<
   OrchestrationV2Command,
   {
     readonly type:
+      | "thread.title.regeneration.complete"
       | "thread.model-selection.set"
       | "thread.archive"
       | "thread.unarchive"
@@ -327,18 +330,37 @@ function dispatchThreadMutation(
     );
   }
 
+  if (
+    command.type === "thread.title.regeneration.complete" &&
+    thread.titleRegeneration?.requestId !== command.requestId
+  ) {
+    return Result.succeed({ events: [], effects: [] });
+  }
   const updated: OrchestrationV2AppThread = (() => {
     switch (command.type) {
       case "thread.model-selection.set":
         return { ...thread, modelSelection: command.modelSelection, updatedAt: now };
       case "thread.archive":
-        return { ...thread, archivedAt: now, updatedAt: now };
+        return { ...thread, archivedAt: now, updatedAt: now, titleRegeneration: null };
       case "thread.unarchive":
         return { ...thread, archivedAt: null, updatedAt: now };
+      case "thread.title.regeneration.complete":
+        return {
+          ...thread,
+          ...(command.title === undefined ? {} : { title: command.title }),
+          titleRegeneration: null,
+          updatedAt: now,
+        };
       case "thread.metadata.update":
         return {
           ...thread,
           ...(command.title === undefined ? {} : { title: command.title }),
+          titleRegeneration:
+            command.title !== undefined || command.regenerateTitle === false
+              ? null
+              : command.regenerateTitle === true
+                ? { requestId: command.commandId, startedAt: now }
+                : (thread.titleRegeneration ?? null),
           updatedAt: now,
         };
       case "thread.mark-unread":
@@ -353,6 +375,7 @@ function dispatchThreadMutation(
         return "thread.archived" as const;
       case "thread.unarchive":
         return "thread.unarchived" as const;
+      case "thread.title.regeneration.complete":
       case "thread.metadata.update":
         return "thread.metadata-updated" as const;
       case "thread.mark-unread":
@@ -364,6 +387,15 @@ function dispatchThreadMutation(
   ];
   const effects: Array<PendingEffect> = [];
 
+  if (
+    command.type === "thread.metadata.update" &&
+    updated.titleRegeneration?.requestId === command.commandId
+  ) {
+    effects.push({
+      id: `effect:${command.commandId}:thread-title.generate`,
+      request: { type: "thread-title.generate", kind: { type: "regenerate" } },
+    });
+  }
   if (command.type === "thread.archive") {
     const queued = projection.runs.filter((run) => QUEUED_RUN_STATUSES.has(run.status));
     const queuedIds = new Set(queued.map((run) => run.id));
@@ -615,6 +647,7 @@ function dispatchMessage(
   const events: Array<NewDomainEvent> = [];
 
   // The first message titles the thread, as T3 Code's title seed does.
+  const initialTitle = command.titleSeed !== undefined && projection.messages.length === 0;
   const titled =
     command.titleSeed !== undefined && projection.messages.length === 0
       ? command.titleSeed
@@ -637,7 +670,7 @@ function dispatchMessage(
     updatedAt: now,
   };
 
-  if (titled !== thread.title || existingProviderThread === undefined) {
+  if (initialTitle || titled !== thread.title || existingProviderThread === undefined) {
     events.push({
       type: "thread.metadata-updated",
       threadId,
@@ -645,6 +678,9 @@ function dispatchMessage(
       payload: {
         ...thread,
         title: titled,
+        ...(initialTitle
+          ? { titleRegeneration: { requestId: command.commandId, startedAt: now } }
+          : {}),
         activeProviderThreadId: providerThread.id,
         updatedAt: now,
       },
@@ -759,6 +795,19 @@ function dispatchMessage(
 
   return {
     events,
-    effects: [{ id: ids.effectId, request: { type: "provider-turn.start", runId } }],
+    effects: [
+      { id: ids.effectId, request: { type: "provider-turn.start", runId } },
+      ...(initialTitle
+        ? [
+            {
+              id: `effect:${command.commandId}:thread-title.generate`,
+              request: {
+                type: "thread-title.generate" as const,
+                kind: { type: "initial" as const, messageId: command.messageId },
+              },
+            },
+          ]
+        : []),
+    ],
   };
 }
