@@ -10,7 +10,8 @@ import { useSyncExternalStore } from "react";
  * storage, as T3 Code's store persists it: the project scope of the inbox
  * sidebar (`sidebarProjectScopeKey`, null for every project), which of its
  * shelves are open (`sidebarShelvesExpanded`), whether the
- * sidebar is shown, and the project tree's manual order (`projectOrder`).
+ * sidebar is shown, the project tree's manual order (`projectOrder`) and
+ * which of its projects are folded (`projectExpandedById`).
  */
 
 const STORAGE_KEY = `${identity.urlScheme.production}:ui-state:v1`;
@@ -25,6 +26,13 @@ const PersistedUiState = Schema.Struct({
   sidebarOpen: Schema.Boolean,
   /** The project tree's manual order (T3 Code's `projectOrder`); stored state from before it decodes to none. */
   projectOrder: Schema.Array(Schema.String).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
+  /**
+   * Whether each project in the tree is open (T3 Code's
+   * `projectExpandedById`); a project with no entry is open.
+   */
+  projectExpandedById: Schema.Record(Schema.String, Schema.Boolean).pipe(
+    Schema.withDecodingDefault(Effect.succeed({})),
+  ),
   /**
    * Which inbox shelves are open (T3 Code keeps each under its own
    * `t3code:sidebar:*-expanded` key); folded until opened.
@@ -41,6 +49,7 @@ const DEFAULT_PERSISTED: PersistedUiState = {
   sidebarProjectScopeKey: null,
   sidebarOpen: true,
   projectOrder: [],
+  projectExpandedById: {},
   sidebarShelvesExpanded: SHELVES_FOLDED,
 };
 const decode = Schema.decodeUnknownSync(Schema.fromJsonString(PersistedUiState));
@@ -111,6 +120,28 @@ const readProjectOrder = (): ReadonlyArray<string> => current().projectOrder;
 
 export function useProjectOrder(): ReadonlyArray<string> {
   return useSyncExternalStore(subscribe, readProjectOrder);
+}
+
+/** Whether the tree shows the project open: until it is folded (T3 Code's `resolveProjectExpanded`). */
+export function resolveProjectExpanded(
+  projectExpandedById: Readonly<Record<string, boolean>>,
+  projectId: string,
+): boolean {
+  return projectExpandedById[projectId] ?? true;
+}
+
+/** Opens or folds a project in the tree (T3 Code's `setProjectExpanded`). */
+export function setProjectExpanded(projectId: string, expanded: boolean): void {
+  const expandedById = current().projectExpandedById;
+  if (expandedById[projectId] === expanded) return;
+  persist({ projectExpandedById: { ...expandedById, [projectId]: expanded } });
+}
+
+export const readProjectExpandedById = (): Readonly<Record<string, boolean>> =>
+  current().projectExpandedById;
+
+export function useProjectExpandedById(): Readonly<Record<string, boolean>> {
+  return useSyncExternalStore(subscribe, readProjectExpandedById);
 }
 
 /** Opens a folded inbox shelf, or folds an open one. */

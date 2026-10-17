@@ -37,17 +37,30 @@ import { useThreadActions } from "../hooks/useThreadActions.ts";
 import { keybindings, shortcutLabelForCommand } from "../keybindings.ts";
 import { useThreadSelection } from "../threadSelectionStore.ts";
 import { sortThreads } from "@playstead/client-runtime/state/threadSort";
-import { openProject, setProjectOrder, useActiveProjectId, useProjectOrder } from "../uiState.ts";
+import {
+  openProject,
+  resolveProjectExpanded,
+  setProjectExpanded,
+  setProjectOrder,
+  useActiveProjectId,
+  useProjectExpandedById,
+  useProjectOrder,
+} from "../uiState.ts";
 import {
   ArchiveIcon,
   ArrowUpDownIcon,
   CheckIcon,
+  ChevronRightIcon,
   FolderIcon,
   FolderPlusIcon,
   SearchIcon,
   SquarePenIcon,
 } from "./icons.tsx";
-import { reorderProjects, sortTreeProjects } from "./Sidebar.logic.ts";
+import {
+  reorderProjects,
+  resolveProjectStatusIndicator,
+  sortTreeProjects,
+} from "./Sidebar.logic.ts";
 import { readLocalApi } from "../localApi.ts";
 import { failureToast, successToast } from "./ui/toast.tsx";
 import { projectMenuItems } from "./projectActions.logic.ts";
@@ -56,6 +69,7 @@ import {
   JumpHintBadge,
   sidebarThreadLinkHandlers,
   SidebarThreadTitle,
+  ThreadStatusDot,
   ThreadStatusIndicator,
   useThreadRename,
 } from "./sidebar/SidebarThreadParts.tsx";
@@ -72,7 +86,9 @@ type SidebarThread = OrchestrationV2ThreadShell;
  * message, by creation, or by hand (**Manual**, where a project's header
  * drags it; the order is kept in the ui state), and sets each project's
  * thread order and how many show before **Show more**. **New thread** opens
- * a draft. A thread row renames on double-click, archives from its hover
+ * a draft. A project's header opens or folds it, and the tree keeps which
+ * are folded; a folded project shows only the thread in view, if it is one
+ * of its own, and the most pressing status of its threads. A thread row renames on double-click, archives from its hover
  * button (asking inline when **Confirm before archiving** is on), and opens
  * the tree's own menu on right-click. Mod-click and shift-click select
  * several threads for the bulk menu. A project's right-click menu offers
@@ -138,11 +154,18 @@ export function LegacySidebar() {
     () => sortTreeProjects({ projects: projects ?? [], threads, sortOrder, projectOrder }),
     [projects, threads, sortOrder, projectOrder],
   );
-  const [expandedProjectIds, setExpandedProjectIds] = useState<ReadonlySet<string>>(new Set());
-  const toggleProjectExpanded = (projectId: string) =>
-    setExpandedProjectIds((current) => {
+  const projectExpandedById = useProjectExpandedById();
+  // Which lists **Show more** has opened, for this page only (T3 Code's
+  // `expandedThreadListsByProject`).
+  const [threadListExpandedIds, setThreadListExpandedIds] = useState<ReadonlySet<string>>(
+    new Set(),
+  );
+  const setThreadListExpanded = (projectId: string, expanded: boolean) =>
+    setThreadListExpandedIds((current) => {
+      if (current.has(projectId) === expanded) return current;
       const next = new Set(current);
-      if (!next.delete(projectId)) next.add(projectId);
+      if (expanded) next.add(projectId);
+      else next.delete(projectId);
       return next;
     });
   const threadsByProject = useMemo(() => {
@@ -164,14 +187,16 @@ export function LegacySidebar() {
         projects: sortedProjects,
         threadsByProject,
         previewCount: settings.sidebarThreadPreviewCount,
-        expandedProjectIds,
+        threadListExpandedIds,
+        projectExpandedById,
         activeThreadId,
       }),
     [
       sortedProjects,
       threadsByProject,
       settings.sidebarThreadPreviewCount,
-      expandedProjectIds,
+      threadListExpandedIds,
+      projectExpandedById,
       activeThreadId,
     ],
   );
@@ -204,6 +229,9 @@ export function LegacySidebar() {
     handle: SortableProjectHandle | null,
   ) => {
     const active = project.id === activeProjectId;
+    const projectThreads = threadsByProject.get(project.id) ?? [];
+    const expanded = resolveProjectExpanded(projectExpandedById, project.id);
+    const projectStatus = expanded ? null : resolveProjectStatusIndicator(projectThreads);
     return (
       <>
         <div className="group flex items-center">
@@ -215,6 +243,7 @@ export function LegacySidebar() {
             type="button"
             title={project.workspaceRoot}
             aria-current={active ? "true" : undefined}
+            aria-expanded={expanded}
             {...(handle === null ? {} : { ...handle.attributes, ...handle.listeners })}
             onPointerDown={(event) => {
               // A new press starts clean; a drag it becomes swallows its own click.
@@ -227,6 +256,7 @@ export function LegacySidebar() {
                 return;
               }
               openProject(project.id);
+              setProjectExpanded(project.id, !expanded);
             }}
             onContextMenu={(event) => {
               event.preventDefault();
@@ -238,6 +268,17 @@ export function LegacySidebar() {
                 : "hover:bg-neutral-100 dark:hover:bg-neutral-900"
             }${handle === null ? "" : " cursor-grab active:cursor-grabbing"}`}
           >
+            {projectStatus === null ? (
+              <ChevronRightIcon
+                className={`size-3.5 shrink-0 text-neutral-400 transition-transform duration-150 ${
+                  expanded ? "rotate-90" : ""
+                }`}
+              />
+            ) : (
+              <span className="flex size-3.5 shrink-0 items-center justify-center">
+                <ThreadStatusDot status={projectStatus} />
+              </span>
+            )}
             <FolderIcon className="size-3.5 shrink-0 text-neutral-500 dark:text-neutral-400" />
             <span className="truncate">{project.title}</span>
           </button>
@@ -253,10 +294,11 @@ export function LegacySidebar() {
         </div>
         <ProjectThreadList
           projectTitle={project.title}
-          threads={threadsByProject.get(project.id) ?? []}
+          threads={projectThreads}
           visibleThreads={visibleThreads.filter((thread) => thread.projectId === project.id)}
-          expanded={expandedProjectIds.has(project.id)}
-          onToggleExpanded={() => toggleProjectExpanded(project.id)}
+          projectExpanded={expanded}
+          threadListExpanded={threadListExpandedIds.has(project.id)}
+          onThreadListExpandedChange={(next) => setThreadListExpanded(project.id, next)}
           jumpLabels={jumpLabels}
           previewCount={settings.sidebarThreadPreviewCount}
           confirmArchive={settings.confirmThreadArchive}
@@ -339,24 +381,41 @@ export function LegacySidebar() {
   );
 }
 
-/** A project's threads, the first `previewCount` until **Show more** (T3 Code's `SidebarProjectThreadList`). */
+/**
+ * A project's threads, the first `previewCount` until **Show more**, which
+ * shows the most pressing status of those it hides; an open project
+ * without threads says so (T3 Code's `SidebarProjectThreadList`).
+ */
 function ProjectThreadList(props: {
   readonly projectTitle: string;
   readonly threads: ReadonlyArray<SidebarThread>;
-  /** The threads shown, from `visibleTreeThreads`; the thread in view stays while folded. */
+  /** The threads shown, from `visibleTreeThreads`. */
   readonly visibleThreads: ReadonlyArray<SidebarThread>;
-  readonly expanded: boolean;
-  readonly onToggleExpanded: () => void;
+  readonly projectExpanded: boolean;
+  readonly threadListExpanded: boolean;
+  readonly onThreadListExpandedChange: (expanded: boolean) => void;
   readonly jumpLabels: ReadonlyMap<string, string>;
   readonly previewCount: number;
   readonly confirmArchive: boolean;
   readonly activeThreadId: string | undefined;
   readonly onBulkMenu: (position: { x: number; y: number }) => void;
 }) {
-  const { threads, expanded, activeThreadId } = props;
-  if (threads.length === 0) return null;
-  const overflowing = threads.length > props.previewCount;
+  const { threads, projectExpanded, threadListExpanded, activeThreadId } = props;
   const visible = props.visibleThreads;
+  if (projectExpanded && threads.length === 0) {
+    return (
+      <div className="mt-0.5 ml-5 px-2 py-1 text-xs text-neutral-500 dark:text-neutral-400">
+        No threads yet
+      </div>
+    );
+  }
+  if (visible.length === 0) return null;
+  const overflowing = projectExpanded && threads.length > props.previewCount;
+  const shownIds = new Set(visible.map((thread) => thread.id as string));
+  const hiddenStatus =
+    overflowing && !threadListExpanded
+      ? resolveProjectStatusIndicator(threads.filter((thread) => !shownIds.has(thread.id)))
+      : null;
   const orderedIds = visible.map((thread) => thread.id as string);
   return (
     <ul
@@ -378,10 +437,11 @@ function ProjectThreadList(props: {
         <li>
           <button
             type="button"
-            onClick={props.onToggleExpanded}
-            className="px-2 py-0.5 text-xs text-neutral-500 hover:text-neutral-900 dark:text-neutral-400 dark:hover:text-neutral-100"
+            onClick={() => props.onThreadListExpandedChange(!threadListExpanded)}
+            className="flex items-center gap-2 px-2 py-0.5 text-xs text-neutral-500 hover:text-neutral-900 dark:text-neutral-400 dark:hover:text-neutral-100"
           >
-            {expanded ? "Show less" : "Show more"}
+            {hiddenStatus === null ? null : <ThreadStatusDot status={hiddenStatus} />}
+            {threadListExpanded ? "Show less" : "Show more"}
           </button>
         </li>
       ) : null}

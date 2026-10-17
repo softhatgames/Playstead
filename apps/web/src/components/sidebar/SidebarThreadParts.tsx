@@ -1,7 +1,4 @@
-import {
-  ACTIVE_RUN_STATUSES,
-  type OrchestrationV2ThreadShell,
-} from "@playstead/contracts/orchestrationV2";
+import type { OrchestrationV2ThreadShell } from "@playstead/contracts/orchestrationV2";
 import { isMacPlatform } from "@playstead/shared/keybindings";
 import { type MouseEvent, useCallback, useRef, useState } from "react";
 
@@ -15,7 +12,11 @@ import {
 } from "../../threadSelectionStore.ts";
 import { openProject } from "../../uiState.ts";
 import { resolveRenameCommit } from "../chat/ChatHeader.logic.ts";
-import { hasUnseenCompletion, isTrailingDoubleClick } from "../Sidebar.logic.ts";
+import {
+  isTrailingDoubleClick,
+  threadStatusLabel,
+  type ThreadStatusLabel,
+} from "../Sidebar.logic.ts";
 import { failureToast, warningToast } from "../ui/toast.tsx";
 
 /**
@@ -99,6 +100,24 @@ export function SidebarThreadTitle({
   );
 }
 
+/** The dot each status shows (T3 Code's `dotClass`). */
+const STATUS_DOT_CLASS: Record<ThreadStatusLabel, string> = {
+  Working: "animate-pulse bg-sky-500",
+  Completed: "bg-emerald-500 dark:bg-emerald-300/90",
+};
+
+/** A status as its dot, named for screen readers and on hover. */
+export function ThreadStatusDot({ status }: { readonly status: ThreadStatusLabel }) {
+  return (
+    <span
+      role="img"
+      aria-label={status}
+      title={status}
+      className={`size-1.5 shrink-0 rounded-full ${STATUS_DOT_CLASS[status]}`}
+    />
+  );
+}
+
 /** Working while the thread's run is, or **Completed** (the unseen-completion dot) until it is viewed. */
 export function ThreadStatusIndicator({
   thread,
@@ -108,25 +127,8 @@ export function ThreadStatusIndicator({
     "status" | "latestRunCompletedAt" | "lastVisitedAt"
   >;
 }) {
-  const working = thread.status !== "idle" && ACTIVE_RUN_STATUSES.has(thread.status);
-  if (working) {
-    return (
-      <span
-        role="img"
-        aria-label="Working"
-        className="size-1.5 shrink-0 animate-pulse rounded-full bg-sky-500"
-      />
-    );
-  }
-  if (!hasUnseenCompletion(thread)) return null;
-  return (
-    <span
-      role="img"
-      aria-label="Completed"
-      title="Completed"
-      className="size-1.5 shrink-0 rounded-full bg-emerald-500 dark:bg-emerald-300/90"
-    />
-  );
+  const status = threadStatusLabel(thread);
+  return status === null ? null : <ThreadStatusDot status={status} />;
 }
 
 /**
