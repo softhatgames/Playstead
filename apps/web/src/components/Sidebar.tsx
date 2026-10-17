@@ -357,6 +357,7 @@ export function Sidebar() {
       <SidebarThreadDrag
         sections={sections}
         allThreads={threads}
+        visibleThreads={orderedThreads}
         workingShelfEnabled={workingShelfEnabled}
         onSettle={attemptSettle}
       >

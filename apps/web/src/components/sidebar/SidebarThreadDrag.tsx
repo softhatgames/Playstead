@@ -68,6 +68,7 @@ const DragState = createContext({
 export function SidebarThreadDrag(props: {
   sections: SidebarSections;
   allThreads: ReadonlyArray<Thread>;
+  visibleThreads: ReadonlyArray<Thread>;
   workingShelfEnabled: boolean;
   onSettle: (thread: Thread) => void;
   children: ReactNode;
@@ -176,7 +177,10 @@ export function SidebarThreadDrag(props: {
           void finish(event).catch((error) => failureToast("Failed to move thread", error));
         }}
       >
-        <SortableContext items={rows.map((t) => t.id)} strategy={verticalListSortingStrategy}>
+        <SortableContext
+          items={props.visibleThreads.map((t) => t.id)}
+          strategy={verticalListSortingStrategy}
+        >
           {props.children}
         </SortableContext>
         <DragOverlay
