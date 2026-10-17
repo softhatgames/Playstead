@@ -10,26 +10,67 @@ import {
   threadRuntimeCanArchive,
 } from "./threadActionMenu.logic.ts";
 
+const idle = { isRunning: false, projectFilter: null } as const;
+
+/** Each item as `[id, label, disabled, destructive, separatorBefore, children]`. */
+const outline = (items: ReturnType<typeof buildThreadActionMenuItems>) =>
+  items.map((item) => [
+    item.id,
+    item.label,
+    item.disabled === true,
+    item.destructive === true,
+    item.separatorBefore === true,
+    (item.children ?? []).map((child) => [child.id, child.label]),
+  ]);
+
 describe("buildThreadActionMenuItems", () => {
-  it("offers Archive thread, then Delete as the destructive item", () => {
-    const items = buildThreadActionMenuItems({ isRunning: false });
-    assert.deepStrictEqual(
-      items.map((item) => [item.id, item.label, item.disabled === true, item.destructive === true]),
+  it("offers T3 Code's items in its order: rename, mark unread, copy, archive, then delete", () => {
+    assert.deepStrictEqual(outline(buildThreadActionMenuItems(idle)), [
+      ["rename", "Rename thread", false, false, true, []],
+      ["mark-unread", "Mark unread", false, false, false, []],
       [
-        ["archive", "Archive thread", false, false],
-        ["delete", "Delete", false, true],
+        "copy",
+        "Copy",
+        false,
+        false,
+        true,
+        [
+          ["copy-path", "Path"],
+          ["copy-thread-id", "Thread ID"],
+        ],
       ],
-    );
+      ["archive", "Archive thread", false, false, true, []],
+      ["delete", "Delete", false, true, false, []],
+    ]);
   });
 
-  it("disables Archive thread while the thread's run is working, and keeps Delete", () => {
-    const items = buildThreadActionMenuItems({ isRunning: true });
+  it("offers to filter the sidebar by the thread's project after Mark unread, or to show all projects again", () => {
+    const filterItem = (isActive: boolean) =>
+      outline(
+        buildThreadActionMenuItems({
+          ...idle,
+          projectFilter: { label: "space-game", isActive },
+        }),
+      ).slice(1, 3);
+    assert.deepStrictEqual(filterItem(false), [
+      ["mark-unread", "Mark unread", false, false, false, []],
+      ["filter-by-project", "Filter by space-game", false, false, false, []],
+    ]);
+    assert.deepStrictEqual(filterItem(true)[1], [
+      "filter-by-project",
+      "Show all projects",
+      false,
+      false,
+      false,
+      [],
+    ]);
+  });
+
+  it("disables Archive thread while the thread's run is working, and keeps the rest", () => {
+    const items = buildThreadActionMenuItems({ ...idle, isRunning: true });
     assert.deepStrictEqual(
-      items.map((item) => [item.id, item.disabled === true]),
-      [
-        ["archive", true],
-        ["delete", false],
-      ],
+      items.filter((item) => item.disabled === true).map((item) => item.id),
+      ["archive"],
     );
   });
 });

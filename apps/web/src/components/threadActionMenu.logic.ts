@@ -5,22 +5,59 @@ import type { OrchestrationV2ThreadShell } from "@playstead/contracts/orchestrat
 /**
  * The thread menu (T3 Code's `apps/web/src/components/threadActionMenu.logic.ts`
  * at 2577baf), opened from a sidebar row and the thread view's header. It
- * has T3 Code's items in T3 Code's order as each arrives: so far **Archive
- * thread** and **Delete**. Rename, pin, settle, snooze, regenerate title,
- * mark unread, filter by project, auto-settle and copy come with their
- * features, as fields of the state and ids here.
+ * has T3 Code's items in T3 Code's order as each arrives: so far **Rename
+ * thread**, **Mark unread**, **Filter by project**, **Copy** (Path and
+ * Thread ID), **Archive thread** and **Delete**. Pin, settle, snooze,
+ * regenerate title, auto-settle and project settings come with their
+ * features, as fields of the state and ids here. Threads have no branch, so
+ * T3 Code's "New thread on (branch)" and **Copy → Branch** never show.
  */
-export type ThreadActionMenuId = "archive" | "delete";
+export type ThreadActionMenuId =
+  | "rename"
+  | "mark-unread"
+  | "filter-by-project"
+  | "copy"
+  | "copy-path"
+  | "copy-thread-id"
+  | "archive"
+  | "delete";
 
 export interface ThreadActionMenuState {
   /** Archive is disabled while the thread's run works, rather than let it stop the run. */
   readonly isRunning: boolean;
+  /**
+   * The sidebar's filter to the thread's project, offered from a sidebar row
+   * only (T3 Code's header menu passes none): the project's name, and
+   * whether the sidebar is already filtered to it.
+   */
+  readonly projectFilter: { readonly label: string; readonly isActive: boolean } | null;
 }
 
 export function buildThreadActionMenuItems(
   state: ThreadActionMenuState,
 ): ReadonlyArray<ContextMenuItem<ThreadActionMenuId>> {
   return [
+    { id: "rename", label: "Rename thread", separatorBefore: true },
+    { id: "mark-unread", label: "Mark unread" },
+    ...(state.projectFilter === null
+      ? []
+      : [
+          {
+            id: "filter-by-project" as const,
+            label: state.projectFilter.isActive
+              ? "Show all projects"
+              : `Filter by ${state.projectFilter.label}`,
+          },
+        ]),
+    {
+      id: "copy",
+      label: "Copy",
+      separatorBefore: true,
+      children: [
+        { id: "copy-path", label: "Path" },
+        { id: "copy-thread-id", label: "Thread ID" },
+      ],
+    },
     {
       id: "archive",
       label: "Archive thread",

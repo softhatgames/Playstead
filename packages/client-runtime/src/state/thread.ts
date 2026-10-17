@@ -26,6 +26,8 @@ const applyEvent = (
     case "thread.archived":
     case "thread.unarchived":
     case "thread.deleted":
+    case "thread.visited":
+    case "thread.marked-unread":
       return { ...projection, thread: event.payload, updatedAt: event.payload.updatedAt };
     case "run.created":
     case "run.updated":

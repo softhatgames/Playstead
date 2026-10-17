@@ -33,6 +33,7 @@ const projection: OrchestrationV2ThreadProjection = {
     updatedAt: at,
     archivedAt: null,
     deletedAt: null,
+    lastVisitedAt: null,
   },
   runs: [],
   attempts: [],

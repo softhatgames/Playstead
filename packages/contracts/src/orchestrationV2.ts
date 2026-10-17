@@ -77,7 +77,8 @@ const NullOrTimeDefaultNull = Schema.NullOr(IsoDateTime).pipe(
 /**
  * A thread (T3 Code's `OrchestrationV2AppThread`, trimmed). An archived
  * thread has `archivedAt`; a deleted one keeps its row with `deletedAt`,
- * T3 Code's soft delete, and refuses every command.
+ * T3 Code's soft delete, and refuses every command. `lastVisitedAt` is the
+ * read marker: the thread is unread while its latest run completed after it.
  */
 export const OrchestrationV2AppThread = Schema.Struct({
   id: ThreadId,
@@ -92,6 +93,7 @@ export const OrchestrationV2AppThread = Schema.Struct({
   updatedAt: IsoDateTime,
   archivedAt: NullOrTimeDefaultNull,
   deletedAt: NullOrTimeDefaultNull,
+  lastVisitedAt: NullOrTimeDefaultNull,
 });
 export type OrchestrationV2AppThread = typeof OrchestrationV2AppThread.Type;
 
@@ -389,6 +391,8 @@ export const OrchestrationV2DomainEvent = Schema.Union([
   event("thread.archived", OrchestrationV2AppThread),
   event("thread.unarchived", OrchestrationV2AppThread),
   event("thread.deleted", OrchestrationV2AppThread),
+  event("thread.visited", OrchestrationV2AppThread),
+  event("thread.marked-unread", OrchestrationV2AppThread),
   event("run.created", OrchestrationV2Run),
   event("run.updated", OrchestrationV2Run),
   event("run-attempt.created", OrchestrationV2RunAttempt),
@@ -450,6 +454,9 @@ export const OrchestrationV2ThreadShell = Schema.Struct({
   updatedAt: IsoDateTime,
   archivedAt: Schema.NullOr(IsoDateTime),
   deletedAt: Schema.NullOr(IsoDateTime),
+  /** When the latest run completed, or null while it has not (T3 Code's `latestRunCompletedAt`). */
+  latestRunCompletedAt: Schema.NullOr(IsoDateTime),
+  lastVisitedAt: Schema.NullOr(IsoDateTime),
 });
 export type OrchestrationV2ThreadShell = typeof OrchestrationV2ThreadShell.Type;
 
@@ -554,7 +561,9 @@ export type OrchestrationV2ThreadStreamItem = typeof OrchestrationV2ThreadStream
  * that is still active. `runtime-request.respond` answers a provider's
  * question; there are no approval decisions. `thread.archive` and
  * `thread.unarchive` move a thread to and from **Settings → Archive**, and
- * `thread.delete` deletes it.
+ * `thread.delete` deletes it. `thread.metadata.update` renames it.
+ * `thread.visit` moves its read marker forward when the thread is viewed,
+ * and `thread.mark-unread` moves it back before the latest run's completion.
  */
 export const OrchestrationV2Command = Schema.Union([
   Schema.Struct({
@@ -606,6 +615,23 @@ export const OrchestrationV2Command = Schema.Union([
     type: Schema.Literal("thread.delete"),
     commandId: CommandId,
     threadId: ThreadId,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("thread.visit"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    visitedAt: IsoDateTime,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("thread.mark-unread"),
+    commandId: CommandId,
+    threadId: ThreadId,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("thread.metadata.update"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    title: Schema.optionalKey(TrimmedNonEmptyString),
   }),
 ]);
 export type OrchestrationV2Command = typeof OrchestrationV2Command.Type;

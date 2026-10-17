@@ -1,13 +1,14 @@
 /**
  * Short notices in the window's corner (T3 Code's `toastManager` in
  * `apps/web/src/components/ui/toast.tsx` at 2577baf, trimmed to what thread
- * actions need: a failure with what went wrong). Each closes after a few
+ * actions need: a failure with what went wrong, a warning, or what was
+ * done). Each closes after a few
  * seconds, or when dismissed.
  */
 
 export interface Toast {
   readonly id: number;
-  readonly type: "error" | "success";
+  readonly type: "error" | "warning" | "success";
   readonly title: string;
   readonly description?: string;
 }
@@ -38,6 +39,16 @@ function addToast(toast: Omit<Toast, "id">): void {
   const id = nextId++;
   publish([...toasts, { ...toast, id }]);
   setTimeout(() => dismissToast(id), TOAST_DURATION_MS);
+}
+
+/** Something the person asked for that was not done, such as an empty title. */
+export function warningToast(title: string): void {
+  addToast({ type: "warning", title });
+}
+
+/** Something done, and what it was, such as a copied path (T3 Code's success notices). */
+export function successToast(title: string, description: string): void {
+  addToast({ type: "success", title, description });
 }
 
 /** A failed action, with the error's message (T3 Code's `failureToast`). */
