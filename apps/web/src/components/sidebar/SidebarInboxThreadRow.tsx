@@ -19,11 +19,13 @@ import {
   confirmAndUnpinThread,
   unsettleThread,
   unsnoozeThread,
+  visitThread,
 } from "../../hooks/useThreadActions.ts";
 import { readLocalApi } from "../../localApi.ts";
 import { useThreadSelection } from "../../threadSelectionStore.ts";
 import { requestCustomSnooze } from "../CustomSnoozeDialog.tsx";
 import {
+  AlarmClockIcon,
   AlarmClockOffIcon,
   CheckIcon,
   CircleCheckIcon,
@@ -34,7 +36,11 @@ import {
 } from "../icons.tsx";
 import { animateSidebarLayoutChanges } from "../Sidebar.drag.ts";
 import type { SidebarDropVerb } from "../Sidebar.drag.logic.ts";
-import { compactTimeLabel, type SidebarSection } from "../Sidebar.logic.ts";
+import {
+  compactTimeLabel,
+  resolveSidebarThreadWokeAt,
+  type SidebarSection,
+} from "../Sidebar.logic.ts";
 import { snoozeMenuChildren } from "../Sidebar.snooze.ts";
 import { failureToast } from "../ui/toast.tsx";
 import {
@@ -172,6 +178,7 @@ export function InboxThreadRow(props: {
           now,
         );
   const showSnoozeButton = !slim && !dragging && !sweeping && canSnooze(thread);
+  const wokeAt = resolveSidebarThreadWokeAt(thread, { now: new Date(now).toISOString() });
 
   /** The snooze button's menu: the presets and **Custom…**, below the button. */
   const openSnoozeMenu = (button: HTMLElement) => {
@@ -288,15 +295,34 @@ export function InboxThreadRow(props: {
         ) : showPin ? (
           <span className="size-3 shrink-0" aria-hidden />
         ) : null}
-        {badge ?? (
-          <span
-            className={`shrink-0 text-xs tabular-nums group-hover:opacity-0 ${
-              snoozed ? "text-sky-700 dark:text-sky-400" : "text-neutral-500 dark:text-neutral-400"
-            }`}
-          >
-            {timeLabel}
-          </span>
-        )}
+        {badge ??
+          (wokeAt !== null ? (
+            <button
+              type="button"
+              aria-label="Dismiss Woke notification"
+              title="Dismiss Woke notification"
+              onClick={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                // T3 Code's acknowledgement does not report a failure either.
+                visitThread(thread.id, wokeAt).catch(() => undefined);
+              }}
+              className="inline-flex shrink-0 cursor-pointer items-center gap-1 rounded-sm text-xs font-medium text-amber-600 hover:underline dark:text-amber-400"
+            >
+              <AlarmClockIcon className="size-3.5 shrink-0" />
+              <span role="status">Woke</span>
+            </button>
+          ) : (
+            <span
+              className={`shrink-0 text-xs tabular-nums group-hover:opacity-0 ${
+                snoozed
+                  ? "text-sky-700 dark:text-sky-400"
+                  : "text-neutral-500 dark:text-neutral-400"
+              }`}
+            >
+              {timeLabel}
+            </span>
+          ))}
         {props.jumpLabel === null ? null : <JumpHintBadge label={props.jumpLabel} />}
       </Link>
       {showPin && !dragging ? (

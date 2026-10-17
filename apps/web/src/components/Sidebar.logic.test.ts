@@ -16,6 +16,7 @@ import {
   moveSearchHighlight,
   reorderProjects,
   resolveProjectStatusIndicator,
+  resolveSidebarThreadWokeAt,
   searchSidebarThreads,
   sortTreeProjects,
   splitSearchHighlights,
@@ -282,6 +283,48 @@ const sections = (
     settled: ids(built.settled),
   };
 };
+
+describe("the Woke indicator", () => {
+  const snoozedAt = at(1);
+  const woke = (overrides: Partial<OrchestrationV2ThreadShell> = {}) =>
+    resolveSidebarThreadWokeAt(thread("t", { snoozedAt, snoozedUntil: at(2), ...overrides }), {
+      now: at(3),
+    });
+
+  it("shows on a thread whose snooze ran out until the thread is visited after its wake", () => {
+    assert.strictEqual(woke(), at(2));
+    assert.strictEqual(woke({ lastVisitedAt: at(1) }), at(2));
+    assert.isNull(woke({ lastVisitedAt: at(2) }));
+    assert.isNull(woke({ lastVisitedAt: "2026-10-17T02:30:00.000Z" }));
+  });
+
+  it("shows when a run finishing during the snooze woke it early, from the run's end", () => {
+    assert.strictEqual(
+      resolveSidebarThreadWokeAt(
+        thread("t", {
+          snoozedAt,
+          snoozedUntil: at(9),
+          status: "completed",
+          latestRunCompletedAt: "2026-10-17T01:30:00.000Z",
+        }),
+        { now: at(3) },
+      ),
+      "2026-10-17T01:30:00.000Z",
+    );
+  });
+
+  it("does not show while the thread sleeps, was never snoozed, or is settled", () => {
+    assert.isNull(woke({ snoozedUntil: at(9) }));
+    assert.isNull(woke({ snoozedUntil: null, snoozedAt: null }));
+    assert.isNull(woke({ settledOverride: "settled", settledAt: at(2) }));
+  });
+
+  it("gives way to a thread working, waiting on the person or failed, as T3 Code's row status does", () => {
+    assert.isNull(woke({ status: "running" }));
+    assert.isNull(woke({ hasPendingUserInput: true }));
+    assert.isNull(woke({ status: "failed", latestRunCompletedAt: at(2) }));
+  });
+});
 
 describe("sidebar sections", () => {
   it("puts settled threads in Settled, pinned ones in Pinned and the rest in Active", () => {

@@ -58,6 +58,7 @@ import {
 } from "../../proposedPlan.ts";
 import { ChatComposer } from "./ChatComposer.tsx";
 import { ChatHeader } from "./ChatHeader.tsx";
+import { ThreadStatusLine } from "./ThreadStatusLine.tsx";
 import { DraftHeroHeadline } from "./DraftHeroHeadline.tsx";
 import {
   buildSendCommands,
@@ -550,11 +551,11 @@ export function ChatView(
     [projection, latestRun?.status, latestRun?.completedAt],
   );
   useThreadShortcuts(target);
-  useThreadVisits(
+  const threadShell =
     props.kind === "thread"
       ? connection?.shell?.threads.find((candidate) => candidate.id === props.threadId)
-      : undefined,
-  );
+      : undefined;
+  useThreadVisits(threadShell);
   return (
     <div className="flex h-full flex-col">
       <ChatHeader title={title} projectTitle={project?.title} thread={target} />
@@ -572,6 +573,7 @@ export function ChatView(
           <p className="px-6 py-6 text-sm text-neutral-600 dark:text-neutral-300">{error}</p>
         )}
       </div>
+      <ThreadStatusLine thread={threadShell} />
       <ChatComposer
         entries={entries}
         selection={selection}

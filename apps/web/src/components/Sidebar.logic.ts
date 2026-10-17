@@ -3,7 +3,11 @@ import {
   sortInboxThreadsByReturn,
   sortWorkingThreadsBySend,
 } from "@playstead/client-runtime/state/threadInbox";
-import { effectiveSnoozed, type SnoozePreset } from "@playstead/client-runtime/state/threadSettled";
+import {
+  effectiveSnoozed,
+  type SnoozePreset,
+  threadWokeAt,
+} from "@playstead/client-runtime/state/threadSettled";
 import {
   sortActiveThreadsByOrderKey,
   sortPinnedThreadsByOrderKey,
@@ -241,6 +245,33 @@ export function threadStatusLabel(
 ): ThreadStatusLabel | null {
   if (thread.status !== "idle" && ACTIVE_RUN_STATUSES.has(thread.status)) return "Working";
   return hasUnseenCompletion(thread) ? "Completed" : null;
+}
+
+/**
+ * When the thread woke from its snooze, while its row shows **Woke** (T3
+ * Code's `isWoke` and `topStatus` in `SidebarThreadRow`): from the wake
+ * until the thread is visited after it, unless it is settled. A thread at
+ * work, waiting on the person or failed shows that instead.
+ */
+export function resolveSidebarThreadWokeAt(
+  thread: Pick<
+    OrchestrationV2ThreadShell,
+    | "status"
+    | "latestRunCompletedAt"
+    | "lastVisitedAt"
+    | "settledOverride"
+    | "snoozedUntil"
+    | "snoozedAt"
+    | "hasPendingUserInput"
+  >,
+  options: { readonly now: string },
+): string | null {
+  if (thread.settledOverride === "settled" || thread.hasPendingUserInput) return null;
+  if (thread.status === "failed" || threadStatusLabel(thread) === "Working") return null;
+  const wokeAt = threadWokeAt(thread, options);
+  if (wokeAt === null) return null;
+  const visitedAt = thread.lastVisitedAt === null ? Number.NaN : Date.parse(thread.lastVisitedAt);
+  return Number.isNaN(visitedAt) || visitedAt < Date.parse(wokeAt) ? wokeAt : null;
 }
 
 /**
