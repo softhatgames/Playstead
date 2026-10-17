@@ -45,7 +45,7 @@ export interface ProjectDeleteInput {
   readonly force?: boolean;
 }
 
-export class ProjectNotFoundError extends Schema.TaggedError<ProjectNotFoundError>()(
+class ProjectNotFoundError extends Schema.TaggedError<ProjectNotFoundError>()(
   "ProjectNotFoundError",
   { projectId: ProjectId },
 ) {
@@ -55,7 +55,7 @@ export class ProjectNotFoundError extends Schema.TaggedError<ProjectNotFoundErro
 }
 
 /** The project still has threads and removing it was not forced. */
-export class ProjectNotEmptyError extends Schema.TaggedError<ProjectNotEmptyError>()(
+class ProjectNotEmptyError extends Schema.TaggedError<ProjectNotEmptyError>()(
   "ProjectNotEmptyError",
   { projectId: ProjectId },
 ) {
