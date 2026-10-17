@@ -28,6 +28,8 @@ import * as ProviderAdapterRegistry from "../ProviderAdapterRegistry.ts";
 import * as ProviderRuntimeRecoveryService from "../ProviderRuntimeRecoveryService.ts";
 import * as OrchestrationRuntime from "../runtimeLayer.ts";
 
+import { ThreadSearch } from "../ThreadSearch.ts";
+
 /**
  * Seam 1: the real server services at the orchestrator's command boundary
  * (T3 Code's `ProviderReplayHarness.ts` `layerWithRegistry` at 2577baf,
@@ -134,6 +136,7 @@ export const makeOrchestrationHarness = Effect.fn("makeOrchestrationHarness")(fu
     ),
   );
   const services = yield* Effect.all({
+    search: ThreadSearch,
     orchestrator: Orchestrator.OrchestratorV2,
     worker: EffectWorker.OrchestrationEffectWorkerV2,
     projects: ProjectService.ProjectService,
