@@ -5,6 +5,7 @@ import type {
   ServerConfigStreamEvent,
   ServerLifecycleStreamEvent,
 } from "@playstead/contracts/server";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Ref from "effect/Ref";
 import type * as Scope from "effect/Scope";
@@ -39,6 +40,19 @@ export interface LocalConnectionTarget {
   readonly credential: LocalCredential;
   /** Handshake headers, which only a Node WebSocket can send. */
   readonly socketHeaders?: Readonly<Record<string, string>>;
+}
+
+/**
+ * What wakes a retry the connection is waiting on (T3 Code's
+ * `ConnectionWakeup`, `packages/client-runtime/src/connection/wakeups.ts` at
+ * a9c9c7c): the person coming back to the app, or the network changing.
+ * Either retries at once and starts the backoff again from its shortest wait.
+ */
+export type ConnectionWakeup = "application-active" | "network-changed";
+
+export interface LocalConnectionOptions {
+  /** The platform's wakeups, such as the page becoming visible. */
+  readonly wakeups?: Stream.Stream<ConnectionWakeup>;
 }
 
 export type ConnectionPhase = "connecting" | "connected" | "reconnecting";
@@ -135,10 +149,15 @@ const resolveSocketUrl = (target: LocalConnectionTarget) =>
 /**
  * The client's one owner of its connection to the local server. It opens a
  * session, keeps the server's status and lifecycle current, and reconnects
- * with backoff when the socket closes, for as long as its scope lives.
+ * with backoff when the socket closes, for as long as its scope lives. A
+ * wakeup cuts a pending wait short, as T3 Code's supervisor
+ * (`packages/client-runtime/src/connection/supervisor.ts` at a9c9c7c) does,
+ * so a server that came back during a long wait is noticed when the person
+ * returns.
  */
 export const makeLocalConnection = Effect.fn("makeLocalConnection")(function* (
   target: LocalConnectionTarget,
+  options?: LocalConnectionOptions,
 ): Effect.fn.Return<
   LocalConnection,
   never,
@@ -146,11 +165,16 @@ export const makeLocalConnection = Effect.fn("makeLocalConnection")(function* (
 > {
   const state = yield* SubscriptionRef.make(initialState);
   const currentClient = yield* Ref.make<WsRpcClient | undefined>(undefined);
+  /** Failures since the last connection or wakeup, which set the next wait. */
+  const failures = yield* Ref.make(0);
+  /** The wait before the next try, while there is one. */
+  const pendingRetry = yield* Ref.make<Deferred.Deferred<void> | undefined>(undefined);
 
   const runSession = (session: RpcSession) =>
     Effect.gen(function* () {
       // Before the state says connected, so a request made on that news goes through.
       yield* Ref.set(currentClient, session.client);
+      yield* Ref.set(failures, 0);
       yield* SubscriptionRef.update(state, (current): ConnectionState => ({
         ...current,
         phase: "connected",
@@ -212,19 +236,35 @@ export const makeLocalConnection = Effect.fn("makeLocalConnection")(function* (
     attempt.pipe(
       Effect.catch((error: ConnectionTransientError) =>
         Effect.gen(function* () {
-          const next = yield* SubscriptionRef.updateAndGet(state, (current): ConnectionState => ({
+          yield* SubscriptionRef.update(state, (current): ConnectionState => ({
             ...current,
             phase: "reconnecting",
             attempt: current.attempt + 1,
             lastError: error.message,
           }));
-          yield* Effect.sleep(yield* retryDelay(next.attempt - 1));
+          const delay = yield* retryDelay(yield* Ref.getAndUpdate(failures, (n) => n + 1));
+          const wake = yield* Deferred.make<void>();
+          yield* Ref.set(pendingRetry, wake);
+          yield* Deferred.await(wake).pipe(
+            Effect.timeoutOrElse({ duration: delay, orElse: () => Effect.void }),
+            Effect.ensuring(Ref.set(pendingRetry, undefined)),
+          );
         }),
       ),
     ),
   );
 
   yield* Effect.forkScoped(supervise);
+
+  // While connected, or during a try, a wakeup changes nothing.
+  const wakeRetry = Effect.flatMap(Ref.get(pendingRetry), (wake) =>
+    wake === undefined
+      ? Effect.void
+      : Effect.andThen(Ref.set(failures, 0), Deferred.succeed(wake, undefined)),
+  );
+  if (options?.wakeups !== undefined) {
+    yield* Effect.forkScoped(Stream.runForEach(options.wakeups, () => wakeRetry));
+  }
 
   const request = <A, E>(call: (client: WsRpcClient) => Effect.Effect<A, E>) =>
     Effect.flatMap(
