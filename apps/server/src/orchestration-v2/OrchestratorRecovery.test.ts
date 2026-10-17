@@ -235,17 +235,23 @@ describe("Survive a restart", () => {
     );
 
     /** A Codex recording across a restart, replayed: the thread after the second turn. */
-    const replayCodexRestart = (scenario: RestartResumeScenario) =>
+    const replayCodexRestart = (
+      scenario: RestartResumeScenario,
+      options: { readonly workspace?: string; readonly withoutProject?: boolean } = {},
+    ) =>
       Effect.gen(function* () {
         const path = yield* Path.Path;
         const config = yield* makeTestServerConfig();
         const recorded = yield* readRecording(`${scenario.scenario}.codex.ndjson`);
         const replay = yield* makeCodexReplay(
-          yield* materializeReplayWorkspace(recorded, path.join(config.baseDir, "resumed-game")),
+          yield* materializeReplayWorkspace(
+            recorded,
+            path.join(config.baseDir, options.workspace ?? "resumed-game"),
+          ),
         );
         const first = yield* Effect.scoped(
           Effect.flatMap(makeOrchestrationHarness({ codexClients: replay.clients, config }), (h) =>
-            runFirstTurn(h, scenario),
+            runFirstTurn(h, scenario, options),
           ),
         );
         assert.strictEqual(first.run.status, "completed");
@@ -275,6 +281,24 @@ describe("Survive a restart", () => {
 
     it.effect("after a restart Codex resumes the thread's Codex thread and remembers it", () =>
       replayCodexRestart(CODEX_RESTART_RESUME_SCENARIO).pipe(Effect.asVoid, Effect.scoped),
+    );
+
+    it.effect(
+      "after a restart a Codex thread without a project resumes in its own folder and remembers",
+      () =>
+        Effect.gen(function* () {
+          // The test clock's date, the first message's first five words and
+          // the thread id's last eight characters. The replay compares the
+          // `cwd` of `thread/start` and of the restarted `thread/resume`
+          // with this folder.
+          const path = yield* Path.Path;
+          const folder = path.join("scratch", "1970-01-01-remember-this-code-word-for-rtresume");
+          const thread = yield* replayCodexRestart(CODEX_RESTART_RESUME_SCENARIO, {
+            workspace: folder,
+            withoutProject: true,
+          });
+          assert.isTrue(thread.thread.worktreePath?.endsWith(folder));
+        }).pipe(Effect.scoped),
     );
 
     it.effect(

@@ -3,6 +3,7 @@ import type { ProviderInteractionMode, RuntimeMode } from "@playstead/contracts/
 import type { ProviderInstanceId } from "@playstead/contracts/providerInstance";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 
 import type { makeOrchestrationHarness } from "../OrchestratorHarness.ts";
@@ -84,11 +85,8 @@ const sendAndAwait = (harness: Harness, turn: 1 | 2, text: string) =>
     return yield* harness.awaitRunEnded(RESTART_RESUME_IDS.threadId, sent.sequence);
   });
 
-/** Before the restart: the project, the thread, and the message with the code word. */
-export const runFirstTurn = (
-  harness: Harness,
-  scenario: RestartResumeScenario = RESTART_RESUME_SCENARIO,
-) =>
+/** Makes the `resumed-game` project and returns its id and folder. */
+const makeResumedGameProject = (harness: Harness) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
@@ -100,18 +98,42 @@ export const runFirstTurn = (
       title: "resumed-game",
       workspaceRoot: folder,
     });
+    return { projectId: RESTART_RESUME_IDS.projectId, workspace: folder };
+  });
+
+/**
+ * Before the restart: the project, the thread, and the message with the code
+ * word. `withoutProject` puts the thread in "No project", so its first
+ * message claims it a folder of its own.
+ */
+export const runFirstTurn = (
+  harness: Harness,
+  scenario: RestartResumeScenario = RESTART_RESUME_SCENARIO,
+  options: { readonly withoutProject?: boolean } = {},
+) =>
+  Effect.gen(function* () {
+    const { projectId, workspace } = options.withoutProject
+      ? { ...(yield* harness.projects.ensureScratchProject), workspace: undefined }
+      : yield* makeResumedGameProject(harness);
     yield* harness.orchestrator.dispatch({
       type: "thread.create",
       commandId: CommandId.make("command:restart-resume:thread"),
       threadId: RESTART_RESUME_IDS.threadId,
-      projectId: RESTART_RESUME_IDS.projectId,
+      projectId,
       title: "New thread",
       modelSelection: { instanceId: scenario.instanceId, model: scenario.model },
       runtimeMode: scenario.modes?.runtimeMode ?? "full-access",
       ...(scenario.modes === undefined ? {} : { interactionMode: scenario.modes.interactionMode }),
     });
     const run = yield* sendAndAwait(harness, 1, scenario.firstPrompt);
-    return { workspace: folder, run };
+    // A thread without a project works in the folder its first message claimed.
+    const thread = yield* harness.orchestrator.getThreadProjection(RESTART_RESUME_IDS.threadId);
+    return {
+      workspace:
+        workspace ??
+        Option.getOrThrow(Option.flatMapNullishOr(thread, (p) => p.thread.worktreePath)),
+      run,
+    };
   });
 
 /** After the restart: any change of modes, then the question only the earlier conversation answers. */
