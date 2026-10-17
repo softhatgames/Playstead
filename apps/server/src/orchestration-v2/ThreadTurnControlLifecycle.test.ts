@@ -290,6 +290,27 @@ describe("Settle, snooze, archive and delete with approvals and queued messages"
         }).pipe(Effect.scoped),
     );
 
+    it.effect(
+      "the provider session of a thread archived while waiting on an approval stays stopped after its run ends",
+      () =>
+        Effect.gen(function* () {
+          const { harness } = yield* threadWaitingOnApproval;
+          const threadId = SUPERVISED_IDS.threadId;
+
+          yield* dispatch(harness, threadId, { type: "thread.archive" });
+          yield* harness.worker.drain;
+          const archived = yield* projectionOf(harness, threadId);
+          assert.deepStrictEqual(
+            archived.runs.map((run) => run.status),
+            ["failed"],
+          );
+          assert.deepStrictEqual(
+            archived.providerSessions.map((session) => session.status),
+            ["stopped"],
+          );
+        }).pipe(Effect.scoped),
+    );
+
     it.effect("deleting a thread cancels its active run and its queued messages", () =>
       Effect.gen(function* () {
         const harness = yield* harnessWithThread;
