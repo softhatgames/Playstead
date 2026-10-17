@@ -20,8 +20,9 @@ import * as SqlClient from "effect/sql/SqlClient";
 /**
  * The work a command leaves for the effect worker (T3 Code's
  * `OrchestrationEffectRequestV2` at 2577baf): starting a run's provider
- * turn, interrupting it, and giving the provider the person's answers to
- * its question. There is no checkpoint, title generation or cleanup.
+ * turn, interrupting it, giving the provider the person's answers to its
+ * question, and stopping a thread's provider session. There is no
+ * checkpoint, title generation or cleanup.
  */
 const OrchestrationEffectRequestV2 = Schema.Union([
   Schema.Struct({ type: Schema.Literal("provider-turn.start"), runId: RunId }),
@@ -37,20 +38,44 @@ const OrchestrationEffectRequestV2 = Schema.Union([
     requestId: RuntimeRequestId,
     answers: ProviderUserInputAnswers,
   }),
+  Schema.Struct({
+    type: Schema.Literal("provider-session.detach"),
+    providerSessionId: ProviderSessionId,
+    detail: Schema.String,
+  }),
 ]);
 export type OrchestrationEffectRequestV2 = typeof OrchestrationEffectRequestV2.Type;
+
+/**
+ * Effects that can safely run again after the process that ran them is gone
+ * (T3 Code's `REPLAY_SAFE_EFFECT_TYPES_AFTER_PROCESS_LOSS`): stopping a
+ * provider session that no longer exists does nothing. Recovery leaves them
+ * to run, and puts one a stopped server was running back in the queue.
+ */
+const REPLAY_SAFE_EFFECT_TYPES_AFTER_PROCESS_LOSS = [
+  "provider-session.detach",
+] as const satisfies ReadonlyArray<OrchestrationEffectRequestV2["type"]>;
 
 /**
  * Effects whose work dies with the process that ran them (T3 Code's
  * `PROCESS_BOUND_EFFECT_TYPES`): a provider turn started by a server that
  * has gone cannot be picked up again, so recovery cancels them. Every
- * effect Playstead has is one; none is replayed after a restart.
+ * effect type is one list or the other.
  */
-const PROCESS_BOUND_EFFECT_TYPES: ReadonlyArray<OrchestrationEffectRequestV2["type"]> = [
+const PROCESS_BOUND_EFFECT_TYPES = [
   "provider-turn.start",
   "provider-turn.interrupt",
   "runtime-request.respond",
-];
+] as const satisfies ReadonlyArray<OrchestrationEffectRequestV2["type"]>;
+
+// Every effect type is classified: adding one without choosing fails to compile.
+type UnclassifiedEffectType = Exclude<
+  OrchestrationEffectRequestV2["type"],
+  | (typeof REPLAY_SAFE_EFFECT_TYPES_AFTER_PROCESS_LOSS)[number]
+  | (typeof PROCESS_BOUND_EFFECT_TYPES)[number]
+>;
+const everyEffectTypeClassified: [UnclassifiedEffectType] extends [never] ? true : never = true;
+void everyEffectTypeClassified;
 
 /** Which of a thread's effects a command cancels (T3 Code's `cancelUnsettledEffects`). */
 export interface CancelUnsettledEffects {
@@ -128,14 +153,17 @@ export class EffectOutboxV2 extends Context.Service<
      */
     readonly awaitCancellation: (effectId: string) => Effect.Effect<void, never, Scope.Scope>;
     /**
-     * Cancels every process-bound effect still marked running, which only a
-     * process that has gone could have claimed (T3 Code's
-     * `reconcileAfterProcessLoss`, with nothing to requeue).
+     * Settles the effects still marked running, which only a process that
+     * has gone could have claimed (T3 Code's `reconcileAfterProcessLoss`):
+     * process-bound ones are cancelled, replay-safe ones go back in the queue.
      */
     readonly reconcileAfterProcessLoss: (input: {
       readonly reason: string;
       readonly now: string;
-    }) => Effect.Effect<number, EffectOutboxError>;
+    }) => Effect.Effect<
+      { readonly cancelled: number; readonly requeued: number },
+      EffectOutboxError
+    >;
     readonly notifyAvailable: Effect.Effect<void>;
     /** Waits until something was enqueued since the last wait. */
     readonly awaitAvailable: Effect.Effect<void>;
@@ -288,16 +316,25 @@ const make = Effect.gen(function* () {
     );
 
   const reconcileAfterProcessLoss = (input: { readonly reason: string; readonly now: string }) =>
-    sql<{ readonly effectId: string }>`
-      UPDATE orchestration_v2_effect_outbox
-      SET status = 'cancelled', last_error = ${input.reason}, updated_at = ${input.now}
-      WHERE status = 'running'
-        AND ${sql.in("effect_type", PROCESS_BOUND_EFFECT_TYPES)}
-      RETURNING effect_id AS "effectId"
-    `.pipe(
-      Effect.map((rows) => rows.length),
-      Effect.mapError(failWith("reconcileAfterProcessLoss")),
-    );
+    Effect.gen(function* () {
+      const cancelled = yield* sql<{ readonly effectId: string }>`
+        UPDATE orchestration_v2_effect_outbox
+        SET status = 'cancelled', last_error = ${input.reason}, updated_at = ${input.now}
+        WHERE status = 'running'
+          AND ${sql.in("effect_type", PROCESS_BOUND_EFFECT_TYPES)}
+        RETURNING effect_id AS "effectId"
+      `;
+      const requeued = yield* sql<{ readonly effectId: string }>`
+        UPDATE orchestration_v2_effect_outbox
+        SET status = 'pending', last_error = 'Requeued after the previous server process ended.',
+          updated_at = ${input.now}
+        WHERE status = 'running'
+          AND ${sql.in("effect_type", REPLAY_SAFE_EFFECT_TYPES_AFTER_PROCESS_LOSS)}
+        RETURNING effect_id AS "effectId"
+      `;
+      if (requeued.length > 0) yield* Queue.offer(available, undefined);
+      return { cancelled: cancelled.length, requeued: requeued.length };
+    }).pipe(Effect.mapError(failWith("reconcileAfterProcessLoss")));
 
   return EffectOutboxV2.of({
     enqueue,

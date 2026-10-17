@@ -26,11 +26,18 @@ const thread = (
   status: "idle",
   createdAt: "2026-10-17T00:00:00.000Z",
   updatedAt: "2026-10-17T00:00:00.000Z",
+  archivedAt: null,
+  deletedAt: null,
   ...overrides,
 });
 
 describe("applyShellStreamItem", () => {
-  const snapshot = { snapshotSequence: 3, projects: [project("a")], threads: [] };
+  const snapshot = {
+    snapshotSequence: 3,
+    projects: [project("a")],
+    threads: [],
+    archivedThreads: [],
+  };
 
   it("takes the snapshot, then adds and replaces projects as they change", () => {
     const fromSnapshot = applyShellStreamItem(undefined, { kind: "snapshot", snapshot });
@@ -49,6 +56,7 @@ describe("applyShellStreamItem", () => {
       snapshotSequence: 5,
       projects: [project("a", "renamed"), project("b")],
       threads: [],
+      archivedThreads: [],
     });
   });
 
@@ -79,6 +87,26 @@ describe("applyShellStreamItem", () => {
       }),
     ]);
     assert.strictEqual(working?.snapshotSequence, 6);
+  });
+
+  it("takes out a thread that was archived or deleted, and ignores one it never had", () => {
+    const shell = applyShellStreamItem(
+      { ...snapshot, threads: [thread("kept"), thread("archived"), thread("deleted")] },
+      { kind: "thread.removed", sequence: 4, threadId: ThreadId.make("archived") },
+    );
+    const deleted = applyShellStreamItem(shell, {
+      kind: "thread.removed",
+      sequence: 5,
+      threadId: ThreadId.make("deleted"),
+    });
+    const unknown = applyShellStreamItem(deleted, {
+      kind: "thread.removed",
+      sequence: 6,
+      threadId: ThreadId.make("never-seen"),
+    });
+
+    assert.deepStrictEqual(unknown?.threads, [thread("kept")]);
+    assert.strictEqual(unknown?.snapshotSequence, 6);
   });
 
   it("drops a change the shell already holds", () => {

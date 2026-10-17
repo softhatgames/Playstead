@@ -12,7 +12,8 @@ const upsertById = <T extends { readonly id: string }>(list: ReadonlyArray<T>, n
  * Folds the shell stream into the sidebar's shell, after T3 Code's shell
  * store (`packages/client-runtime/src/state/` at 2577baf): a snapshot
  * replaces it, and a change newer than what it holds replaces or adds its
- * project or thread. A change at or below the held sequence is old and dropped.
+ * project or thread, or takes out a thread that was archived or deleted. A
+ * change at or below the held sequence is old and dropped.
  */
 export const applyShellStreamItem = (
   shell: OrchestrationV2ShellSnapshot | undefined,
@@ -32,6 +33,12 @@ export const applyShellStreamItem = (
         ...shell,
         snapshotSequence: item.sequence,
         threads: upsertById(shell.threads, item.thread),
+      };
+    case "thread.removed":
+      return {
+        ...shell,
+        snapshotSequence: item.sequence,
+        threads: shell.threads.filter((thread) => thread.id !== item.threadId),
       };
   }
 };

@@ -29,6 +29,8 @@ export interface ProviderRuntimeReconciliation {
   readonly cancelledRuns: number;
   readonly stoppedSessions: number;
   readonly cancelledEffects: number;
+  /** Replay-safe effects a stopped server was running, queued to run again. */
+  readonly requeuedEffects: number;
 }
 
 const isUnfinished = (status: string) =>
@@ -218,11 +220,16 @@ const make = Effect.gen(function* () {
         cancelledRuns += settled.cancelledRuns;
         stoppedSessions += settled.stoppedSessions;
       }
-      const cancelledEffects = yield* outbox.reconcileAfterProcessLoss({
+      const outboxReconciliation = yield* outbox.reconcileAfterProcessLoss({
         reason: "Cancelled because the server that started it stopped.",
         now: DateTime.formatIso(yield* DateTime.now),
       });
-      return { cancelledRuns, stoppedSessions, cancelledEffects };
+      return {
+        cancelledRuns,
+        stoppedSessions,
+        cancelledEffects: outboxReconciliation.cancelled,
+        requeuedEffects: outboxReconciliation.requeued,
+      };
     }).pipe(
       Effect.mapError(
         (cause) => new ProviderRuntimeRecoveryError({ operation: `reconcile-${trigger}`, cause }),

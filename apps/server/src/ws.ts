@@ -18,7 +18,11 @@ import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
 import { failEnvironmentAuthInvalid, failEnvironmentInternal } from "./auth/http.ts";
 import * as ServerEnvironment from "./environment/ServerEnvironment.ts";
 import * as Orchestrator from "./orchestration-v2/Orchestrator.ts";
-import { streamShell } from "./orchestration-v2/ShellStream.ts";
+import {
+  getArchivedShellSnapshot,
+  streamArchivedShell,
+  streamShell,
+} from "./orchestration-v2/ShellStream.ts";
 import { streamThread } from "./orchestration-v2/ThreadStream.ts";
 import * as ProjectService from "./project/ProjectService.ts";
 import * as ProviderRegistry from "./provider/ProviderRegistry.ts";
@@ -113,6 +117,10 @@ const layerWsRpc = WsRpcGroup.toLayer(
         WorkspaceEntries.browse(input).pipe(Effect.provideContext(context)),
       [ORCHESTRATION_V2_WS_METHODS.subscribeShell]: () =>
         streamShell.pipe(Stream.orDie, Stream.provideContext(context)),
+      [ORCHESTRATION_V2_WS_METHODS.getArchivedShellSnapshot]: () =>
+        getArchivedShellSnapshot.pipe(Effect.orDie, Effect.provideContext(context)),
+      [ORCHESTRATION_V2_WS_METHODS.subscribeArchivedShell]: () =>
+        streamArchivedShell.pipe(Stream.orDie, Stream.provideContext(context)),
       // Mutations reach here only after startup: `/ws` waits at the readiness gate.
       [ORCHESTRATION_V2_WS_METHODS.dispatchCommand]: (command) =>
         orchestrator.dispatch(command).pipe(
