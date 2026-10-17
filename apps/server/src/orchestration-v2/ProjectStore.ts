@@ -23,6 +23,7 @@ export const ProjectRow = Schema.Struct({
   workspaceRoot: Schema.String,
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
+  deletedAt: Schema.NullOr(IsoDateTime),
 });
 export type ProjectRow = typeof ProjectRow.Type;
 
@@ -36,10 +37,16 @@ const toShell = (row: ProjectRow): OrchestrationProjectShell => ({
   updatedAt: row.updatedAt,
 });
 
+/** Reads skip removed projects unless they ask for them. */
+export interface ProjectReadOptions {
+  readonly includeDeleted?: boolean;
+}
+
 /**
  * The project projection, `projection_projects` (T3 Code's
  * `apps/server/src/orchestration-v2/ProjectStore.ts` at 2577baf). The event
- * sink applies each project event to it in the event's own transaction.
+ * sink applies each project event to it in the event's own transaction. A
+ * removed project keeps its row with `deleted_at`.
  */
 export class ProjectStoreV2 extends Context.Service<
   ProjectStoreV2,
@@ -48,15 +55,20 @@ export class ProjectStoreV2 extends Context.Service<
     readonly apply: (event: ApplicationProjectEvent) => Effect.Effect<void, ProjectStoreV2Error>;
     readonly get: (
       projectId: ProjectId,
+      options?: ProjectReadOptions,
     ) => Effect.Effect<Option.Option<ProjectRow>, ProjectStoreV2Error>;
-    /** Workspace roots match as exact strings; callers normalize first. */
-    readonly findByWorkspaceRoot: (
+    /**
+     * The project not removed that has the folder, so a removed one's folder
+     * can be added again. Workspace roots match as exact strings; callers
+     * normalize first.
+     */
+    readonly findActiveByWorkspaceRoot: (
       workspaceRoot: string,
     ) => Effect.Effect<Option.Option<ProjectRow>, ProjectStoreV2Error>;
     readonly getShell: (
       projectId: ProjectId,
     ) => Effect.Effect<Option.Option<OrchestrationProjectShell>, ProjectStoreV2Error>;
-    /** Oldest first. */
+    /** Oldest first, removed projects left out. */
     readonly listShells: Effect.Effect<
       ReadonlyArray<OrchestrationProjectShell>,
       ProjectStoreV2Error
@@ -69,7 +81,11 @@ const make = Effect.gen(function* () {
 
   const select = (
     operation: string,
-    where: { readonly projectId?: ProjectId; readonly workspaceRoot?: string },
+    where: {
+      readonly projectId?: ProjectId;
+      readonly workspaceRoot?: string;
+      readonly includeDeleted?: boolean;
+    },
   ) =>
     sql`
       SELECT
@@ -77,9 +93,11 @@ const make = Effect.gen(function* () {
         title,
         workspace_root AS "workspaceRoot",
         created_at AS "createdAt",
-        updated_at AS "updatedAt"
+        updated_at AS "updatedAt",
+        deleted_at AS "deletedAt"
       FROM projection_projects
       WHERE ${sql.and([
+        ...(where.includeDeleted === true ? [] : [sql`deleted_at IS NULL`]),
         ...(where.projectId === undefined ? [] : [sql`project_id = ${where.projectId}`]),
         ...(where.workspaceRoot === undefined
           ? []
@@ -93,7 +111,15 @@ const make = Effect.gen(function* () {
 
   const first = (rows: ReadonlyArray<ProjectRow>) => Option.fromUndefinedOr(rows[0]);
 
-  const get = (projectId: ProjectId) => Effect.map(select("get", { projectId }), first);
+  const get = (projectId: ProjectId, options?: ProjectReadOptions) =>
+    Effect.map(
+      select("get", { projectId, includeDeleted: options?.includeDeleted === true }),
+      first,
+    );
+
+  const mapApplyError = Effect.mapError(
+    (cause: unknown) => new ProjectStoreV2Error({ operation: "apply", cause }),
+  );
 
   const apply = (event: ApplicationProjectEvent) => {
     switch (event.type) {
@@ -114,10 +140,29 @@ const make = Effect.gen(function* () {
             ${payload.createdAt},
             ${payload.updatedAt}
           )
-        `.pipe(
-          Effect.asVoid,
-          Effect.mapError((cause) => new ProjectStoreV2Error({ operation: "apply", cause })),
-        );
+        `.pipe(Effect.asVoid, mapApplyError);
+      }
+      case "project.meta-updated": {
+        const { payload } = event;
+        if (payload.title === undefined) {
+          return sql`
+            UPDATE projection_projects SET updated_at = ${payload.updatedAt}
+            WHERE project_id = ${payload.projectId}
+          `.pipe(Effect.asVoid, mapApplyError);
+        }
+        return sql`
+          UPDATE projection_projects
+          SET title = ${payload.title}, updated_at = ${payload.updatedAt}
+          WHERE project_id = ${payload.projectId}
+        `.pipe(Effect.asVoid, mapApplyError);
+      }
+      case "project.deleted": {
+        const { payload } = event;
+        return sql`
+          UPDATE projection_projects
+          SET deleted_at = ${payload.deletedAt}, updated_at = ${payload.deletedAt}
+          WHERE project_id = ${payload.projectId}
+        `.pipe(Effect.asVoid, mapApplyError);
       }
     }
   };
@@ -125,8 +170,8 @@ const make = Effect.gen(function* () {
   return ProjectStoreV2.of({
     apply,
     get,
-    findByWorkspaceRoot: (workspaceRoot) =>
-      Effect.map(select("findByWorkspaceRoot", { workspaceRoot }), first),
+    findActiveByWorkspaceRoot: (workspaceRoot) =>
+      Effect.map(select("findActiveByWorkspaceRoot", { workspaceRoot }), first),
     getShell: (projectId) => Effect.map(get(projectId), Option.map(toShell)),
     listShells: Effect.map(select("listShells", {}), (rows) => rows.map(toShell)),
   });

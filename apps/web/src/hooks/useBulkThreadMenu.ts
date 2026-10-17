@@ -1,8 +1,10 @@
+import { canSnooze, resolveSnoozePresets } from "@playstead/client-runtime/state/threadSettled";
 import type { ContextMenuPosition } from "@playstead/contracts/ipc";
 import type { OrchestrationV2ThreadShell } from "@playstead/contracts/orchestrationV2";
 import { useCallback } from "react";
 
 import { readClientSettings } from "../clientSettings.ts";
+import { requestCustomSnooze } from "../components/CustomSnoozeDialog.tsx";
 import { buildMultiSelectThreadContextMenuItems } from "../components/Sidebar.inbox.logic.ts";
 import { threadRuntimeCanArchive } from "../components/threadActionMenu.logic.ts";
 import { readLocalApi } from "../localApi.ts";
@@ -30,16 +32,22 @@ const bulkThreadDeleteConfirmation = (count: number) =>
  * The menu for the selected threads, and what it does (T3 Code's
  * `handleMultiSelectContextMenu` in `Sidebar.tsx` and `LegacySidebar.tsx` at
  * 2577baf). `threads` are the sidebar's rows in order; selected threads not
- * among them are ignored. The inbox sidebar passes `settleThreads`, which
- * moves the view on as a row's Settle does, and offers **Regenerate titles**
- * for the selected threads whose titles are not being written already.
+ * among them are ignored. The inbox sidebar passes `settleThreads` and
+ * `snoozeThreads`, which move the view on as a row's Settle does; it offers
+ * **Snooze** when every selected thread can be snoozed, and **Regenerate
+ * titles** for the selected threads whose titles are not being written
+ * already.
  */
 export function useBulkThreadMenu(input: {
   readonly variant: "inbox" | "tree";
   readonly threads: ReadonlyArray<OrchestrationV2ThreadShell>;
   readonly settleThreads?: (threads: ReadonlyArray<OrchestrationV2ThreadShell>) => void;
+  readonly snoozeThreads?: (
+    threads: ReadonlyArray<OrchestrationV2ThreadShell>,
+    snoozedUntil: string,
+  ) => void;
 }) {
-  const { variant, threads, settleThreads } = input;
+  const { variant, threads, settleThreads, snoozeThreads } = input;
   const { archiveThread, deleteThread } = useThreadActions();
 
   return useCallback(
@@ -50,6 +58,9 @@ export function useBulkThreadMenu(input: {
       const pinned = targets.filter((thread) => thread.pinnedAt !== null);
       const settleable = targets.filter((thread) => thread.settledOverride !== "settled");
       const regeneratable = targets.filter((thread) => thread.titleRegeneration === null);
+      const snoozePresets = resolveSnoozePresets(new Date());
+      const snoozeable =
+        variant === "inbox" && snoozeThreads !== undefined && targets.every((t) => canSnooze(t));
       void (async () => {
         const api = readLocalApi();
         const chosen = await api.contextMenu
@@ -64,10 +75,21 @@ export function useBulkThreadMenu(input: {
                 variant === "inbox"
                   ? { supportedCount: targets.length, actionableCount: regeneratable.length }
                   : null,
+              snooze: snoozeable ? { presets: snoozePresets } : null,
             }),
             position,
           )
           .catch(() => null);
+        if (chosen?.startsWith("snooze:") === true) {
+          const choice =
+            chosen === "snooze:custom"
+              ? await requestCustomSnooze()
+              : snoozePresets.find((preset) => `snooze:${preset.id}` === chosen);
+          if (choice == null) return;
+          clearThreadSelection();
+          snoozeThreads?.(targets, choice.snoozedUntil);
+          return;
+        }
         switch (chosen) {
           case "unpin":
             clearThreadSelection();
@@ -136,11 +158,13 @@ export function useBulkThreadMenu(input: {
             }
             clearThreadSelection();
             return;
+          case "snooze":
           case null:
+          default:
             return;
         }
       })();
     },
-    [archiveThread, deleteThread, settleThreads, threads, variant],
+    [archiveThread, deleteThread, settleThreads, snoozeThreads, threads, variant],
   );
 }

@@ -1,16 +1,19 @@
 import type { ThreadId } from "@playstead/contracts/baseSchemas";
 import type { ContextMenuItem } from "@playstead/contracts/ipc";
 import type { OrchestrationV2ThreadShell } from "@playstead/contracts/orchestrationV2";
+import type { SnoozePreset } from "@playstead/client-runtime/state/threadSettled";
+
+import { type SnoozeMenuId, snoozeMenuChildren } from "./Sidebar.inbox.logic.ts";
 
 /**
  * The thread menu (T3 Code's `apps/web/src/components/threadActionMenu.logic.ts`
  * at 2577baf), opened from a sidebar row and the thread view's header. It
  * has T3 Code's items in T3 Code's order as each arrives: so far **Pin
- * thread**, **Settle thread**, **Rename thread**, **Regenerate title**,
- * **Mark unread**, **Filter by project**, **Auto-settle behavior**, **Copy**
- * (Path and Thread ID), **Archive thread** and **Delete**. Snooze and
- * project settings come with their features, as fields of the state and ids
- * here. Threads have no branch, so
+ * thread**, **Settle thread**, **Snooze** (its presets and **Custom…**) or
+ * **Wake thread**, **Rename thread**, **Regenerate title**, **Mark
+ * unread**, **Filter by project**, **Auto-settle behavior**, **Copy** (Path
+ * and Thread ID), **Project settings**, **Archive thread** and **Delete**.
+ * Threads have no branch, so
  * T3 Code's "New thread on (branch)" and **Copy → Branch** never show.
  */
 export type ThreadActionMenuId =
@@ -18,6 +21,9 @@ export type ThreadActionMenuId =
   | "unpin"
   | "settle"
   | "unsettle"
+  | "snooze"
+  | SnoozeMenuId
+  | "unsnooze"
   | "rename"
   | "regenerate-title"
   | "mark-unread"
@@ -28,6 +34,7 @@ export type ThreadActionMenuId =
   | "copy"
   | "copy-path"
   | "copy-thread-id"
+  | "project-settings"
   | "archive"
   | "delete";
 
@@ -44,6 +51,11 @@ export interface ThreadActionMenuState {
   readonly projectFilter: { readonly label: string; readonly isActive: boolean } | null;
   readonly isPinned: boolean;
   readonly isSettled: boolean;
+  /** Snoozed now: the menu offers **Wake thread** instead of **Snooze**. */
+  readonly isSnoozed: boolean;
+  /** False while the thread waits on the person or about to start: **Snooze** is disabled. */
+  readonly canSnoozeNow: boolean;
+  readonly snoozePresets: ReadonlyArray<SnoozePreset>;
   /** Automatic settlement is on for the thread (T3 Code's `autoSettleEnabled`). */
   readonly autoSettleEnabled: boolean;
 }
@@ -56,6 +68,14 @@ export function buildThreadActionMenuItems(
     state.isSettled
       ? { id: "unsettle", label: "Un-settle thread" }
       : { id: "settle", label: "Settle thread" },
+    state.isSnoozed
+      ? { id: "unsnooze", label: "Wake thread" }
+      : {
+          id: "snooze",
+          label: "Snooze",
+          disabled: !state.canSnoozeNow,
+          children: snoozeMenuChildren(state.snoozePresets),
+        },
     { id: "rename", label: "Rename thread", separatorBefore: true },
     {
       id: "regenerate-title",
@@ -90,6 +110,7 @@ export function buildThreadActionMenuItems(
         { id: "copy-thread-id", label: "Thread ID" },
       ],
     },
+    { id: "project-settings", label: "Project settings" },
     {
       id: "archive",
       label: "Archive thread",
@@ -113,18 +134,20 @@ export type LegacyThreadMenuId =
   | "mark-unread"
   | "copy-path"
   | "copy-thread-id"
+  | "project-settings"
   | "delete";
 
 /**
  * A thread's menu in the project tree (**Sidebar (legacy)**), flat as T3
  * Code's `LegacySidebar.tsx` builds it; archiving is the row's hover button
- * there. **Project settings** joins before Delete with #44.
+ * there.
  */
 export const legacyThreadMenuItems: ReadonlyArray<ContextMenuItem<LegacyThreadMenuId>> = [
   { id: "rename", label: "Rename thread" },
   { id: "mark-unread", label: "Mark unread" },
   { id: "copy-path", label: "Copy Path" },
   { id: "copy-thread-id", label: "Copy Thread ID" },
+  { id: "project-settings", label: "Project settings" },
   { id: "delete", label: "Delete", destructive: true },
 ];
 

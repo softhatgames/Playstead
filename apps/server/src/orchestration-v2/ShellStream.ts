@@ -15,7 +15,10 @@ import * as ProjectService from "../project/ProjectService.ts";
 import * as EventStore from "./EventStore.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 
-/** Thread events that change what the sidebar or the archive shows: the thread itself, or its runs. */
+/**
+ * Thread events that change what the sidebar or the archive shows: the
+ * thread itself, its runs, or a question waiting on the person.
+ */
 const SHELL_THREAD_EVENT_TYPES: ReadonlySet<string> = new Set([
   "thread.created",
   "thread.metadata-updated",
@@ -27,11 +30,17 @@ const SHELL_THREAD_EVENT_TYPES: ReadonlySet<string> = new Set([
   "thread.marked-unread",
   "thread.pinned",
   "thread.unpinned",
+  "thread.pin-reordered",
+  "thread.active-reordered",
   "thread.settled",
   "thread.unsettled",
+  "thread.snoozed",
+  "thread.unsnoozed",
   "thread.auto-settle-set",
   "run.created",
   "run.updated",
+  // A question raised or answered: the sidebar shows it, and it wakes a snooze.
+  "runtime-request.updated",
 ]);
 
 /**
@@ -96,7 +105,7 @@ const readSnapshot = (location: ProjectionStore.ThreadShellLocation) =>
  * at 2577baf): a snapshot of projects and the threads not archived, read in
  * one transaction with the sequence it reaches, then each project or thread
  * as events after that sequence change it. A thread archived or deleted is
- * removed.
+ * removed, and so is a project removed.
  */
 export const streamShell = Effect.gen(function* () {
   const eventStore = yield* EventStore.EventStoreV2;
@@ -108,9 +117,12 @@ export const streamShell = Effect.gen(function* () {
     event: ApplicationStoredEvent,
   ): Effect.Effect<Option.Option<OrchestrationV2ShellStreamItem>, unknown> => {
     if (event.aggregateKind === "project") {
-      return Effect.map(
-        projects.getShell(event.aggregateId),
-        Option.map((project) => ({ kind: "project.updated", sequence: event.sequence, project })),
+      return Effect.map(projects.getShell(event.aggregateId), (project) =>
+        Option.some<OrchestrationV2ShellStreamItem>(
+          Option.isSome(project)
+            ? { kind: "project.updated", sequence: event.sequence, project: project.value }
+            : { kind: "project.removed", sequence: event.sequence, projectId: event.aggregateId },
+        ),
       );
     }
     if (!SHELL_THREAD_EVENT_TYPES.has(event.event.type)) return Effect.succeedNone;

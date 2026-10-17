@@ -30,8 +30,12 @@ const applyEvent = (
     case "thread.marked-unread":
     case "thread.pinned":
     case "thread.unpinned":
+    case "thread.pin-reordered":
+    case "thread.active-reordered":
     case "thread.settled":
     case "thread.unsettled":
+    case "thread.snoozed":
+    case "thread.unsnoozed":
     case "thread.auto-settle-set":
       return { ...projection, thread: event.payload, updatedAt: event.payload.updatedAt };
     case "run.created":

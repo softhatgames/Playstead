@@ -17,8 +17,8 @@ import {
  * The settlement rules as T3 Code's `ThreadSettlementService.test.ts` at
  * 2577baf checks them (`threadHasQueuedTurnStart`, `isSnoozed`,
  * `resolveAutoSettlementAt`), without the pull-request cases. The grace
- * window and snoozes are checked here: a Playstead message starts its run
- * in the same command, and snooze arrives with #38.
+ * window is checked here: a Playstead message starts its run in the same
+ * command. Snoozed threads are also checked at Seam 1.
  */
 
 const NOW_MS = DateTime.toEpochMillis(DateTime.makeUnsafe("2026-06-10T12:00:00.000Z"));

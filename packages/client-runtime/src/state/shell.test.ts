@@ -37,6 +37,9 @@ const thread = (
   pinnedAt: null,
   pinOrderKey: null,
   activeOrderKey: null,
+  snoozedUntil: null,
+  snoozedAt: null,
+  hasPendingUserInput: false,
   autoSettleDisabledAt: null,
   titleRegeneration: null,
   ...overrides,
@@ -69,6 +72,16 @@ describe("applyShellStreamItem", () => {
       threads: [],
       archivedThreads: [],
     });
+  });
+
+  it("takes out a project that was removed", () => {
+    const shell = applyShellStreamItem(
+      { ...snapshot, projects: [project("a"), project("b")] },
+      { kind: "project.removed", sequence: 4, projectId: ProjectId.make("a") },
+    );
+
+    assert.deepStrictEqual(shell?.projects, [project("b")]);
+    assert.strictEqual(shell?.snapshotSequence, 4);
   });
 
   it("adds a thread, then follows its title and run", () => {

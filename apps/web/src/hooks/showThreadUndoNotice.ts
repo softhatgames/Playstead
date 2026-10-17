@@ -6,13 +6,13 @@ import * as ThreadUndo from "./threadUndo.ts";
 /**
  * The sidebar's **Undo** notice (T3 Code's
  * `apps/web/src/hooks/showThreadUndoNotice.ts` at 2577baf). Unpinning,
- * settling and archiving each show "Settled 1 thread, Undo" for five
- * seconds; the same action on several threads in a row counts them in one
- * notice, and Undo (or `mod+z`) restores them all. Snooze (#38) adds its own.
+ * settling, snoozing and archiving each show "Settled 1 thread, Undo" for
+ * five seconds; the same action on several threads in a row counts them in
+ * one notice, and Undo (or `mod+z`) restores them all.
  * An action whose claim was superseded leaves the notice.
  */
 
-export type ThreadUndoAction = "Settled" | "Unpinned" | "Archived";
+export type ThreadUndoAction = "Settled" | "Unpinned" | "Archived" | "Snoozed";
 
 export interface ThreadUndoOptions {
   readonly action: ThreadUndoAction;

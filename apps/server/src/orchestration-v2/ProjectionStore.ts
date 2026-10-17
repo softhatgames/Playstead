@@ -77,8 +77,12 @@ const entityKindOf = (event: OrchestrationV2StoredEvent["event"]): EntityKind | 
     case "thread.marked-unread":
     case "thread.pinned":
     case "thread.unpinned":
+    case "thread.pin-reordered":
+    case "thread.active-reordered":
     case "thread.settled":
     case "thread.unsettled":
+    case "thread.snoozed":
+    case "thread.unsnoozed":
     case "thread.auto-settle-set":
       return "thread";
     case "run.created":
@@ -113,6 +117,7 @@ const decodeThread = decodeJsonString(OrchestrationV2AppThread);
 const toThreadShell = (
   thread: OrchestrationV2AppThread,
   runs: ReadonlyArray<OrchestrationV2Run>,
+  runtimeRequests: ReadonlyArray<OrchestrationV2RuntimeRequest>,
 ): OrchestrationV2ThreadShell => {
   const latest = latestRunOf(runs);
   return {
@@ -137,6 +142,9 @@ const toThreadShell = (
     pinnedAt: thread.pinnedAt,
     pinOrderKey: thread.pinOrderKey,
     activeOrderKey: thread.activeOrderKey,
+    snoozedUntil: thread.snoozedUntil,
+    snoozedAt: thread.snoozedAt,
+    hasPendingUserInput: runtimeRequests.some((request) => request.status === "pending"),
     autoSettleDisabledAt: thread.autoSettleDisabledAt,
     titleRegeneration: thread.titleRegeneration,
   };
@@ -341,7 +349,11 @@ const make = Effect.gen(function* () {
     Effect.gen(function* () {
       const thread = yield* readThread(threadId);
       if (Option.isNone(thread)) return Option.none();
-      return Option.some(toThreadShell(thread.value, yield* readRows(ENTITIES.runs, threadId)));
+      const [runs, runtimeRequests] = yield* Effect.all([
+        readRows(ENTITIES.runs, threadId),
+        readRows(ENTITIES.runtimeRequests, threadId),
+      ]);
+      return Option.some(toThreadShell(thread.value, runs, runtimeRequests));
     }).pipe(Effect.mapError(failWith("getThreadShell")));
 
   const listThreadShells = (location: ThreadShellLocation) =>
@@ -359,7 +371,13 @@ const make = Effect.gen(function* () {
     `;
       return yield* Effect.forEach(rows, (row) =>
         Effect.flatMap(decodeThread(row.payloadJson), (thread) =>
-          Effect.map(readRows(ENTITIES.runs, thread.id), (runs) => toThreadShell(thread, runs)),
+          Effect.map(
+            Effect.all([
+              readRows(ENTITIES.runs, thread.id),
+              readRows(ENTITIES.runtimeRequests, thread.id),
+            ]),
+            ([runs, runtimeRequests]) => toThreadShell(thread, runs, runtimeRequests),
+          ),
         ),
       );
     }).pipe(Effect.mapError(failWith("listThreadShells")));
@@ -414,7 +432,7 @@ const make = Effect.gen(function* () {
         Effect.gen(function* () {
           const thread = yield* decodeThread(row.payloadJson);
           const runs = yield* readRows(ENTITIES.runs, thread.id);
-          const shell = toThreadShell(thread, runs);
+          const shell = toThreadShell(thread, runs, []);
           const latest = latestRunOf(runs);
           return {
             id: shell.id,

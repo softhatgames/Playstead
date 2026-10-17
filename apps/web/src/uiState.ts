@@ -1,4 +1,5 @@
 import { identity } from "@playstead/shared/identity";
+import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { useSyncExternalStore } from "react";
 
@@ -7,8 +8,8 @@ import { useSyncExternalStore } from "react";
  * 2577baf). In the page only: the project the person last opened, which the
  * project tree marks and **New thread** starts in. Kept in the browser's
  * storage, as T3 Code's store persists it: the project scope of the inbox
- * sidebar (`sidebarProjectScopeKey`, null for every project), and whether
- * the sidebar is shown. Project order and expansion join it with #40.
+ * sidebar (`sidebarProjectScopeKey`, null for every project), whether the
+ * sidebar is shown, and the project tree's manual order (`projectOrder`).
  */
 
 const STORAGE_KEY = `${identity.urlScheme.production}:ui-state:v1`;
@@ -16,10 +17,16 @@ const STORAGE_KEY = `${identity.urlScheme.production}:ui-state:v1`;
 const PersistedUiState = Schema.Struct({
   sidebarProjectScopeKey: Schema.NullOr(Schema.String),
   sidebarOpen: Schema.Boolean,
+  /** The project tree's manual order (T3 Code's `projectOrder`); stored state from before it decodes to none. */
+  projectOrder: Schema.Array(Schema.String).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
 });
 type PersistedUiState = typeof PersistedUiState.Type;
 
-const DEFAULT_PERSISTED: PersistedUiState = { sidebarProjectScopeKey: null, sidebarOpen: true };
+const DEFAULT_PERSISTED: PersistedUiState = {
+  sidebarProjectScopeKey: null,
+  sidebarOpen: true,
+  projectOrder: [],
+};
 const decode = Schema.decodeUnknownSync(Schema.fromJsonString(PersistedUiState));
 const encode = Schema.encodeSync(Schema.fromJsonString(PersistedUiState));
 
@@ -77,6 +84,17 @@ export const readSidebarProjectScopeKey = (): string | null => current().sidebar
 
 export function useSidebarProjectScopeKey(): string | null {
   return useSyncExternalStore(subscribe, readSidebarProjectScopeKey);
+}
+
+/** Keeps the project tree's manual order (`sidebarProjectSortOrder: "manual"`). */
+export function setProjectOrder(order: ReadonlyArray<string>): void {
+  persist({ projectOrder: [...order] });
+}
+
+const readProjectOrder = (): ReadonlyArray<string> => current().projectOrder;
+
+export function useProjectOrder(): ReadonlyArray<string> {
+  return useSyncExternalStore(subscribe, readProjectOrder);
 }
 
 /** Shows or hides the sidebar (`sidebar.toggle`, `mod+b`). */

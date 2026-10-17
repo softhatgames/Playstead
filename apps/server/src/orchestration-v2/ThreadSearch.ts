@@ -63,7 +63,7 @@ const searchSnippet = (text: string, query: string) => {
  * Searches what was said in the sidebar's threads (T3 Code's
  * `apps/server/src/orchestration-v2/ThreadSearch.ts` at 2577baf): a
  * substring of finished messages from the person or the agent, in threads
- * neither archived nor deleted. Each thread gives its best message: the
+ * neither archived nor deleted, in projects not removed. Each thread gives its best message: the
  * person's before the agent's, newest first. Threads where the person said
  * it come first, then the most recently active. Titles are not searched
  * here; the client matches them itself.
@@ -98,7 +98,8 @@ const make = Effect.gen(function* () {
         ON threads.thread_id = messages.thread_id
       INNER JOIN projection_projects AS projects
         ON projects.project_id = threads.project_id
-      WHERE json_extract(threads.payload_json, '$.deletedAt') IS NULL
+      WHERE projects.deleted_at IS NULL
+        AND json_extract(threads.payload_json, '$.deletedAt') IS NULL
         AND json_extract(threads.payload_json, '$.archivedAt') IS NULL
         AND json_extract(messages.payload_json, '$.streaming') = 0
         AND json_extract(messages.payload_json, '$.role') IN ('user', 'assistant')

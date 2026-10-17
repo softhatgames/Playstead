@@ -172,6 +172,24 @@ describe("Search threads", () => {
       }).pipe(Effect.scoped),
     );
 
+    it.effect("threads of a removed project are not searched", () =>
+      Effect.gen(function* () {
+        const { harness } = yield* makeHarness();
+        yield* runFileCreateScenario(harness);
+        yield* sendUserMessages(harness, "doomed", ["A comet tail"]);
+        assert.lengthOf(yield* search(harness, "comet"), 1);
+
+        yield* harness.projects.delete({
+          commandId: CommandId.make("command:remove-project"),
+          projectId: FILE_CREATE_IDS.projectId,
+          force: true,
+        });
+
+        assert.deepStrictEqual(yield* search(harness, "comet"), []);
+        assert.deepStrictEqual(yield* search(harness, "hello"), []);
+      }).pipe(Effect.scoped),
+    );
+
     it.effect("the query matches as typed, with no wildcards", () =>
       Effect.gen(function* () {
         const { harness } = yield* makeHarness();
