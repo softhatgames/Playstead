@@ -60,3 +60,32 @@ describe("project expansion", () => {
     assert.strictEqual(uiState.readSidebarProjectScopeKey(), "space");
   });
 });
+
+it("reads an older two-shelf object without losing scope or layout", async () => {
+  stored.set(
+    STORAGE_KEY,
+    JSON.stringify({
+      sidebarProjectScopeKey: "space",
+      sidebarOpen: false,
+      sidebarShelvesExpanded: { working: true, settled: true },
+    }),
+  );
+  const state = await reload();
+  assert.strictEqual(state.readSidebarProjectScopeKey(), "space");
+  state.setSidebarProjectScopeKey("space");
+  assert.deepStrictEqual(JSON.parse(stored.get(STORAGE_KEY)!).sidebarShelvesExpanded, {
+    working: true,
+    settled: true,
+    snoozed: false,
+  });
+});
+
+it("keeps a rename across remounts but never persists it across reloads", async () => {
+  const state = await reload();
+  state.setThreadRenameDraft({ threadId: "one", title: "Draft name" });
+  assert.deepStrictEqual(state.readThreadRenameDraft(), { threadId: "one", title: "Draft name" });
+  state.setSidebarProjectScopeKey("space");
+  assert.isFalse(stored.get(STORAGE_KEY)!.includes("Draft name"));
+  const reloaded = await reload();
+  assert.isNull(reloaded.readThreadRenameDraft());
+});

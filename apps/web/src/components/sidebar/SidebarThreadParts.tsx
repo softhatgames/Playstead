@@ -1,6 +1,6 @@
 import type { OrchestrationV2ThreadShell } from "@playstead/contracts/orchestrationV2";
 import { isMacPlatform } from "@playstead/shared/keybindings";
-import { type MouseEvent, useCallback, useRef, useState } from "react";
+import { type MouseEvent, useCallback, useRef } from "react";
 
 import { renameThread } from "../../hooks/useThreadActions.ts";
 import {
@@ -10,7 +10,12 @@ import {
   setThreadSelectionAnchor,
   toggleThreadSelection,
 } from "../../threadSelectionStore.ts";
-import { openProject } from "../../uiState.ts";
+import {
+  openProject,
+  readThreadRenameDraft,
+  setThreadRenameDraft,
+  useThreadRenameDraft,
+} from "../../uiState.ts";
 import { resolveRenameCommit } from "../chat/ChatHeader.logic.ts";
 import {
   isTrailingDoubleClick,
@@ -136,14 +141,21 @@ export function ThreadStatusIndicator({
  * keeps the new title, Escape the old one, and an empty title is refused.
  */
 export function useThreadRename(thread: Pick<OrchestrationV2ThreadShell, "id" | "title">) {
-  const [renamingTitle, setRenamingTitle] = useState<string | null>(null);
+  const draft = useThreadRenameDraft();
+  const renamingTitle = draft?.threadId === thread.id ? draft.title : null;
+  const setRenamingTitle = useCallback(
+    (title: string | null) =>
+      setThreadRenameDraft(title === null ? null : { threadId: thread.id, title }),
+    [thread.id],
+  );
   const committedRef = useRef(false);
   const start = useCallback(() => {
     committedRef.current = false;
     setRenamingTitle(thread.title);
-  }, [thread.title]);
+  }, [thread.title, setRenamingTitle]);
 
   const commit = (typed: string) => {
+    if (readThreadRenameDraft()?.threadId !== thread.id) return;
     setRenamingTitle(null);
     const resolution = resolveRenameCommit({ title: typed, originalTitle: thread.title });
     if (resolution.action === "reject-empty") {

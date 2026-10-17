@@ -39,7 +39,7 @@ const PersistedUiState = Schema.Struct({
    */
   sidebarShelvesExpanded: Schema.Struct({
     working: Schema.Boolean,
-    snoozed: Schema.Boolean,
+    snoozed: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
     settled: Schema.Boolean,
   }).pipe(Schema.withDecodingDefault(Effect.succeed(SHELVES_FOLDED))),
 });
@@ -165,4 +165,30 @@ const readSidebarOpen = (): boolean => current().sidebarOpen;
 
 export function useSidebarOpen(): boolean {
   return useSyncExternalStore(subscribe, readSidebarOpen);
+}
+
+/** Transient rename state survives route-owned sidebar remounts, but not page reloads. */
+interface ThreadRenameDraft {
+  readonly threadId: string;
+  readonly title: string;
+}
+let threadRenameDraft: ThreadRenameDraft | null = null;
+export const readThreadRenameDraft = () => threadRenameDraft;
+export function setThreadRenameDraft(draft: ThreadRenameDraft | null): void {
+  threadRenameDraft = draft;
+  publish();
+}
+export function useThreadRenameDraft() {
+  return useSyncExternalStore(subscribe, readThreadRenameDraft);
+}
+
+/** Drop transient selection and persisted ordering for a removed project. */
+export function forgetProject(projectId: string): void {
+  if (activeProjectId === projectId) activeProjectId = undefined;
+  const expanded = { ...current().projectExpandedById };
+  delete expanded[projectId];
+  persist({
+    projectOrder: current().projectOrder.filter((id) => id !== projectId),
+    projectExpandedById: expanded,
+  });
 }

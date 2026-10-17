@@ -1,6 +1,6 @@
 import { CommandId, type ProjectId } from "@playstead/contracts/baseSchemas";
 import type { OrchestrationProjectShell } from "@playstead/contracts/orchestrationProject";
-import { useNavigate } from "@tanstack/react-router";
+import { useNavigate, useRouter } from "@tanstack/react-router";
 import { useCallback } from "react";
 
 import {
@@ -12,7 +12,13 @@ import {
   requestPrimary,
   waitForPrimaryState,
 } from "../connection/runtime.ts";
-import { discardProjectDrafts } from "../drafts.ts";
+import { discardProjectDrafts, readDraft } from "../drafts.ts";
+import { isScratchProject } from "@playstead/client-runtime/state/projects";
+import {
+  readSidebarProjectScopeKey,
+  setSidebarProjectScopeKey,
+  forgetProject,
+} from "../uiState.ts";
 import { newId } from "../ids.ts";
 import { readLocalApi } from "../localApi.ts";
 import { failureToast, warningToast } from "../components/ui/toast.tsx";
@@ -46,13 +52,27 @@ async function removeProject(project: ProjectActionTarget): Promise<void> {
     (state) => !(state?.shell?.projects ?? []).some((candidate) => candidate.id === project.id),
   );
   discardProjectDrafts(project.id);
+  const scope = readSidebarProjectScopeKey();
+  if (
+    scope === project.id ||
+    (scope === "scratch" &&
+      isScratchProject(project, readPrimaryConnectionState()?.config?.scratchWorkspaceRoot))
+  )
+    setSidebarProjectScopeKey(null);
+  forgetProject(project.id);
 }
 
-/** The project's threads the sidebar shows now. */
-const threadCountOf = (projectId: ProjectId) =>
-  (readPrimaryConnectionState()?.shell?.threads ?? []).filter(
-    (thread) => thread.projectId === projectId,
-  ).length;
+/** Read both active and archived history immediately before asking. */
+const threadCountOf = async (projectId: ProjectId) => {
+  const archive = await requestPrimary((client) =>
+    client["orchestration.getArchivedShellSnapshot"]({}),
+  );
+  return new Set(
+    [...(readPrimaryConnectionState()?.shell?.threads ?? []), ...archive.threads]
+      .filter((thread) => thread.projectId === projectId)
+      .map((thread) => thread.id),
+  ).size;
+};
 
 /**
  * Asks with the latest thread count, as T3 Code reads it after the warning,
@@ -61,13 +81,16 @@ const threadCountOf = (projectId: ProjectId) =>
 async function confirmAndRemove(
   project: ProjectActionTarget,
   message: (threadCount: number) => string,
+  onRemoved: () => void,
 ): Promise<boolean> {
-  const confirmed = await readLocalApi().dialogs.confirm(message(threadCountOf(project.id)), {
-    variant: "destructive",
-  });
-  if (!confirmed) return false;
   try {
+    const confirmed = await readLocalApi().dialogs.confirm(
+      message(await threadCountOf(project.id)),
+      { variant: "destructive" },
+    );
+    if (!confirmed) return false;
     await removeProject(project);
+    onRemoved();
     return true;
   } catch (error) {
     failureToast(
@@ -84,36 +107,68 @@ async function confirmAndRemove(
  * shows the warning "Project is not empty" with **Delete anyway**, which then
  * asks to remove it and delete its threads; an empty one is only asked about.
  */
-export function removeProjectFromTree(project: ProjectActionTarget): void {
-  const ask = (threadCount: number) => projectRemovalConfirmation({ ...project, threadCount });
-  if (threadCountOf(project.id) === 0) {
-    void confirmAndRemove(project, ask);
-    return;
-  }
-  warningToast("Project is not empty", {
-    description: "Delete all threads in this project before removing it.",
-    action: {
-      label: "Delete anyway",
-      destructive: true,
-      onClick: () => void confirmAndRemove(project, ask),
+export function useRemoveProjectFromTree() {
+  const navigation = useProjectRemovalNavigation();
+  return useCallback(
+    (project: ProjectActionTarget) => {
+      const onRemoved = navigation(project);
+      const ask = (threadCount: number) => projectRemovalConfirmation({ ...project, threadCount });
+      void threadCountOf(project.id)
+        .then((count) => {
+          if (count === 0) {
+            void confirmAndRemove(project, ask, onRemoved);
+            return;
+          }
+          warningToast("Project is not empty", {
+            description: "Delete all threads in this project before removing it.",
+            action: {
+              label: "Delete anyway",
+              destructive: true,
+              onClick: () => void confirmAndRemove(project, ask, onRemoved),
+            },
+          });
+        })
+        .catch((error: unknown) => failureToast("Failed to read project threads", error));
     },
-  });
+    [navigation],
+  );
 }
 
-/**
- * **Project settings → Danger**'s **Remove project** (T3 Code's
- * `removeMembers` in `settings/ProjectSettingsPanel.tsx`): asks at once,
- * and the view goes to the start page once the project is removed.
- */
-export function useRemoveProjectFromSettings() {
+/** Only leave a removed project's route, and never overwrite a navigation made during deletion. */
+function useProjectRemovalNavigation() {
   const navigate = useNavigate();
+  const router = useRouter();
   return useCallback(
-    async (project: ProjectActionTarget) => {
-      const removed = await confirmAndRemove(project, (threadCount) =>
-        projectSettingsRemovalConfirmation({ ...project, threadCount }),
+    (project: ProjectActionTarget) => {
+      const location = router.state.location.href;
+      const belongs = router.state.matches.some(
+        ({ params }) =>
+          ("projectKey" in params && params.projectKey === project.id) ||
+          ("threadId" in params &&
+            readPrimaryConnectionState()?.shell?.threads.some(
+              (thread) => thread.id === params.threadId && thread.projectId === project.id,
+            )) ||
+          ("draftId" in params && readDraft(params.draftId)?.projectId === project.id),
       );
-      if (removed) await navigate({ to: "/", replace: true });
+      return () => {
+        if (belongs && router.state.location.href === location)
+          void navigate({ to: "/", replace: true });
+      };
     },
-    [navigate],
+    [navigate, router],
+  );
+}
+
+/** Settings uses the same cleanup and route-race guard as the project tree. */
+export function useRemoveProjectFromSettings() {
+  const navigation = useProjectRemovalNavigation();
+  return useCallback(
+    (project: ProjectActionTarget) =>
+      confirmAndRemove(
+        project,
+        (threadCount) => projectSettingsRemovalConfirmation({ ...project, threadCount }),
+        navigation(project),
+      ),
+    [navigation],
   );
 }

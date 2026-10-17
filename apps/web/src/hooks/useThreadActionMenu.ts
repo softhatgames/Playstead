@@ -20,6 +20,7 @@ import {
 import { usePrimaryConnectionState } from "../connection/runtime.ts";
 import { readLocalApi } from "../localApi.ts";
 import { useIsScratchProject } from "./useScratchProject.ts";
+import { snoozeAndAdvance } from "../snoozeAndAdvance.ts";
 import { settleAndAdvance } from "../settleAndAdvance.ts";
 import { failureToast, successToast } from "../components/ui/toast.tsx";
 import { readSidebarProjectScopeKey, setSidebarProjectScopeKey } from "../uiState.ts";
@@ -134,6 +135,7 @@ export function useThreadActionMenu(
             onSnooze(choice.snoozedUntil);
             return;
           }
+          if (snoozeAndAdvance(thread, choice.snoozedUntil)) return;
           await snoozeThread(thread, choice.snoozedUntil).catch((error: unknown) =>
             failureToast("Failed to snooze thread", error),
           );

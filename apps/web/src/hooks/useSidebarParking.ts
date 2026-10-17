@@ -7,6 +7,7 @@ import { threadAfterPark } from "../components/Sidebar.logic.ts";
 import { failureToast } from "../components/ui/toast.tsx";
 import { readPrimaryServerSettings } from "../connection/runtime.ts";
 import { createDraft } from "../drafts.ts";
+import { registerSnoozeAndAdvance } from "../snoozeAndAdvance.ts";
 import { registerSettleAndAdvance } from "../settleAndAdvance.ts";
 import { settleThread, snoozeThread } from "./useThreadActions.ts";
 
@@ -142,6 +143,17 @@ export function useSidebarParking(input: {
         if (thread !== undefined) void attemptSettle(thread);
       }),
     [attemptSettle],
+  );
+
+  useEffect(
+    () =>
+      registerSnoozeAndAdvance((target, until) => {
+        const thread = latest.current.threadsById.get(target.id);
+        if (thread === undefined) return false;
+        attemptSnooze(thread, until);
+        return true;
+      }),
+    [attemptSnooze],
   );
 
   return { attemptSettle, attemptSnooze, snoozeThreads, settleThreads };

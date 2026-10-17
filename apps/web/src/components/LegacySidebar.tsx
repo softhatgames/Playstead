@@ -30,7 +30,7 @@ import { readPrimaryServerSettings, usePrimaryConnectionState } from "../connect
 import { createDraft } from "../drafts.ts";
 import { useBulkThreadMenu } from "../hooks/useBulkThreadMenu.ts";
 import { useDismissOnOutsidePointer } from "../hooks/useDismissOnOutsidePointer.ts";
-import { type ProjectActionTarget, removeProjectFromTree } from "../hooks/useProjectActions.ts";
+import { type ProjectActionTarget, useRemoveProjectFromTree } from "../hooks/useProjectActions.ts";
 import { useSidebarThreadShortcuts } from "../hooks/useSidebarThreadShortcuts.ts";
 import { useThreadActionMenu } from "../hooks/useThreadActionMenu.ts";
 import { useThreadActions } from "../hooks/useThreadActions.ts";
@@ -105,6 +105,7 @@ export function LegacySidebar() {
   const activeProjectId = useActiveProjectId();
   const { threadId: activeThreadId } = useParams({ strict: false });
   const navigate = useNavigate();
+  const removeProjectFromTree = useRemoveProjectFromTree();
   const activeRow = useRef<HTMLButtonElement | null>(null);
   const openBulkMenu = useBulkThreadMenu({ variant: "tree", threads });
 
