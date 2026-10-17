@@ -1,3 +1,4 @@
+import { effectiveSnoozed } from "@playstead/client-runtime/state/threadSnoozed";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import { CommandId, type ThreadId } from "@playstead/contracts/baseSchemas";
@@ -13,6 +14,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 
 import { makeTestServerConfig } from "../testUtils/testServer.ts";
@@ -128,18 +130,113 @@ describe("Pin and settle a thread", () => {
           );
           yield* harness.worker.drain;
 
+          yield* harness.orchestrator.dispatch({
+            type: "thread.snooze",
+            commandId: CommandId.make("resume:snooze"),
+            threadId,
+            snoozedUntil: "2099-01-01T12:00:00.000Z",
+          });
+
           // The recording's second query resumes Claude's session: the settled
           // thread's session was stopped, and the message brought it back.
           const second = yield* runSecondTurn(harness);
           yield* replay.assertComplete;
           assert.strictEqual(second.status, "completed");
           const after = yield* projectionOf(harness, threadId);
+          assert.isNull(after.thread.snoozedUntil);
+          assert.isNull(after.thread.snoozedAt);
           assert.isNull(after.thread.settledOverride);
           assert.isNull(after.thread.settledAt);
           assert.isNotNull(after.thread.unsettledAt);
           assert.match(
             after.messages.findLast((message) => message.role === "assistant")?.text ?? "",
             new RegExp(RESTART_RESUME_SCENARIO.codeWord, "i"),
+          );
+        }).pipe(Effect.scoped),
+    );
+
+    it.effect(
+      "snooze persists through the shell, preserves its timestamp on retry, and wake and pin clear it",
+      () =>
+        Effect.gen(function* () {
+          const { harness } = yield* makeHarness("file_create.claude.ndjson", "empty-game");
+          const threadId = FILE_CREATE_IDS.threadId;
+          yield* runFileCreateScenario(harness);
+          const snooze = (id: string, snoozedUntil: string) =>
+            harness.orchestrator.dispatch({
+              type: "thread.snooze",
+              commandId: CommandId.make(id),
+              threadId,
+              snoozedUntil,
+            });
+          const until = "2099-01-01T12:00:00.000Z";
+          yield* snooze("snooze:1", until);
+          const sleeping = yield* threadOf(harness, threadId);
+          assert.strictEqual(sleeping.snoozedUntil, until);
+          const shell = Option.getOrThrow(yield* Stream.runHead(harness.shell));
+          assert.strictEqual(shell.kind, "snapshot");
+          if (shell.kind === "snapshot") {
+            assert.strictEqual(shell.snapshot.threads[0]?.snoozedUntil, until);
+            assert.strictEqual(shell.snapshot.threads[0]?.snoozedAt, sleeping.snoozedAt);
+          }
+          assert.isNotNull(sleeping.snoozedAt);
+          yield* TestClock.adjust("1 minute");
+          yield* snooze("snooze:2", until);
+          assert.strictEqual((yield* threadOf(harness, threadId)).snoozedAt, sleeping.snoozedAt);
+          yield* harness.orchestrator.dispatch({
+            type: "thread.unsnooze",
+            commandId: CommandId.make("wake"),
+            threadId,
+            reason: "user",
+          });
+          const awake = yield* threadOf(harness, threadId);
+          assert.isNull(awake.snoozedUntil);
+          assert.isNull(awake.snoozedAt);
+          assert.isNotNull(awake.lastSnoozeWakeAt);
+          yield* snooze("snooze:3", until);
+          yield* send(harness, threadId, "thread.pin", "pin:awake");
+          assert.isNull((yield* threadOf(harness, threadId)).snoozedUntil);
+          assert.match(yield* refusal(snooze("past", "1970-01-01T00:00:00.000Z")), /future/);
+        }).pipe(Effect.scoped),
+    );
+
+    it.effect(
+      "a recorded completion wakes a snoozed working run without clearing the stored snooze",
+      () =>
+        Effect.gen(function* () {
+          const { harness, replay } = yield* makeHarness("file_create.claude.ndjson", "empty-game");
+          const threadId = FILE_CREATE_IDS.threadId;
+          yield* runFileCreateScenario(
+            harness,
+            Effect.gen(function* () {
+              yield* harness.orchestrator.dispatch({
+                type: "thread.snooze",
+                commandId: CommandId.make("working:snooze"),
+                threadId,
+                snoozedUntil: "2099-01-01T12:00:00.000Z",
+              });
+              const thread = yield* threadOf(harness, threadId);
+              assert.isTrue(
+                effectiveSnoozed(
+                  { ...thread, latestRunCompletedAt: null, status: "starting" },
+                  "1970-01-01T00:00:00.000Z",
+                ),
+              );
+              yield* TestClock.adjust("1 minute");
+            }),
+          );
+          yield* replay.assertComplete;
+          const projection = yield* projectionOf(harness, threadId);
+          assert.strictEqual(projection.thread.snoozedUntil, "2099-01-01T12:00:00.000Z");
+          assert.isFalse(
+            effectiveSnoozed(
+              {
+                ...projection.thread,
+                latestRunCompletedAt: projection.runs[0]!.completedAt,
+                status: projection.runs[0]!.status,
+              },
+              "1970-01-01T00:02:00.000Z",
+            ),
           );
         }).pipe(Effect.scoped),
     );
@@ -167,6 +264,17 @@ describe("Pin and settle a thread", () => {
         const { harness } = yield* makeHarness("question_answer.claude.ndjson", "empty-game");
         const { sent } = yield* sendQuestionMessage(harness, CLAUDE_QUESTION_SCENARIO);
         yield* awaitPendingQuestion(harness, sent.sequence);
+        assert.match(
+          yield* refusal(
+            harness.orchestrator.dispatch({
+              type: "thread.snooze",
+              commandId: CommandId.make("question:snooze"),
+              threadId: QUESTION_IDS.threadId,
+              snoozedUntil: "2099-01-01T00:00:00.000Z",
+            }),
+          ),
+          /pending approval or user-input request/,
+        );
         assert.strictEqual(
           yield* refusal(send(harness, QUESTION_IDS.threadId, "thread.settle", "command:settle")),
           `Thread ${QUESTION_IDS.threadId} is waiting on an approval or question. Answer it before settling.`,
@@ -231,6 +339,21 @@ describe("Pin and settle a thread", () => {
           commandId: CommandId.make("command:archive"),
           threadId,
         });
+        for (const type of ["thread.snooze", "thread.unsnooze"] as const) {
+          assert.match(
+            yield* refusal(
+              harness.orchestrator.dispatch({
+                type,
+                commandId: CommandId.make(`archive:${type}`),
+                threadId,
+                ...(type === "thread.snooze"
+                  ? { snoozedUntil: "2099-01-01T00:00:00.000Z" }
+                  : { reason: "user" as const }),
+              } as OrchestrationV2Command),
+            ),
+            /archived/,
+          );
+        }
         const types = ["thread.pin", "thread.unpin", "thread.settle", "thread.unsettle"] as const;
         for (const type of types) {
           assert.strictEqual(
@@ -244,6 +367,21 @@ describe("Pin and settle a thread", () => {
           commandId: CommandId.make("command:delete"),
           threadId,
         });
+        for (const type of ["thread.snooze", "thread.unsnooze"] as const) {
+          assert.match(
+            yield* refusal(
+              harness.orchestrator.dispatch({
+                type,
+                commandId: CommandId.make(`deleted:${type}`),
+                threadId,
+                ...(type === "thread.snooze"
+                  ? { snoozedUntil: "2099-01-01T00:00:00.000Z" }
+                  : { reason: "user" as const }),
+              } as OrchestrationV2Command),
+            ),
+            /deleted/,
+          );
+        }
         for (const type of types) {
           assert.strictEqual(
             yield* refusal(send(harness, threadId, type, `command:deleted:${type}`)),

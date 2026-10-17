@@ -1,3 +1,4 @@
+import { streamShell } from "../ShellStream.ts";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import { writeFakeCli } from "@playstead/provider-testing/fakeCli";
@@ -130,7 +131,7 @@ export const makeOrchestrationHarness = Effect.fn("makeOrchestrationHarness")(fu
       Layer.provide(ServerSettings.layer),
       Layer.provideMerge(OrchestrationRuntime.layer),
       Layer.provide(WorkspacePaths.layer),
-      Layer.provide(SqlitePersistence.layerConfig),
+      Layer.provideMerge(SqlitePersistence.layerConfig),
       Layer.provide(ServerConfig.layer(config)),
     ),
   );
@@ -167,5 +168,10 @@ export const makeOrchestrationHarness = Effect.fn("makeOrchestrationHarness")(fu
       ),
     );
 
-  return { ...services, home: config.baseDir, awaitRunEnded };
+  return {
+    ...services,
+    home: config.baseDir,
+    awaitRunEnded,
+    shell: streamShell.pipe(Stream.provideContext(context), Stream.orDie),
+  };
 });
