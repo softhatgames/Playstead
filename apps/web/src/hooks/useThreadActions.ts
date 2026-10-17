@@ -1,4 +1,5 @@
 import { pinOrderKeyBetween } from "@playstead/client-runtime/state/threadOrder";
+import { canSnooze } from "@playstead/client-runtime/state/threadSettled";
 import { CommandId, type ThreadId } from "@playstead/contracts/baseSchemas";
 import type { OrchestrationV2ThreadShell } from "@playstead/contracts/orchestrationV2";
 import { useNavigate, useParams } from "@tanstack/react-router";
@@ -27,9 +28,19 @@ export type ThreadActionTarget = Pick<
   "id" | "projectId" | "title" | "status" | "titleRegeneration"
 >;
 
-/** A thread the sidebar or the thread view shows, which can be pinned and settled. */
+/** A thread the sidebar or the thread view shows, which can be pinned, settled and snoozed. */
 export type ThreadLifecycleTarget = ThreadActionTarget &
-  Pick<OrchestrationV2ThreadShell, "pinnedAt" | "pinOrderKey" | "settledOverride">;
+  Pick<
+    OrchestrationV2ThreadShell,
+    | "pinnedAt"
+    | "pinOrderKey"
+    | "settledOverride"
+    | "autoSettleDisabledAt"
+    | "snoozedUntil"
+    | "snoozedAt"
+    | "latestRunCompletedAt"
+    | "hasPendingUserInput"
+  >;
 
 const commandId = () => CommandId.make(`command:${newId()}`);
 
@@ -86,6 +97,20 @@ export const visitThread = (threadId: ThreadId, visitedAt: string) =>
 /** Shows the thread as unread again, until it is next viewed (T3 Code's `markThreadUnread`). */
 export const markThreadUnread = (threadId: ThreadId) =>
   dispatchThreadCommand("thread.mark-unread", threadId);
+
+/**
+ * Turns automatic settlement on or off for the thread (T3 Code's
+ * `setThreadAutoSettle`, `thread.auto-settle.set`).
+ */
+export const setThreadAutoSettle = (threadId: ThreadId, enabled: boolean) =>
+  requestPrimary((client) =>
+    client["orchestration.dispatchCommand"]({
+      type: "thread.auto-settle.set",
+      commandId: commandId(),
+      threadId,
+      enabled,
+    }),
+  );
 
 /**
  * A key above every pinned thread's, hidden ones included (T3 Code's
@@ -178,19 +203,75 @@ export const unsettleThread = (threadId: ThreadId) => {
   );
 };
 
+/** Wakes a snoozed thread (T3 Code's `unsnoozeThread`, reason "user"); it takes over the snooze's Undo. */
+export const unsnoozeThread = (threadId: ThreadId) => {
+  ThreadUndo.invalidate("snooze", threadId);
+  return requestPrimary((client) =>
+    client["orchestration.dispatchCommand"]({
+      type: "thread.unsnooze",
+      commandId: commandId(),
+      threadId,
+      reason: "user",
+    }),
+  );
+};
+
+const sendSnooze = (threadId: ThreadId, snoozedUntil: string) =>
+  requestPrimary((client) =>
+    client["orchestration.dispatchCommand"]({
+      type: "thread.snooze",
+      commandId: commandId(),
+      threadId,
+      snoozedUntil,
+    }),
+  );
+
 /**
- * Settles the thread, with **Undo** that un-settles it and pins it back if
- * it was pinned (T3 Code's `settleThread`; the snooze it would also restore
- * comes with #38). The server refuses a thread that is working or waiting
+ * Snoozes the thread until `snoozedUntil`, with **Undo** that wakes it (T3
+ * Code's `snoozeThread`). A thread waiting on the person, or about to start
+ * its turn, is refused here as T3 Code refuses it; the server refuses a time
+ * not ahead. The promise rejects with the reason.
+ */
+export async function snoozeThread(
+  thread: Pick<OrchestrationV2ThreadShell, "id" | "status" | "hasPendingUserInput">,
+  snoozedUntil: string,
+): Promise<void> {
+  if (!canSnooze(thread)) {
+    throw new Error(
+      "This thread is waiting on you. Respond to the pending request before snoozing it.",
+    );
+  }
+  const claim = ThreadUndo.begin("snooze", thread.id);
+  try {
+    await sendSnooze(thread.id, snoozedUntil);
+  } catch (error) {
+    claim.finish();
+    throw error;
+  }
+  showThreadUndoNotice({
+    action: "Snoozed",
+    claim,
+    undo: () => unsnoozeThread(thread.id),
+    failureTitle: "Failed to wake thread",
+  });
+}
+
+/**
+ * Settles the thread, with **Undo** that un-settles it, pins it back if it
+ * was pinned and snoozes it again if it was snoozed (T3 Code's
+ * `settleThread`). The server refuses a thread that is working or waiting
  * on the person; the promise rejects with its reason.
  */
 export async function settleThread(
-  thread: Pick<OrchestrationV2ThreadShell, "id" | "pinnedAt" | "pinOrderKey">,
+  thread: Pick<OrchestrationV2ThreadShell, "id" | "pinnedAt" | "pinOrderKey" | "snoozedUntil">,
 ): Promise<void> {
   const wasPinned = thread.pinnedAt !== null;
   const pinOrderKey = thread.pinOrderKey;
-  // An older unpin's Undo would re-pin, which the server takes as un-settling.
+  const snoozedUntil = thread.snoozedUntil;
+  // An older unpin's or snooze's Undo would re-pin or wake, which the server
+  // takes as bringing the thread back; settling supersedes them.
   ThreadUndo.invalidate("pin", thread.id);
+  ThreadUndo.invalidate("snooze", thread.id);
   const claim = ThreadUndo.begin("settle", thread.id);
   try {
     await dispatchThreadCommand("thread.settle", thread.id);
@@ -204,6 +285,7 @@ export async function settleThread(
     undo: async () => {
       await unsettleThread(thread.id);
       if (wasPinned) await pinThread(thread.id, pinOrderKey);
+      if (snoozedUntil !== null) await sendSnooze(thread.id, snoozedUntil);
     },
     failureTitle: "Failed to undo settle",
   });

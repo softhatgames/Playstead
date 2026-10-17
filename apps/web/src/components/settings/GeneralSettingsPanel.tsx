@@ -1,7 +1,12 @@
 import { type ClientSettings, DEFAULT_CLIENT_SETTINGS } from "@playstead/contracts/ipc";
 import type { ModelSelection } from "@playstead/contracts/orchestrationV2";
-import { DEFAULT_SERVER_SETTINGS } from "@playstead/contracts/settings";
-import type { ReactNode } from "react";
+import {
+  DEFAULT_SERVER_SETTINGS,
+  DEFAULT_SIDEBAR_AUTO_SETTLE_AFTER_DAYS,
+  MAX_SIDEBAR_AUTO_SETTLE_AFTER_DAYS,
+  MIN_SIDEBAR_AUTO_SETTLE_AFTER_DAYS,
+} from "@playstead/contracts/settings";
+import { type ReactNode, useEffect, useState } from "react";
 
 import { updateClientSettings, useClientSettings } from "../../clientSettings.ts";
 import { requestPrimary, usePrimaryConnectionState } from "../../connection/runtime.ts";
@@ -9,16 +14,17 @@ import { failureToast } from "../../toast.ts";
 import { deriveModelPickerEntries } from "../chat/composer.logic.ts";
 import { ProviderModelPicker } from "../chat/ProviderModelPicker.tsx";
 import { ChevronRightIcon } from "../icons.tsx";
+import { parseAutoSettleDays } from "./autoSettleSettings.logic.ts";
 import { resolveTextGenerationSelection } from "./textGenerationSettings.logic.ts";
 
 /**
  * **Settings → General**, with only the rows Playstead has so far (T3 Code's
  * `GeneralSettingsPanel` in `apps/web/src/components/settings/SettingsPanels.tsx`
- * at 2577baf): **Organization**'s Working section (beta), the
- * **Confirmations** section's archive and delete rows, **Text generation**
- * (the provider and model that write thread titles), and **Sidebar
- * (legacy)** under the folded **Legacy features**. Automatic settlement
- * joins it with #39; the rest of General waits for slice 5.
+ * at 2577baf): **Organization**'s Working section (beta) and automatic
+ * settlement, the **Confirmations** section's archive and delete rows,
+ * **Text generation** (the provider and model that write thread titles),
+ * and **Sidebar (legacy)** under the folded **Legacy features**. The rest of
+ * General waits for slice 5.
  */
 export function GeneralSettingsPanel() {
   const settings = useClientSettings();
@@ -49,6 +55,7 @@ export function GeneralSettingsPanel() {
             }
             onChange={(sidebarWorkingShelfEnabled) => save({ sidebarWorkingShelfEnabled })}
           />
+          <AutoSettleRows />
         </div>
       </section>
       <section aria-labelledby="settings-confirmations" className="flex flex-col gap-2">
@@ -99,6 +106,89 @@ export function GeneralSettingsPanel() {
         </div>
       </details>
     </div>
+  );
+}
+
+/**
+ * Automatic settlement's rows (T3 Code's **Auto-settle inactive threads** and
+ * **Days of inactivity before auto-settle** in `SettingsPanels.tsx`): the
+ * switch turns `sidebarAutoSettleAfterDays` off (null) or back to 3 days,
+ * and while it is on the days field sets it. A server setting, saved through
+ * `server.updateSettings`. T3 Code's merge and pull-request rows have no
+ * place in Playstead.
+ */
+function AutoSettleRows() {
+  const config = usePrimaryConnectionState()?.config;
+  const afterDays = config?.settings.sidebarAutoSettleAfterDays;
+  const save = (sidebarAutoSettleAfterDays: number | null) =>
+    requestPrimary((client) =>
+      client["server.updateSettings"]({ patch: { sidebarAutoSettleAfterDays } }),
+    ).catch((error: unknown) => failureToast("Failed to save settings", error));
+  if (afterDays === undefined) return null;
+  return (
+    <>
+      <div className="flex items-center gap-4 px-4 py-3">
+        <div className="min-w-0 flex-1">
+          <div className="text-sm font-medium">Auto-settle inactive threads</div>
+          <div className="text-xs text-neutral-500 dark:text-neutral-400">
+            Sidebar threads with no activity for this long settle automatically.
+          </div>
+        </div>
+        {afterDays === DEFAULT_SERVER_SETTINGS.sidebarAutoSettleAfterDays ? null : (
+          <button
+            type="button"
+            aria-label="Reset auto-settle to default"
+            onClick={() => void save(DEFAULT_SERVER_SETTINGS.sidebarAutoSettleAfterDays)}
+            className="text-xs text-neutral-500 hover:underline dark:text-neutral-400"
+          >
+            Reset
+          </button>
+        )}
+        <Switch
+          ariaLabel="Auto-settle inactive threads"
+          checked={afterDays !== null}
+          onChange={(checked) => void save(checked ? DEFAULT_SIDEBAR_AUTO_SETTLE_AFTER_DAYS : null)}
+        />
+      </div>
+      {afterDays === null ? null : (
+        <div className="flex items-center gap-4 px-4 py-3">
+          <div className="min-w-0 flex-1">
+            <div className="text-sm font-medium">Days of inactivity before auto-settle</div>
+            <div className="text-xs text-neutral-500 dark:text-neutral-400">
+              Any new activity un-settles a thread automatically.
+            </div>
+          </div>
+          <AutoSettleDaysInput value={afterDays} onCommit={(days) => void save(days)} />
+        </div>
+      )}
+    </>
+  );
+}
+
+/** Commits each valid entry, and shows the saved days again on blur (T3 Code's `AutoSettleDaysInput`). */
+function AutoSettleDaysInput(props: {
+  readonly value: number;
+  readonly onCommit: (days: number) => void;
+}) {
+  const [draft, setDraft] = useState(String(props.value));
+  useEffect(() => {
+    setDraft(String(props.value));
+  }, [props.value]);
+  return (
+    <input
+      type="number"
+      min={MIN_SIDEBAR_AUTO_SETTLE_AFTER_DAYS}
+      max={MAX_SIDEBAR_AUTO_SETTLE_AFTER_DAYS}
+      aria-label="Days of inactivity before auto-settle"
+      value={draft}
+      onChange={(event) => {
+        setDraft(event.target.value);
+        const days = parseAutoSettleDays(event.target.value);
+        if (days !== null && days !== props.value) props.onCommit(days);
+      }}
+      onBlur={() => setDraft(String(props.value))}
+      className="w-24 rounded-md border border-neutral-300 bg-transparent px-2 py-1 text-sm dark:border-neutral-700"
+    />
   );
 }
 
@@ -203,22 +293,32 @@ function SettingsSwitchRow(props: {
           Reset
         </button>
       )}
-      <button
-        type="button"
-        role="switch"
-        aria-checked={props.checked}
-        aria-label={props.ariaLabel}
-        onClick={() => props.onChange(!props.checked)}
-        className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors ${
-          props.checked ? "bg-sky-600" : "bg-neutral-300 dark:bg-neutral-700"
-        }`}
-      >
-        <span
-          className={`inline-block size-4 rounded-full bg-white shadow transition-transform ${
-            props.checked ? "translate-x-4.5" : "translate-x-0.5"
-          }`}
-        />
-      </button>
+      <Switch ariaLabel={props.ariaLabel} checked={props.checked} onChange={props.onChange} />
     </div>
+  );
+}
+
+function Switch(props: {
+  readonly ariaLabel: string;
+  readonly checked: boolean;
+  readonly onChange: (checked: boolean) => void;
+}) {
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={props.checked}
+      aria-label={props.ariaLabel}
+      onClick={() => props.onChange(!props.checked)}
+      className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors ${
+        props.checked ? "bg-sky-600" : "bg-neutral-300 dark:bg-neutral-700"
+      }`}
+    >
+      <span
+        className={`inline-block size-4 rounded-full bg-white shadow transition-transform ${
+          props.checked ? "translate-x-4.5" : "translate-x-0.5"
+        }`}
+      />
+    </button>
   );
 }

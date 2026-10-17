@@ -4,35 +4,20 @@ import { CommandId, ProjectId } from "@playstead/contracts/baseSchemas";
 import { ProjectConflictError } from "@playstead/contracts/project";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
-import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as HostProcess from "@playstead/shared/hostProcess";
 
-import * as ServerConfig from "../config.ts";
-import * as OrchestrationRuntime from "../orchestration-v2/runtimeLayer.ts";
-import * as SqlitePersistence from "../persistence/Sqlite.ts";
-import { makeTestServerConfig } from "../testUtils/testServer.ts";
-import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
-import * as ProjectService from "./ProjectService.ts";
+import { makeOrchestrationHarness } from "../orchestration-v2/testkit/OrchestratorHarness.ts";
 
 /**
- * The project service over the real event sink, project projection and
- * SQLite, in a temporary Playstead home whose folders stand in for the
+ * The project service over the real event sink, orchestrator, projections
+ * and SQLite, in a temporary Playstead home whose folders stand in for the
  * person's.
  */
-const startProjects = Effect.gen(function* () {
-  const config = yield* makeTestServerConfig();
-  const context = yield* Layer.build(
-    ProjectService.layer.pipe(
-      Layer.provide(OrchestrationRuntime.layer),
-      Layer.provide(WorkspacePaths.layer),
-      Layer.provide(SqlitePersistence.layerConfig),
-      Layer.provide(ServerConfig.layer(config)),
-    ),
-  );
-  const projects = yield* ProjectService.ProjectService.pipe(Effect.provideContext(context));
-  return { projects, home: config.baseDir };
-});
+const startProjects = Effect.map(makeOrchestrationHarness({}), (harness) => ({
+  projects: harness.projects,
+  home: harness.home,
+}));
 
 const createInput = (
   name: string,

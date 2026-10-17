@@ -124,9 +124,13 @@ const reject = (command: OrchestrationV2ServerCommand, reason: string) =>
  *   the answers. There are no approval decisions.
  * - `thread.archive`, `thread.unarchive`, `thread.model-selection.set`,
  *   `thread.metadata.update`, `thread.mark-unread`, `thread.pin`,
- *   `thread.unpin`, `thread.settle`, `thread.unsettle` and the internal
+ *   `thread.unpin`, `thread.settle`, `thread.unsettle`, `thread.snooze`,
+ *   `thread.unsnooze`, `thread.auto-settle.set` and the internal
  *   `thread.title.regeneration.complete` change the thread itself, through
  *   `dispatchThreadMutation`.
+ * - The internal `thread.auto-settle` settles the thread for the settlement
+ *   sweep, unless it changed since the sweep read it (T3 Code's
+ *   `thread.auto-settle` case in `dispatchCommand`).
  * - `thread.visit` moves the read marker forward (`dispatchThreadVisit`).
  * - `thread.delete` deletes the thread (`planThreadDeletion`).
  *
@@ -173,6 +177,10 @@ export function decideThreadCommand(input: {
       pinnedAt: null,
       pinOrderKey: null,
       activeOrderKey: null,
+      snoozedUntil: null,
+      snoozedAt: null,
+      lastSnoozeWakeAt: null,
+      autoSettleDisabledAt: null,
       titleRegeneration: null,
     };
     return Result.succeed({
@@ -199,8 +207,33 @@ export function decideThreadCommand(input: {
     case "thread.active.reorder":
     case "thread.settle":
     case "thread.unsettle":
+    case "thread.snooze":
+    case "thread.unsnooze":
+    case "thread.auto-settle.set":
     case "thread.title.regeneration.complete":
       return dispatchThreadMutation(command, projection, now);
+    case "thread.auto-settle": {
+      // The sweep decided on what it read; any change since, or any override
+      // the person set (an un-settle's "active" too), wins over it.
+      const { thread } = projection;
+      if (
+        thread.settledOverride !== null ||
+        DateTime.toEpochMillis(DateTime.makeUnsafe(thread.updatedAt)) >
+          DateTime.toEpochMillis(DateTime.makeUnsafe(command.snapshotAt))
+      ) {
+        return reject(command, `Thread ${thread.id} changed before automatic settlement.`);
+      }
+      return dispatchThreadMutation(
+        {
+          type: "thread.settle",
+          commandId: command.commandId,
+          threadId: command.threadId,
+          ...(command.settledAt === undefined ? {} : { settledAt: command.settledAt }),
+        },
+        projection,
+        now,
+      );
+    }
     case "thread.visit":
       return Result.succeed(dispatchThreadVisit(command, projection, now));
     case "thread.delete":
@@ -288,6 +321,9 @@ type ThreadMutationCommand = Extract<
       | "thread.active.reorder"
       | "thread.settle"
       | "thread.unsettle"
+      | "thread.snooze"
+      | "thread.unsnooze"
+      | "thread.auto-settle.set"
       | "thread.title.regeneration.complete";
   }
 >;
@@ -308,8 +344,7 @@ const threadTitleGenerationEffect = (
 });
 
 /**
- * The commands an archived thread refuses (T3 Code's list). Snooze, wake
- * and the per-thread auto-settle switch join it as they arrive.
+ * The commands an archived thread refuses (T3 Code's list).
  */
 const REFUSED_WHILE_ARCHIVED: ReadonlySet<ThreadMutationCommand["type"]> = new Set([
   "thread.pin",
@@ -318,7 +353,36 @@ const REFUSED_WHILE_ARCHIVED: ReadonlySet<ThreadMutationCommand["type"]> = new S
   "thread.active.reorder",
   "thread.settle",
   "thread.unsettle",
+  "thread.snooze",
+  "thread.unsnooze",
+  "thread.auto-settle.set",
 ]);
+
+/**
+ * Why the thread cannot be snoozed until `snoozedUntil`, or null (T3 Code's
+ * snooze guard): the time must be ahead, and nothing may wait on the person,
+ * neither a pending request nor a message in the queue. T3 Code lets a
+ * queued automatic message through (a notification or a delegated
+ * completion); Playstead sends none, so every queued run blocks once slice 1
+ * brings the queue.
+ */
+function snoozeBlocker(
+  projection: OrchestrationV2ThreadProjection,
+  snoozedUntil: string,
+  now: string,
+): string | null {
+  const wakeAt = Date.parse(snoozedUntil);
+  if (Number.isNaN(wakeAt) || wakeAt <= Date.parse(now)) {
+    return `snooze wake time ${snoozedUntil} is not in the future.`;
+  }
+  if (projection.runtimeRequests.some((request) => request.status === "pending")) {
+    return "has a pending approval or user-input request and cannot be snoozed.";
+  }
+  if (projection.runs.some((run) => QUEUED_RUN_STATUSES.has(run.status))) {
+    return "has a queued run and cannot be snoozed.";
+  }
+  return null;
+}
 
 /**
  * Why the thread cannot be settled now, or null (T3 Code's settle guard):
@@ -367,14 +431,19 @@ function settleBlocker(projection: OrchestrationV2ThreadProjection): string | nu
  *   run completed, so the thread shows as unread; it is refused until a run
  *   has completed. Like a visit, it is not activity: `updatedAt` stays.
  * - `thread.pin` pins the thread, keeping the order key of its first pin;
- *   a settled thread comes back to active work. Snooze, when it arrives, is
- *   cleared by a pin too.
+ *   a settled thread comes back to active work, and a snoozed one wakes.
  * - `thread.unpin` drops the pin and its order key.
  * - `thread.settle` is refused while `settleBlocker` says so. It drops the
  *   pin and both order keys, and detaches every live provider session
  *   ("Thread settled."); settling a settled thread keeps its time.
  * - `thread.unsettle` brings the thread back to active work and holds it
  *   there, so automatic settlement leaves it alone until a message.
+ * - `thread.snooze` is refused while `snoozeBlocker` says so. Snoozing again
+ *   until the same time keeps when it was first snoozed.
+ * - `thread.unsnooze` wakes the thread and stamps `lastSnoozeWakeAt`; an
+ *   awake thread stays as it is.
+ * - `thread.auto-settle.set` turns automatic settlement off for the thread
+ *   (keeping the first time it was turned off) or back on.
  *
  * An archived thread refuses the commands in `REFUSED_WHILE_ARCHIVED`.
  */
@@ -427,6 +496,10 @@ function dispatchThreadMutation(
     const blocker = settleBlocker(projection);
     if (blocker !== null) return reject(command, `Thread ${thread.id} ${blocker}`);
   }
+  if (command.type === "thread.snooze") {
+    const blocker = snoozeBlocker(projection, command.snoozedUntil, now);
+    if (blocker !== null) return reject(command, `Thread ${thread.id} ${blocker}`);
+  }
 
   const updated: OrchestrationV2AppThread = (() => {
     switch (command.type) {
@@ -460,16 +533,20 @@ function dispatchThreadMutation(
         return { ...thread, lastVisitedAt: markUnreadVisitedAt };
       case "thread.pin": {
         const alreadyPinned = thread.pinnedAt !== null;
-        const promotes = thread.settledOverride === "settled";
+        const settled = thread.settledOverride === "settled";
+        const snoozed = thread.snoozedUntil !== null;
         return {
           ...thread,
           pinnedAt: alreadyPinned ? thread.pinnedAt : now,
           ...(alreadyPinned || command.orderKey === undefined
             ? {}
             : { pinOrderKey: command.orderKey }),
-          settledOverride: promotes ? "active" : thread.settledOverride,
-          settledAt: promotes ? null : thread.settledAt,
-          updatedAt: alreadyPinned && !promotes ? thread.updatedAt : now,
+          settledOverride: settled ? "active" : thread.settledOverride,
+          settledAt: settled ? null : thread.settledAt,
+          snoozedUntil: null,
+          snoozedAt: null,
+          lastSnoozeWakeAt: snoozed ? now : thread.lastSnoozeWakeAt,
+          updatedAt: alreadyPinned && !settled && !snoozed ? thread.updatedAt : now,
         };
       }
       case "thread.unpin":
@@ -514,6 +591,36 @@ function dispatchThreadMutation(
           updatedAt: alreadyActive ? thread.updatedAt : now,
         };
       }
+      case "thread.snooze": {
+        const sameWakeTime =
+          thread.snoozedUntil !== null &&
+          Date.parse(thread.snoozedUntil) === Date.parse(command.snoozedUntil);
+        const keptSnoozedAt = sameWakeTime ? thread.snoozedAt : null;
+        return {
+          ...thread,
+          snoozedUntil: command.snoozedUntil,
+          snoozedAt: keptSnoozedAt ?? now,
+          updatedAt: keptSnoozedAt === null ? now : thread.updatedAt,
+        };
+      }
+      case "thread.unsnooze": {
+        const alreadyAwake = thread.snoozedUntil === null;
+        return {
+          ...thread,
+          snoozedUntil: null,
+          snoozedAt: null,
+          lastSnoozeWakeAt: alreadyAwake ? thread.lastSnoozeWakeAt : now,
+          updatedAt: alreadyAwake ? thread.updatedAt : now,
+        };
+      }
+      case "thread.auto-settle.set": {
+        const unchanged = command.enabled === (thread.autoSettleDisabledAt === null);
+        return {
+          ...thread,
+          autoSettleDisabledAt: command.enabled ? null : (thread.autoSettleDisabledAt ?? now),
+          updatedAt: unchanged ? thread.updatedAt : now,
+        };
+      }
     }
   })();
   const eventType = (() => {
@@ -541,6 +648,12 @@ function dispatchThreadMutation(
         return "thread.settled" as const;
       case "thread.unsettle":
         return "thread.unsettled" as const;
+      case "thread.snooze":
+        return "thread.snoozed" as const;
+      case "thread.unsnooze":
+        return "thread.unsnoozed" as const;
+      case "thread.auto-settle.set":
+        return "thread.auto-settle-set" as const;
     }
   })();
   const events: Array<NewDomainEvent> = [
@@ -807,7 +920,8 @@ function dispatchMessage(
 
   // Sending a message brings the thread back to active work and clears the
   // person's override (T3 Code's `dispatchMessage`), so automatic settlement
-  // follows its usual rules again. Snooze's wake joins here when it arrives.
+  // follows its usual rules again; it wakes a snoozed thread too, without
+  // stamping `lastSnoozeWakeAt`, as T3 Code's does.
   let thread = projection.thread;
   if (thread.settledOverride !== null) {
     thread = {
@@ -818,6 +932,10 @@ function dispatchMessage(
       updatedAt: now,
     };
     events.push({ type: "thread.unsettled", threadId, occurredAt: now, payload: thread });
+  }
+  if (thread.snoozedUntil !== null) {
+    thread = { ...thread, snoozedUntil: null, snoozedAt: null, updatedAt: now };
+    events.push({ type: "thread.unsnoozed", threadId, occurredAt: now, payload: thread });
   }
 
   // The first message titles the thread with its seed at once, and asks a

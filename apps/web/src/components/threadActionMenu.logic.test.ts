@@ -17,6 +17,17 @@ const idle = {
   projectFilter: null,
   isPinned: false,
   isSettled: false,
+  isSnoozed: false,
+  canSnoozeNow: true,
+  snoozePresets: [
+    {
+      id: "hour",
+      label: "In 1 hour",
+      whenLabel: "3:00 PM",
+      snoozedUntil: "2026-10-17T15:00:00.000Z",
+    },
+  ],
+  autoSettleEnabled: true,
 } as const;
 
 /** Each item as `[id, label, disabled, destructive, separatorBefore, children]`. */
@@ -31,13 +42,35 @@ const outline = (items: ReturnType<typeof buildThreadActionMenuItems>) =>
   ]);
 
 describe("buildThreadActionMenuItems", () => {
-  it("offers T3 Code's items in its order: pin, settle, rename, regenerate title, mark unread, copy, archive, then delete", () => {
+  it("offers T3 Code's items in its order: pin, settle, snooze, rename, regenerate title, mark unread, auto-settle, copy, project settings, archive, then delete", () => {
     assert.deepStrictEqual(outline(buildThreadActionMenuItems(idle)), [
       ["pin", "Pin thread", false, false, false, []],
       ["settle", "Settle thread", false, false, false, []],
+      [
+        "snooze",
+        "Snooze",
+        false,
+        false,
+        false,
+        [
+          ["snooze:hour", "In 1 hour (3:00 PM)"],
+          ["snooze:custom", "Custom…"],
+        ],
+      ],
       ["rename", "Rename thread", false, false, true, []],
       ["regenerate-title", "Regenerate title", false, false, false, []],
       ["mark-unread", "Mark unread", false, false, false, []],
+      [
+        "auto-settle",
+        "Auto-settle behavior",
+        false,
+        false,
+        false,
+        [
+          ["auto-settle:enabled", "Enabled"],
+          ["auto-settle:disabled", "Disabled"],
+        ],
+      ],
       [
         "copy",
         "Copy",
@@ -49,6 +82,7 @@ describe("buildThreadActionMenuItems", () => {
           ["copy-thread-id", "Thread ID"],
         ],
       ],
+      ["project-settings", "Project settings", false, false, false, []],
       ["archive", "Archive thread", false, false, true, []],
       ["delete", "Delete", false, true, false, []],
     ]);
@@ -61,7 +95,7 @@ describe("buildThreadActionMenuItems", () => {
           ...idle,
           projectFilter: { label: "space-game", isActive },
         }),
-      ).slice(4, 6);
+      ).slice(5, 7);
     assert.deepStrictEqual(filterItem(false), [
       ["mark-unread", "Mark unread", false, false, false, []],
       ["filter-by-project", "Filter by space-game", false, false, false, []],
@@ -73,6 +107,39 @@ describe("buildThreadActionMenuItems", () => {
       false,
       false,
       [],
+    ]);
+  });
+
+  it("offers Wake thread for a snoozed thread, and disables Snooze while it cannot be snoozed", () => {
+    assert.deepStrictEqual(outline(buildThreadActionMenuItems({ ...idle, isSnoozed: true }))[2], [
+      "unsnooze",
+      "Wake thread",
+      false,
+      false,
+      false,
+      [],
+    ]);
+    const blocked = outline(buildThreadActionMenuItems({ ...idle, canSnoozeNow: false }))[2]!;
+    assert.deepStrictEqual(blocked.slice(0, 3), ["snooze", "Snooze", true]);
+  });
+
+  it("checks Enabled or Disabled under Auto-settle behavior, after the project filter", () => {
+    const autoSettle = (autoSettleEnabled: boolean) => {
+      const items = buildThreadActionMenuItems({
+        ...idle,
+        autoSettleEnabled,
+        projectFilter: { label: "space-game", isActive: false },
+      });
+      assert.strictEqual(items[6]?.id, "filter-by-project");
+      return (items[7]?.children ?? []).map((child) => [child.id, child.checked === true]);
+    };
+    assert.deepStrictEqual(autoSettle(true), [
+      ["auto-settle:enabled", true],
+      ["auto-settle:disabled", false],
+    ]);
+    assert.deepStrictEqual(autoSettle(false), [
+      ["auto-settle:enabled", false],
+      ["auto-settle:disabled", true],
     ]);
   });
 
@@ -90,7 +157,7 @@ describe("buildThreadActionMenuItems", () => {
 
   it("shows Regenerating… and disables it while the thread's title is being generated", () => {
     const items = outline(buildThreadActionMenuItems({ ...idle, isRegeneratingTitle: true }));
-    assert.deepStrictEqual(items[3], ["regenerate-title", "Regenerating…", true, false, false, []]);
+    assert.deepStrictEqual(items[4], ["regenerate-title", "Regenerating…", true, false, false, []]);
     assert.lengthOf(
       items.filter(([, , disabled]) => disabled),
       1,
@@ -107,7 +174,7 @@ describe("buildThreadActionMenuItems", () => {
 });
 
 describe("legacyThreadMenuItems", () => {
-  it("offers the project tree's flat menu: rename, mark unread, copy path, copy thread ID, then delete", () => {
+  it("offers the project tree's flat menu: rename, mark unread, copy path, copy thread ID, project settings, then delete", () => {
     assert.deepStrictEqual(
       legacyThreadMenuItems.map((item) => [item.id, item.label, item.destructive === true]),
       [
@@ -115,6 +182,7 @@ describe("legacyThreadMenuItems", () => {
         ["mark-unread", "Mark unread", false],
         ["copy-path", "Copy Path", false],
         ["copy-thread-id", "Copy Thread ID", false],
+        ["project-settings", "Project settings", false],
         ["delete", "Delete", true],
       ],
     );

@@ -15,7 +15,21 @@ export interface ProjectCreateCommand {
   readonly workspaceRoot: string;
 }
 
-export type ProjectCommand = ProjectCreateCommand;
+export interface ProjectMetaUpdateCommand {
+  readonly type: "project.meta.update";
+  readonly commandId: CommandId;
+  readonly projectId: ProjectId;
+  readonly title?: string;
+}
+
+/** The project's threads are deleted by `ProjectService` before this commits. */
+export interface ProjectDeleteCommand {
+  readonly type: "project.delete";
+  readonly commandId: CommandId;
+  readonly projectId: ProjectId;
+}
+
+export type ProjectCommand = ProjectCreateCommand | ProjectMetaUpdateCommand | ProjectDeleteCommand;
 
 class ProjectCommandInvariantError extends Schema.TaggedError<ProjectCommandInvariantError>()(
   "ProjectCommandInvariantError",
@@ -23,6 +37,15 @@ class ProjectCommandInvariantError extends Schema.TaggedError<ProjectCommandInva
 ) {
   override get message(): string {
     return `Project command ${this.commandType} broke an invariant: ${this.detail}`;
+  }
+}
+
+class ProjectCommandMissingProjectError extends Schema.TaggedError<ProjectCommandMissingProjectError>()(
+  "ProjectCommandMissingProjectError",
+  { commandType: Schema.String, projectId: ProjectId },
+) {
+  override get message(): string {
+    return `Project ${this.projectId} does not exist for ${this.commandType}.`;
   }
 }
 
@@ -38,6 +61,7 @@ class ProjectWorkspaceConflictError extends Schema.TaggedError<ProjectWorkspaceC
 /** Why a project command was rejected, kept in its receipt as JSON. */
 export const ProjectCommandRejection = Schema.Union([
   ProjectCommandInvariantError,
+  ProjectCommandMissingProjectError,
   ProjectWorkspaceConflictError,
 ]);
 export type ProjectCommandRejection = typeof ProjectCommandRejection.Type;
@@ -50,15 +74,17 @@ export const decodeProjectCommandRejection = Schema.decodeUnknownOption(
 
 /** What the command is decided against, read under the project's and folder's locks. */
 export interface ProjectCommandState {
+  /** The project's row, removed or not. */
   readonly project: ProjectRow | undefined;
+  /** The project not removed that has the command's folder. */
   readonly workspaceOwner: ProjectRow | undefined;
 }
 
 /**
  * Decides a project command's event, without I/O (T3 Code's
  * `planProjectCommand`, `apps/server/src/orchestration-v2/ProjectCommands.ts`
- * at 2577baf): a project id is created once, and a folder belongs to one
- * project.
+ * at 2577baf): a project id is created once, a folder belongs to one
+ * project not removed, and only a project not removed is renamed or removed.
  */
 export function planProjectCommand(input: {
   readonly command: ProjectCommand;
@@ -68,6 +94,23 @@ export function planProjectCommand(input: {
 }): Result.Result<UnsequencedProjectEvent, ProjectCommandRejection> {
   const { command, state } = input;
   const occurredAt = DateTime.formatIso(input.now);
+  const activeProject = state.project?.deletedAt === null ? state.project : undefined;
+  const missingProject = () =>
+    Result.fail(
+      new ProjectCommandMissingProjectError({
+        commandType: command.type,
+        projectId: command.projectId,
+      }),
+    );
+  const base = {
+    eventId: input.eventId,
+    aggregateKind: "project" as const,
+    aggregateId: command.projectId,
+    occurredAt,
+    commandId: command.commandId,
+    causationEventId: null,
+    correlationId: command.commandId,
+  };
   switch (command.type) {
     case "project.create": {
       if (state.project !== undefined) {
@@ -87,13 +130,7 @@ export function planProjectCommand(input: {
         );
       }
       return Result.succeed({
-        eventId: input.eventId,
-        aggregateKind: "project",
-        aggregateId: command.projectId,
-        occurredAt,
-        commandId: command.commandId,
-        causationEventId: null,
-        correlationId: command.commandId,
+        ...base,
         type: "project.created",
         payload: {
           projectId: command.projectId,
@@ -102,6 +139,26 @@ export function planProjectCommand(input: {
           createdAt: occurredAt,
           updatedAt: occurredAt,
         },
+      });
+    }
+    case "project.meta.update": {
+      if (activeProject === undefined) return missingProject();
+      return Result.succeed({
+        ...base,
+        type: "project.meta-updated",
+        payload: {
+          projectId: command.projectId,
+          ...(command.title === undefined ? {} : { title: command.title }),
+          updatedAt: occurredAt,
+        },
+      });
+    }
+    case "project.delete": {
+      if (activeProject === undefined) return missingProject();
+      return Result.succeed({
+        ...base,
+        type: "project.deleted",
+        payload: { projectId: command.projectId, deletedAt: occurredAt },
       });
     }
   }

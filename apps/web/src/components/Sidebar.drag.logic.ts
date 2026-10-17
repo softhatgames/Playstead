@@ -15,8 +15,8 @@ import type { SidebarSection } from "./Sidebar.inbox.logic.ts";
  * which needs a wake time, or into Working, which follows live status.
  */
 
-/** A section of the drag list: the inbox's sections and **Snoozed** (#38). */
-export type SidebarListSection = SidebarSection | "snoozed";
+/** A section of the drag list: the inbox sidebar's sections. */
+export type SidebarListSection = SidebarSection;
 
 const MARKER_PREFIX = "sidebar-marker-";
 

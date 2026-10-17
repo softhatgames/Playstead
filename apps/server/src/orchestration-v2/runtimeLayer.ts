@@ -11,10 +11,12 @@ import * as ProjectStore from "./ProjectStore.ts";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
 import * as ProviderTurnStartService from "./ProviderTurnStartService.ts";
 import * as RunExecutionService from "./RunExecutionService.ts";
+import * as ThreadSettlementService from "./ThreadSettlementService.ts";
+import * as ThreadSearch from "./ThreadSearch.ts";
 import * as ThreadTitleRegenerationService from "./ThreadTitleRegenerationService.ts";
 
 /**
- * Orchestration's stores and event sink over the server's SQLite, assembled
+ * Orchestration's stores, event sink and thread search over the server's SQLite, assembled
  * once for the server and its tests (T3 Code's
  * `apps/server/src/orchestration-v2/runtimeLayer.ts` at 2577baf). The sink
  * and the stream readers must share one event store, whose publishing is in
@@ -28,18 +30,19 @@ export const layer = EventSink.layer.pipe(
       ProjectStore.layer,
       ProjectionStore.layer,
       EffectOutbox.layer,
+      ThreadSearch.layer,
     ),
   ),
 );
 
 /**
- * The orchestrator and the effect worker, with what starts and runs provider
- * turns and generates titles. They need the stores above, a
+ * The orchestrator, the effect worker and automatic settlement, with what
+ * starts and runs provider turns and generates titles. They need the stores above, a
  * `ProviderAdapterRegistryV2`, the server's settings and `TextGeneration`:
  * the server's read the provider registry, and tests give replaying
  * adapters and their own text generation.
  */
-export const layerCore = EffectWorker.layer.pipe(
+export const layerCore = Layer.mergeAll(EffectWorker.layer, ThreadSettlementService.layer).pipe(
   Layer.provide(ThreadTitleRegenerationService.layer),
   Layer.provideMerge(Orchestrator.layer),
   Layer.provide(ProviderTurnStartService.layer),
