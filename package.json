@@ -4,7 +4,7 @@
   "type": "module",
   "scripts": {
     "prepare": "effect-tsgo patch && vp config --no-agent",
-    "build": "vp run --filter './apps/*' build",
+    "build": "vp run --filter @playstead/web --filter @playstead/server --filter @playstead/desktop build",
     "dev": "node scripts/dev-runner.ts dev",
     "dev:server": "node scripts/dev-runner.ts dev:server",
     "dev:web": "node scripts/dev-runner.ts dev:web",

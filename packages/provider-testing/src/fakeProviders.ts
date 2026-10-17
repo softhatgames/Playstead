@@ -124,10 +124,13 @@ export const writeFakeCodex = (options: {
   readonly version: string;
   readonly account?: FakeCodexAccount | null;
   readonly models?: ReadonlyArray<FakeCodexModel>;
+  /** A file each start appends its environment to, as one JSON line. */
+  readonly environmentLog?: string;
 }) =>
   writeFakeCli({
     directory: options.directory,
     name: "codex",
+    ...(options.environmentLog === undefined ? {} : { environmentLog: options.environmentLog }),
     source: fakeCodexSource({
       version: options.version,
       account: options.account === undefined ? { type: "apiKey" } : options.account,
@@ -145,6 +148,8 @@ export const writeFakeClaude = Effect.fn("writeFakeClaude")(function* (options: 
   readonly version: string;
   /** Whether Claude Code reports a signed-in account; signed in unless `false`. */
   readonly signedIn?: boolean;
+  /** A file each start appends its environment to, as one JSON line. */
+  readonly environmentLog?: string;
 }) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -152,6 +157,7 @@ export const writeFakeClaude = Effect.fn("writeFakeClaude")(function* (options: 
     directory: options.directory,
     name: "claude",
     source: fakeClaudeSource(options.version, options.signedIn ?? true),
+    ...(options.environmentLog === undefined ? {} : { environmentLog: options.environmentLog }),
   });
   const packageDirectory = path.join(
     options.directory,

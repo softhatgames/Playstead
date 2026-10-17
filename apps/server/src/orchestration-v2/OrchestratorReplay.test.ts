@@ -51,7 +51,7 @@ const replayFileCreate = (
       },
     });
     replay = yield* makeClaudeReplay(
-      materializeReplayWorkspace(
+      yield* materializeReplayWorkspace(
         {
           ...recorded,
           entries: [

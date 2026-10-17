@@ -5,9 +5,7 @@ import type {
   ServerConfigStreamEvent,
   ServerLifecycleStreamEvent,
 } from "@playstead/contracts/server";
-import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
-import * as Random from "effect/Random";
 import * as Ref from "effect/Ref";
 import type * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
@@ -18,6 +16,7 @@ import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import type * as Socket from "effect/socket/Socket";
 
 import { applyShellStreamItem } from "../state/shell.ts";
+import { retryDelay } from "./retryDelay.ts";
 import {
   ConnectionTransientError,
   connectRpcSession,
@@ -92,13 +91,6 @@ const initialState: ConnectionState = {
   lifecycle: undefined,
   shell: undefined,
 };
-
-/** Jittered within [cap/2, cap], where cap doubles from 2 s up to 5 minutes. */
-const retryDelay = (attempt: number) =>
-  Effect.gen(function* () {
-    const cap = Math.min(300_000, 1000 * 2 ** (attempt + 1));
-    return Duration.millis(yield* Random.nextIntBetween(Math.floor(cap / 2), cap));
-  });
 
 const toSocketBaseUrl = (httpBaseUrl: string) => {
   const url = new URL("/ws", httpBaseUrl);
