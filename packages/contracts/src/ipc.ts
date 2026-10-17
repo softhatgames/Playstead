@@ -30,7 +30,15 @@ export interface DesktopEnvironmentBootstrap {
 const SidebarProjectGroupingMode = Schema.Literals(["repository", "repository_path", "separate"]);
 const SidebarProjectSortOrder = Schema.Literals(["updated_at", "created_at", "manual"]);
 const SidebarThreadSortOrder = Schema.Literals(["updated_at", "created_at"]);
-const SidebarThreadPreviewCount = Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 15 }));
+/** The project tree's **Visible threads** bounds (T3 Code's). */
+export const MIN_SIDEBAR_THREAD_PREVIEW_COUNT = 1;
+export const MAX_SIDEBAR_THREAD_PREVIEW_COUNT = 15;
+const SidebarThreadPreviewCount = Schema.Int.check(
+  Schema.isBetween({
+    minimum: MIN_SIDEBAR_THREAD_PREVIEW_COUNT,
+    maximum: MAX_SIDEBAR_THREAD_PREVIEW_COUNT,
+  }),
+);
 
 /**
  * The interface's settings that live with the client rather than the server

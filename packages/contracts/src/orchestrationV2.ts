@@ -436,6 +436,8 @@ export const OrchestrationV2DomainEvent = Schema.Union([
   event("thread.marked-unread", OrchestrationV2AppThread),
   event("thread.pinned", OrchestrationV2AppThread),
   event("thread.unpinned", OrchestrationV2AppThread),
+  event("thread.pin-reordered", OrchestrationV2AppThread),
+  event("thread.active-reordered", OrchestrationV2AppThread),
   event("thread.settled", OrchestrationV2AppThread),
   event("thread.unsettled", OrchestrationV2AppThread),
   event("run.created", OrchestrationV2Run),
@@ -704,6 +706,20 @@ export const OrchestrationV2Command = Schema.Union([
     type: Schema.Literal("thread.unpin"),
     commandId: CommandId,
     threadId: ThreadId,
+  }),
+  /** A pinned thread's place among the pins: an order key the client made. */
+  Schema.Struct({
+    type: Schema.Literal("thread.pin.reorder"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    orderKey: TrimmedNonEmptyString,
+  }),
+  /** An active thread's place in Active: an order key the client made. */
+  Schema.Struct({
+    type: Schema.Literal("thread.active.reorder"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    orderKey: TrimmedNonEmptyString,
   }),
   Schema.Struct({
     type: Schema.Literal("thread.settle"),
