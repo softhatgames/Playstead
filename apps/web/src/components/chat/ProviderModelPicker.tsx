@@ -8,10 +8,12 @@ import type { ModelPickerEntry } from "./composer.logic.ts";
  * T3 Code's model picker (`apps/web/src/components/chat/ProviderModelPicker.tsx`
  * and `ModelPickerContent.tsx` at 2577baf), trimmed: a popover listing each
  * provider's models. Once a thread has started it lists only its provider's.
+ * While the composer cannot send it is disabled and its list hidden.
  */
 export function ProviderModelPicker(props: {
   readonly entries: ReadonlyArray<ModelPickerEntry>;
   readonly selection: ModelSelection | undefined;
+  readonly disabled: boolean;
   readonly onSelect: (selection: ModelSelection) => void;
 }) {
   const [open, setOpen] = useState(false);
@@ -27,6 +29,11 @@ export function ProviderModelPicker(props: {
       ? "No provider available"
       : `${selectedEntry.displayName} · ${selectedModel?.name ?? props.selection?.model}`;
   const choosable = props.entries.length > 0;
+  const usable = choosable && !props.disabled;
+
+  useEffect(() => {
+    if (!usable) setOpen(false);
+  }, [usable]);
 
   useEffect(() => {
     if (!open) return;
@@ -43,14 +50,14 @@ export function ProviderModelPicker(props: {
         type="button"
         aria-haspopup="listbox"
         aria-expanded={open}
-        disabled={!choosable}
+        disabled={!usable}
         onClick={() => setOpen((current) => !current)}
         className="flex items-center gap-1 rounded-md px-2 py-1 text-xs text-neutral-600 hover:bg-neutral-100 disabled:hover:bg-transparent dark:text-neutral-300 dark:hover:bg-neutral-800"
       >
         <span>{label}</span>
         {choosable ? <ChevronDownIcon className="size-3" /> : null}
       </button>
-      {open ? (
+      {open && usable ? (
         <div
           role="listbox"
           aria-label="Model"
