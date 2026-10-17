@@ -206,4 +206,45 @@ describe("deriveTimelineRows", () => {
       { kind: "interrupted", id: "item:result", label: "Interrupted" },
     ]);
   });
+  it("shows each approval in the activity log as T3 Code does, with its prompt or its kind", () => {
+    const approval = (
+      id: string,
+      status: OrchestrationV2TurnItem["status"],
+      prompt?: string,
+    ): OrchestrationV2TurnItem => ({
+      ...base(id, 1, status),
+      type: "approval_request",
+      requestId: RuntimeRequestId.make(`request:${id}`),
+      requestKind: "file-change",
+      ...(prompt === undefined ? {} : { prompt }),
+    });
+    const rows = deriveTimelineRows(
+      [
+        approval("item:waiting", "waiting", "supervised-claude.txt"),
+        approval("item:declined", "cancelled"),
+      ],
+      "/games/empty",
+    );
+
+    assert.deepStrictEqual(rows, [
+      {
+        kind: "work",
+        id: "item:waiting",
+        label: "Approval requested",
+        detail: "supervised-claude.txt",
+        icon: "approval",
+        tone: "tool",
+        running: true,
+      },
+      {
+        kind: "work",
+        id: "item:declined",
+        label: "Approval requested",
+        detail: "file-change",
+        icon: "approval",
+        tone: "tool",
+        running: false,
+      },
+    ]);
+  });
 });

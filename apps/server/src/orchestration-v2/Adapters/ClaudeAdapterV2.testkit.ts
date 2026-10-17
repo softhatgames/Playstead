@@ -27,7 +27,8 @@ import {
  * replay compares each frame the adapter sends with the next recorded one,
  * strictly, and plays Claude's messages up to the next frame it expects.
  * Claude Code's calls to the adapter's `canUseTool` are recorded as
- * `permission.request` (inbound, where the call came) and what the adapter
+ * `permission.request` (inbound, where the call came, with what Claude Code
+ * said about the call) and what the adapter
  * answered as `permission.response`, as T3 Code's replay keeps them; the
  * replay calls the adapter's real callback and compares its answer with
  * the response recorded for the same tool use, wherever it lies, since an
@@ -276,6 +277,7 @@ export const makeClaudeReplay = Effect.fn("makeClaudeReplay")(function* (
               canUseTool === undefined
                 ? Promise.reject(new Error("The adapter passed no canUseTool."))
                 : canUseTool(frame.toolName, frame.input, {
+                    ...frame.options,
                     signal: controller.signal,
                     toolUseID: frame.toolUseID,
                     requestId: frame.requestId,
@@ -351,6 +353,22 @@ export const makeClaudeReplay = Effect.fn("makeClaudeReplay")(function* (
   return { runner, assertComplete, awaitHeld: Deferred.await(held) } satisfies ClaudeReplay;
 });
 
+/**
+ * What Claude Code tells `canUseTool` about the call besides its ids, which
+ * the adapter reads for an approval's prompt and session rules.
+ */
+const PERMISSION_REQUEST_OPTIONS = [
+  "title",
+  "displayName",
+  "description",
+  "decisionReason",
+  "blockedPath",
+  "suggestions",
+] as const;
+type PermissionRequestOptions = Partial<
+  Pick<Parameters<CanUseTool>[2], (typeof PERMISSION_REQUEST_OPTIONS)[number]>
+>;
+
 /** Claude Code asking the adapter's `canUseTool` about a tool, as a recording keeps it. */
 interface PermissionRequestFrame {
   readonly type: "permission.request";
@@ -358,7 +376,20 @@ interface PermissionRequestFrame {
   readonly input: Record<string, unknown>;
   readonly toolUseID: string;
   readonly requestId: string;
+  /** Absent from recordings made before approvals. */
+  readonly options?: PermissionRequestOptions;
 }
+
+const permissionRequestOptions = (
+  options: Parameters<CanUseTool>[2],
+): PermissionRequestOptions | undefined => {
+  const kept = Object.fromEntries(
+    PERMISSION_REQUEST_OPTIONS.flatMap((key) =>
+      options[key] === undefined ? [] : [[key, options[key]]],
+    ),
+  );
+  return Object.keys(kept).length === 0 ? undefined : kept;
+};
 
 const isFrame = (frame: unknown, type: string): frame is object =>
   typeof frame === "object" && frame !== null && Reflect.get(frame, "type") === type;
@@ -397,6 +428,7 @@ export const makeRecordingQueryRunner = (inner: ClaudeAgentSdkQueryRunner["Servi
                     input: toolInput,
                     toolUseID: callbackOptions.toolUseID,
                     requestId: callbackOptions.requestId,
+                    options: permissionRequestOptions(callbackOptions),
                   }),
                 });
                 const result = await canUseTool(toolName, toolInput, callbackOptions);

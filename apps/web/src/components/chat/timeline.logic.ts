@@ -19,9 +19,9 @@ export type TimelineRow =
       readonly kind: "work";
       readonly id: string;
       readonly label: string;
-      /** What opens under the row: a written file's content, or a command's output. */
+      /** What opens under the row: a written file's content, a command's output, or an approval's prompt. */
       readonly detail?: string;
-      readonly icon: "file" | "tool";
+      readonly icon: "file" | "tool" | "approval";
       readonly tone: "tool" | "error";
       readonly running: boolean;
     }
@@ -70,9 +70,10 @@ const workRow = (
   id: item.id,
   label,
   ...(detail === undefined || detail.length === 0 ? {} : { detail }),
-  icon: item.type === "file_change" ? "file" : "tool",
+  icon:
+    item.type === "file_change" ? "file" : item.type === "approval_request" ? "approval" : "tool",
   tone: item.status === "failed" ? "error" : "tool",
-  running: item.status === "running" || item.status === "pending",
+  running: item.status === "running" || item.status === "pending" || item.status === "waiting",
 });
 
 const questionRow = (
@@ -121,6 +122,9 @@ export function deriveTimelineRows(
         return workRow(item, item.toolName, undefined);
       case "error":
         return workRow(item, item.failure.message, undefined);
+      // T3 Code's `session-logic.ts`: "Approval requested", with the prompt or the kind.
+      case "approval_request":
+        return workRow(item, "Approval requested", item.prompt ?? item.requestKind);
       case "user_input_request":
         return questionRow(item);
       case "run_interrupt_request":

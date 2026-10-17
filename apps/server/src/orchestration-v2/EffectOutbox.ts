@@ -6,7 +6,10 @@ import {
   RuntimeRequestId,
   ThreadId,
 } from "@playstead/contracts/baseSchemas";
-import { ProviderUserInputAnswers } from "@playstead/contracts/orchestrationV2";
+import {
+  ProviderApprovalDecision,
+  ProviderUserInputAnswers,
+} from "@playstead/contracts/orchestrationV2";
 import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -20,8 +23,8 @@ import * as SqlClient from "effect/sql/SqlClient";
 /**
  * The work a command leaves for the effect worker (T3 Code's
  * `OrchestrationEffectRequestV2` at 2577baf): starting a run's provider
- * turn, interrupting it, and giving the provider the person's answers to
- * its question. There is no checkpoint, title generation or cleanup.
+ * turn, interrupting it, and giving the provider the person's decision on
+ * its approval or answers to its question. There is no checkpoint, title generation or cleanup.
  */
 const OrchestrationEffectRequestV2 = Schema.Union([
   Schema.Struct({ type: Schema.Literal("provider-turn.start"), runId: RunId }),
@@ -35,7 +38,8 @@ const OrchestrationEffectRequestV2 = Schema.Union([
     runId: RunId,
     providerSessionId: ProviderSessionId,
     requestId: RuntimeRequestId,
-    answers: ProviderUserInputAnswers,
+    decision: Schema.optionalKey(ProviderApprovalDecision),
+    answers: Schema.optionalKey(ProviderUserInputAnswers),
   }),
 ]);
 export type OrchestrationEffectRequestV2 = typeof OrchestrationEffectRequestV2.Type;
