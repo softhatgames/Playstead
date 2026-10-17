@@ -86,3 +86,4 @@ export class ProjectNotEmptyError extends Schema.TaggedError<ProjectNotEmptyErro
     return "Project is not empty. Delete all threads in this project before removing it.";
   }
 }
+export const ProjectEnsureScratchResult = Schema.Struct({ projectId: ProjectId });

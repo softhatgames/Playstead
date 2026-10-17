@@ -1,3 +1,4 @@
+import { ManagedProjectFolders } from "../project/ManagedProjectFolders.ts";
 import {
   NodeId,
   ProviderThreadId,
@@ -73,6 +74,7 @@ const make = Effect.gen(function* () {
   const adapters = yield* ProviderAdapterRegistry.ProviderAdapterRegistryV2;
   const eventSink = yield* EventSink.EventSinkV2;
   const crypto = yield* Crypto.Crypto;
+  const folders = yield* ManagedProjectFolders;
   const threadLocks = yield* KeyedLock.make<ThreadId>();
 
   const uuid = crypto.randomUUIDv4();
@@ -141,12 +143,32 @@ const make = Effect.gen(function* () {
           error: decided.failure.reason,
         });
       }
+      // Claim only after validation, under the command lock and after receipt lookup.
+      // Persist before either outbox lane can start; a replay uses the same folder.
+      const worktreePath =
+        command.type === "message.dispatch" &&
+        projection !== undefined &&
+        projection.messages.length === 0 &&
+        projection.thread.worktreePath == null
+          ? yield* folders.folderForThread({
+              projectId: projection.thread.projectId,
+              threadId: command.threadId,
+              text: command.text,
+            })
+          : Option.none<string>();
+      const events = Option.isSome(worktreePath)
+        ? decided.success.events.map((event) =>
+            event.type === "thread.metadata-updated"
+              ? { ...event, payload: { ...event.payload, worktreePath: worktreePath.value } }
+              : event,
+          )
+        : decided.success.events;
       const { receipt } = yield* eventSink.commitCommand({
         commandId: command.commandId,
         threadId: command.threadId,
         commandType: command.type,
         acceptedAt: now,
-        events: decided.success.events,
+        events,
         effects: decided.success.effects,
         ...(decided.success.cancelUnsettledEffects === undefined
           ? {}

@@ -13,6 +13,7 @@ import * as OrchestrationRuntime from "../orchestration-v2/runtimeLayer.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import { makeTestServerConfig } from "../testUtils/testServer.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
+import * as ManagedProjectFolders from "./ManagedProjectFolders.ts";
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import * as ProviderAdapterRegistry from "../orchestration-v2/ProviderAdapterRegistry.ts";
 import * as ProjectService from "./ProjectService.ts";
@@ -25,7 +26,10 @@ import * as ProjectService from "./ProjectService.ts";
 const startProjects = Effect.gen(function* () {
   const config = yield* makeTestServerConfig();
   const context = yield* Layer.build(
-    Layer.mergeAll(ProjectService.layer, Orchestrator.layer).pipe(
+    Orchestrator.layer.pipe(
+      Layer.provideMerge(
+        ManagedProjectFolders.layer.pipe(Layer.provideMerge(ProjectService.layer)),
+      ),
       Layer.provide(ProviderAdapterRegistry.layerFromAdapters([])),
       Layer.provide(OrchestrationRuntime.layer),
       Layer.provide(WorkspacePaths.layer),

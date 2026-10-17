@@ -27,3 +27,12 @@ export const inferProjectTitleFromPath = (value: string): string => {
   const segments = splitAbsolutePath(normalized)?.segments ?? normalized.split(/[/\\]/);
   return segments.findLast((segment) => segment.length > 0) ?? normalized;
 };
+
+/** Managed scratch uses its configured path, never its editable display title. */
+export const isScratchProject = (
+  project: { readonly workspaceRoot: string },
+  scratchWorkspaceRoot: string | undefined,
+): boolean =>
+  scratchWorkspaceRoot !== undefined &&
+  normalizeProjectPathForComparison(project.workspaceRoot) ===
+    normalizeProjectPathForComparison(scratchWorkspaceRoot);

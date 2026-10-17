@@ -122,6 +122,7 @@ export const OrchestrationV2AppThread = Schema.Struct({
   archivedAt: NullOrTimeDefaultNull,
   deletedAt: NullOrTimeDefaultNull,
   lastVisitedAt: NullOrTimeDefaultNull,
+  worktreePath: Schema.optionalKey(Schema.NullOr(TrimmedNonEmptyString)),
   titleRegeneration: Schema.optionalKey(Schema.NullOr(ThreadTitleRegeneration)),
   autoSettleDisabledAt: Schema.optionalKey(Schema.NullOr(IsoDateTime)),
   settledOverride: ThreadSettledOverride.pipe(Schema.withDecodingDefault(Effect.succeed(null))),
@@ -507,6 +508,7 @@ export const OrchestrationV2ThreadShell = Schema.Struct({
   /** When the latest run completed, or null while it has not (T3 Code's `latestRunCompletedAt`). */
   latestRunCompletedAt: Schema.NullOr(IsoDateTime),
   lastVisitedAt: Schema.NullOr(IsoDateTime),
+  worktreePath: Schema.optionalKey(Schema.NullOr(TrimmedNonEmptyString)),
   titleRegeneration: Schema.optionalKey(Schema.NullOr(ThreadTitleRegeneration)),
   autoSettleDisabledAt: Schema.optionalKey(Schema.NullOr(IsoDateTime)),
   settledOverride: ThreadSettledOverride,

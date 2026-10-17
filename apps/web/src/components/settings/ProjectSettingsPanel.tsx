@@ -1,13 +1,19 @@
+import { isScratchProject } from "@playstead/client-runtime/state/projects";
 import { ProjectId } from "@playstead/contracts/baseSchemas";
 import { usePrimaryConnectionState } from "../../connection/runtime.ts";
 import { useProjectActions } from "../../hooks/useProjectActions.ts";
 
 /** The removal section of T3 Code's ProjectSettingsPanel at 2577baf. */
 export function ProjectSettingsPanel({ projectId }: { readonly projectId: string }) {
-  const project = usePrimaryConnectionState()?.shell?.projects.find(
+  const state = usePrimaryConnectionState();
+  const scratchWorkspaceRoot =
+    state?.phase === "connected" ? state.config?.scratchWorkspaceRoot : undefined;
+  const project = state?.shell?.projects.find(
     (project) => project.id === ProjectId.make(projectId),
   );
   const { removeProject } = useProjectActions();
+  if (project !== undefined && isScratchProject(project, scratchWorkspaceRoot))
+    return <p>Project settings are unavailable for threads without a project.</p>;
   if (project === undefined) return <p>Project not found.</p>;
   return (
     <section className="space-y-8">

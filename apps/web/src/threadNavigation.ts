@@ -21,14 +21,25 @@ export function newThreadDestination(input: {
   readonly preferredProjectIds: ReadonlyArray<string | undefined>;
   readonly legacySidebarEnabled: boolean;
   readonly local: boolean;
+  readonly scratchAvailable?: boolean;
+  readonly scratchProjectId?: string | undefined;
 }):
+  | { readonly kind: "scratch" }
   | { readonly kind: "picker" }
   | { readonly kind: "add-project" }
   | { readonly kind: "project"; readonly projectId: string } {
-  if (!input.local && !input.legacySidebarEnabled && input.projectIds.length > 1)
+  if (
+    !input.local &&
+    !input.legacySidebarEnabled &&
+    input.projectIds.length +
+      (input.scratchAvailable && !input.projectIds.includes(input.scratchProjectId ?? "") ? 1 : 0) >
+      1
+  )
     return { kind: "picker" };
   const projectId =
     input.preferredProjectIds.find((id) => id !== undefined && input.projectIds.includes(id)) ??
     input.projectIds[0];
-  return projectId === undefined ? { kind: "add-project" } : { kind: "project", projectId };
+  return projectId === undefined
+    ? { kind: input.scratchAvailable ? "scratch" : "add-project" }
+    : { kind: "project", projectId };
 }

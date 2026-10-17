@@ -1,3 +1,5 @@
+import { isScratchProject } from "@playstead/client-runtime/state/projects";
+import { usePrimaryConnectionState } from "../../connection/runtime.ts";
 import type { OrchestrationProjectShell } from "@playstead/contracts/orchestrationProject";
 import type { ContextMenuPosition } from "@playstead/contracts/ipc";
 import { useNavigate } from "@tanstack/react-router";
@@ -19,6 +21,9 @@ export function ProjectMenuButton({
     renameInput: ReactNode,
   ) => ReactNode;
 }) {
+  const state = usePrimaryConnectionState();
+  const scratchWorkspaceRoot =
+    state?.phase === "connected" ? state.config?.scratchWorkspaceRoot : undefined;
   const [title, setTitle] = useState<string | null>(null);
   const committed = useRef(false);
   const navigate = useNavigate();
@@ -38,6 +43,7 @@ export function ProjectMenuButton({
       );
   };
   const openMenu = (position: ContextMenuPosition) => {
+    if (isScratchProject(project, scratchWorkspaceRoot)) return;
     void (async () => {
       const chosen = await readLocalApi().contextMenu.show(projectMenuItems, position);
       switch (chosen) {

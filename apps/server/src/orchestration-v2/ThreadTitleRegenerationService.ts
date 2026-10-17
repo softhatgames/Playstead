@@ -64,7 +64,7 @@ export const layer = Layer.effect(
             yield* providers.getProviders,
           );
           const generated = yield* generation.generateThreadTitle({
-            cwd: project.value.workspaceRoot,
+            cwd: thread.worktreePath ?? project.value.workspaceRoot,
             message,
             modelSelection,
             ...(kind.type === "regenerate" ? { previousTitle: thread.title } : {}),

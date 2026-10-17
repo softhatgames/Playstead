@@ -1,3 +1,5 @@
+import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
 import * as NodeSqlite from "node:sqlite";
 import { makeTestServerConfig } from "../testUtils/testServer.ts";
 import * as Stream from "effect/Stream";
@@ -11,6 +13,64 @@ import { makeOrchestrationHarness } from "../orchestration-v2/testkit/Orchestrat
 /** Seam 1: real orchestration and persistence; the unused provider transport cannot start. */
 describe("Project deletion", () => {
   it.layer(NodeServices.layer)((it) => {
+    it.effect("project deletion retains a scratch thread's folder and generated files", () =>
+      Effect.gen(function* () {
+        const harness = yield* makeOrchestrationHarness({
+          claudeRunner: {
+            allocateSessionId: Effect.die("No turn expected"),
+            open: () => Effect.die("No turn expected"),
+          },
+        });
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const projectId = ProjectId.make("scratch:delete");
+        const threadId = ThreadId.make("thread:scratch-delete");
+        const workspaceRoot = path.join(harness.home, "scratch");
+        yield* harness.projects.create({
+          commandId: CommandId.make("scratch-project"),
+          projectId,
+          title: "Renamed scratch",
+          workspaceRoot,
+          createWorkspaceRootIfMissing: true,
+        });
+        yield* harness.orchestrator.dispatch({
+          type: "thread.create",
+          commandId: CommandId.make("scratch-thread"),
+          threadId,
+          projectId,
+          title: "New thread",
+          modelSelection: { instanceId: "claudeAgent", model: "claude-haiku-5-5" },
+        });
+        yield* harness.orchestrator.dispatch({
+          type: "message.dispatch",
+          commandId: CommandId.make("scratch-message"),
+          threadId,
+          messageId: MessageId.make("scratch-message"),
+          text: "Make a game",
+          titleSeed: "Make a game",
+        });
+        const folder = Option.getOrThrow(yield* harness.orchestrator.getThreadProjection(threadId))
+          .thread.worktreePath!;
+        assert.strictEqual(path.dirname(folder), workspaceRoot);
+        const file = path.join(folder, "game.txt");
+        yield* fs.writeFileString(file, "keep this generated game");
+        yield* harness.projects.delete({
+          commandId: CommandId.make("remove-scratch"),
+          projectId,
+          force: true,
+        });
+        assert.strictEqual(yield* fs.readFileString(file), "keep this generated game");
+        const readded = yield* harness.projects.create({
+          commandId: CommandId.make("scratch-again"),
+          projectId: ProjectId.make("scratch:new"),
+          title: "No project",
+          workspaceRoot,
+        });
+        assert.notStrictEqual(readded.id, projectId);
+        assert.strictEqual(yield* fs.readFileString(file), "keep this generated game");
+      }).pipe(Effect.scoped),
+    );
+
     it.effect(
       "retries a partial cascade after a database failure without repeating committed deletions",
       () =>

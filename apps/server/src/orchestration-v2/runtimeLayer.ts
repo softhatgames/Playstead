@@ -1,3 +1,6 @@
+import * as ManagedProjectFolders from "../project/ManagedProjectFolders.ts";
+import * as ProjectService from "../project/ProjectService.ts";
+import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
 import * as Settlement from "./ThreadSettlementService.ts";
 import * as ThreadTitles from "./ThreadTitleRegenerationService.ts";
 import * as Layer from "effect/Layer";
@@ -44,6 +47,11 @@ export const layer = EventSink.layer.pipe(
 export const layerCore = Layer.mergeAll(EffectWorker.layer, Settlement.layer).pipe(
   Layer.provide(ThreadTitles.layer),
   Layer.provideMerge(Orchestrator.layer),
+  Layer.provideMerge(
+    ManagedProjectFolders.layer.pipe(
+      Layer.provideMerge(ProjectService.layer.pipe(Layer.provide(WorkspacePaths.layer))),
+    ),
+  ),
   Layer.provide(ProviderTurnStartService.layer),
   Layer.provide(Layer.mergeAll(RunExecutionService.layer, ProviderSessionManager.layer)),
 );

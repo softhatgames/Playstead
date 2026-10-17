@@ -1,3 +1,4 @@
+import { isScratchProject } from "@playstead/client-runtime/state/projects";
 import { CommandId, type ProjectId } from "@playstead/contracts/baseSchemas";
 import type { OrchestrationProjectShell } from "@playstead/contracts/orchestrationProject";
 import { useNavigate } from "@tanstack/react-router";
@@ -21,9 +22,13 @@ export const renameProject = (projectId: ProjectId, title: string) =>
 
 /** T3 Code's project removal flow: tree warning, destructive confirmation, durable cascade. */
 export function useProjectActions() {
-  const shell = usePrimaryConnectionState()?.shell;
+  const state = usePrimaryConnectionState();
+  const shell = state?.shell;
+  const scratchWorkspaceRoot =
+    state?.phase === "connected" ? state.config?.scratchWorkspaceRoot : undefined;
   const navigate = useNavigate();
   const remove = async (project: OrchestrationProjectShell, warnIfNotEmpty: boolean) => {
+    if (isScratchProject(project, scratchWorkspaceRoot)) return;
     const archived = await requestPrimary((client) =>
       client["orchestration.getArchivedShellSnapshot"]({}),
     );

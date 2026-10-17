@@ -79,6 +79,7 @@ export type ServerProviderUpdatedPayload = typeof ServerProviderUpdatedPayload.T
 
 /** The server's status as a client sees it on connecting. */
 export const ServerConfig = Schema.Struct({
+  scratchWorkspaceRoot: Schema.optionalKey(TrimmedNonEmptyString),
   environment: ExecutionEnvironmentDescriptor,
   auth: ServerAuthDescriptor,
   providers: ServerProviders,

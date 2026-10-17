@@ -1,3 +1,4 @@
+import { isScratchProject } from "@playstead/client-runtime/state/projects";
 import { canSnooze, effectiveSnoozed } from "@playstead/client-runtime/state/threadSnoozed";
 import { resolveSnoozePresets } from "../components/Sidebar.snooze.ts";
 import { requestCustomSnooze } from "../customSnooze.ts";
@@ -9,6 +10,7 @@ import { copyTextToClipboard } from "../clipboard.ts";
 import { readClientSettings } from "../clientSettings.ts";
 import { buildSidebarProjectGroups } from "../components/Sidebar.inbox.logic.ts";
 import {
+  threadWorkspacePath,
   buildThreadActionMenuItems,
   legacyThreadMenuItems,
   threadArchiveConfirmation,
@@ -51,7 +53,7 @@ import {
  * - **Filter by project**, offered when `projectFilter` is on (the inbox
  *   sidebar row), scopes the sidebar to the thread's project, or to every
  *   project again when it already is.
- * - **Copy → Path** copies the project's folder, and **Copy → Thread ID**
+ * - **Copy → Path** copies the thread's working folder, and **Copy → Thread ID**
  *   the thread's id, each with a notice.
  * - Archiving asks first when **Confirm before archiving** is on, deleting
  *   when **Confirm before deleting** is; a failure shows as a notice.
@@ -66,7 +68,10 @@ export function useThreadActionMenu(
 ) {
   const { onStartRename, projectFilter = false, variant = "full" } = options;
   const { archiveThread, confirmAndDeleteThread } = useThreadActions();
-  const shell = usePrimaryConnectionState()?.shell;
+  const state = usePrimaryConnectionState();
+  const shell = state?.shell;
+  const scratchWorkspaceRoot =
+    state?.phase === "connected" ? state.config?.scratchWorkspaceRoot : undefined;
 
   const openMenu = useCallback(
     (position: ContextMenuPosition) => {
@@ -78,6 +83,7 @@ export function useThreadActionMenu(
               projects: shell.projects,
               threads: shell.threads,
               sortOrder: "manual",
+              isScratchProject: (project) => isScratchProject(project, scratchWorkspaceRoot),
             }).find((candidate) => candidate.projectIds.includes(thread.projectId))
           : undefined;
       void (async () => {
@@ -171,15 +177,19 @@ export function useThreadActionMenu(
             }
             return;
           case "copy-path": {
-            if (project === undefined) {
+            const workspacePath = threadWorkspacePath(
+              shell?.threads.find((candidate) => candidate.id === thread.id),
+              project,
+            );
+            if (workspacePath === undefined) {
               failureToast(
                 "Path unavailable",
                 new Error("This thread does not have a workspace path to copy."),
               );
               return;
             }
-            await copyTextToClipboard(project.workspaceRoot).then(
-              () => successToast("Path copied", project.workspaceRoot),
+            await copyTextToClipboard(workspacePath).then(
+              () => successToast("Path copied", workspacePath),
               (error: unknown) => failureToast("Failed to copy path", error),
             );
             return;
@@ -214,7 +224,16 @@ export function useThreadActionMenu(
         }
       })();
     },
-    [archiveThread, confirmAndDeleteThread, onStartRename, projectFilter, shell, thread, variant],
+    [
+      archiveThread,
+      confirmAndDeleteThread,
+      onStartRename,
+      projectFilter,
+      shell,
+      scratchWorkspaceRoot,
+      thread,
+      variant,
+    ],
   );
 
   const closeMenu = useCallback(() => {

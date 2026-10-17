@@ -78,6 +78,23 @@ describe("project RPC methods", () => {
         }).pipe(Effect.scoped),
     );
 
+    it.effect("advertises scratch and ensures one project over RPC", () =>
+      Effect.gen(function* () {
+        const server = yield* startTestServer();
+        const { connection } = yield* connectSignedIn(server);
+        const config = yield* connection.request((client) => client["server.getConfig"]({}));
+        assert.strictEqual(
+          config.scratchWorkspaceRoot,
+          (yield* Path.Path).join(server.config.baseDir, "scratch"),
+        );
+        const result = yield* connection.request((client) => client["projects.ensureScratch"]({}));
+        const state = yield* awaitConnectionState(
+          connection,
+          (state) => state.shell?.projects.some((p) => p.id === result.projectId) === true,
+        );
+        assert.strictEqual(state.shell?.projects[0]?.title, "No project");
+      }).pipe(Effect.scoped),
+    );
     it.effect("adds a browsed folder as a project that every client's shell shows", () =>
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;

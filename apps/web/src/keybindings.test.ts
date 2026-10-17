@@ -89,3 +89,12 @@ it("reserves all nine numbered thread jumps for desktop, leaving browser tab sho
     expect(resolve(event, WINDOWS, { isDesktop: true, modelPickerOpen: true })).toBeNull();
   }
 });
+
+it("starts without a project with mod+alt+n on Mac and Windows", () => {
+  expect(resolve(key("n", { metaKey: true, altKey: true }, "KeyN"), MAC)).toBe(
+    "chat.newWithoutProject",
+  );
+  expect(resolve(key("n", { ctrlKey: true, altKey: true }, "KeyN"), WINDOWS)).toBe(
+    "chat.newWithoutProject",
+  );
+});

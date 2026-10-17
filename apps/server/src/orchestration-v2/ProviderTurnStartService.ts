@@ -39,7 +39,7 @@ const resolveRuntimePolicy = (
 ): ProviderAdapterV2RuntimePolicy => ({
   runtimeMode: thread.runtimeMode,
   interactionMode: thread.interactionMode,
-  cwd: workspaceRoot,
+  cwd: thread.worktreePath ?? workspaceRoot,
 });
 
 /** A run that never reached its provider ends failed, with the reason as its last item. */
