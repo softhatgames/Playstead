@@ -164,6 +164,7 @@ export function decideThreadCommand(input: {
       deletedAt: null,
       lastVisitedAt: null,
       titleRegeneration: null,
+      autoSettleDisabledAt: null,
       settledOverride: null,
       settledAt: null,
       unsettledAt: null,
@@ -192,6 +193,8 @@ export function decideThreadCommand(input: {
     case "thread.mark-unread":
     case "thread.pin":
     case "thread.unpin":
+    case "thread.auto-settle":
+    case "thread.auto-settle.set":
     case "thread.settle":
     case "thread.unsettle":
       return dispatchThreadMutation(command, projection, now);
@@ -279,6 +282,8 @@ type ThreadMutationCommand = Extract<
       | "thread.mark-unread"
       | "thread.pin"
       | "thread.unpin"
+      | "thread.auto-settle"
+      | "thread.auto-settle.set"
       | "thread.settle"
       | "thread.unsettle";
   }
@@ -289,6 +294,7 @@ type ThreadMutationCommand = Extract<
  * the per-thread auto-settle switch and reordering join it as they arrive.
  */
 const REFUSED_WHILE_ARCHIVED: ReadonlySet<ThreadMutationCommand["type"]> = new Set([
+  "thread.auto-settle.set",
   "thread.pin",
   "thread.unpin",
   "thread.settle",
@@ -354,6 +360,16 @@ function dispatchThreadMutation(
   now: string,
 ): Result.Result<ThreadCommandDecision, ThreadCommandRejection> {
   const { thread } = projection;
+  if (
+    command.type === "thread.auto-settle" &&
+    (thread.updatedAt !== command.snapshotAt ||
+      thread.archivedAt !== null ||
+      thread.settledOverride !== null ||
+      thread.pinnedAt !== null ||
+      thread.autoSettleDisabledAt != null ||
+      settleBlocker(projection) !== null)
+  )
+    return reject(command, `Thread ${thread.id} changed before automatic settlement.`);
   if (command.type === "thread.archive" && thread.archivedAt !== null) {
     return reject(command, `Thread ${thread.id} is already archived.`);
   }
@@ -443,6 +459,13 @@ function dispatchThreadMutation(
           pinOrderKey: null,
           updatedAt: thread.pinnedAt === null ? thread.updatedAt : now,
         };
+      case "thread.auto-settle.set":
+        return {
+          ...thread,
+          autoSettleDisabledAt: !command.enabled ? (thread.autoSettleDisabledAt ?? now) : null,
+          updatedAt: now,
+        };
+      case "thread.auto-settle":
       case "thread.settle": {
         const alreadySettled =
           thread.settledOverride === "settled" &&
@@ -488,6 +511,9 @@ function dispatchThreadMutation(
         return "thread.pinned" as const;
       case "thread.unpin":
         return "thread.unpinned" as const;
+      case "thread.auto-settle.set":
+        return "thread.auto-settle-set" as const;
+      case "thread.auto-settle":
       case "thread.settle":
         return "thread.settled" as const;
       case "thread.unsettle":
@@ -548,7 +574,11 @@ function dispatchThreadMutation(
   // Archive and settle both mean "done with this thread": no live provider
   // session keeps running for it (T3 Code's detach after either). The settle
   // guard already refused a working thread, so this only stops idle sessions.
-  if (command.type === "thread.archive" || command.type === "thread.settle") {
+  if (
+    command.type === "thread.archive" ||
+    command.type === "thread.settle" ||
+    command.type === "thread.auto-settle"
+  ) {
     const detached = detachProviderSessions({
       projection,
       commandId: command.commandId,

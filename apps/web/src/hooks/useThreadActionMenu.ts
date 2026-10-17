@@ -16,6 +16,7 @@ import { settleAndAdvance } from "../settleAndAdvance.ts";
 import { failureToast, successToast } from "../toast.ts";
 import { readSidebarProjectScopeKey, setSidebarProjectScopeKey } from "../uiState.ts";
 import {
+  setThreadAutoSettle,
   regenerateThreadTitle,
   markThreadUnread,
   pinThread,
@@ -79,6 +80,7 @@ export function useThreadActionMenu(
           variant === "tree"
             ? legacyThreadMenuItems
             : buildThreadActionMenuItems({
+                autoSettleEnabled: thread.autoSettleDisabledAt == null,
                 isRunning: !threadRuntimeCanArchive(thread.status),
                 isTitleRegenerating: thread.titleRegeneration != null,
                 isPinned: thread.pinnedAt !== null,
@@ -93,6 +95,12 @@ export function useThreadActionMenu(
               });
         const chosen = await api.contextMenu.show(items, position).catch(() => null);
         switch (chosen) {
+          case "auto-settle:enabled":
+          case "auto-settle:disabled":
+            await setThreadAutoSettle(thread.id, chosen === "auto-settle:enabled").catch(
+              (error: unknown) => failureToast("Failed to change auto-settle behavior", error),
+            );
+            return;
           case "pin":
             await pinThread(thread.id).catch((error: unknown) =>
               failureToast("Failed to pin thread", error),

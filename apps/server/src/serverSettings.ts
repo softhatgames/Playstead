@@ -25,6 +25,9 @@ import * as ServerConfig from "./config.ts";
 export class ServerSettingsService extends Context.Service<
   ServerSettingsService,
   {
+    readonly updateAutoSettle: (
+      days: number | null,
+    ) => Effect.Effect<ServerSettings, ServerSettingsError>;
     readonly updateTextGeneration: (
       selection: ModelSelection,
     ) => Effect.Effect<ServerSettings, ServerSettingsError>;
@@ -38,6 +41,7 @@ export class ServerSettingsService extends Context.Service<
 >()("@playstead/server/serverSettings/ServerSettingsService") {}
 
 const DEFAULT_SETTINGS: ServerSettings = {
+  sidebarAutoSettleAfterDays: 3,
   providerInstances: {},
   textGenerationModelSelection: DEFAULT_TEXT_GENERATION_MODELS.codex,
 };
@@ -72,6 +76,8 @@ export const layer = Layer.effect(
       Effect.flatMap(decodeSettings),
       Effect.map((saved) => ({
         ...saved,
+        sidebarAutoSettleAfterDays:
+          saved.sidebarAutoSettleAfterDays === undefined ? 3 : saved.sidebarAutoSettleAfterDays,
         textGenerationModelSelection:
           saved.textGenerationModelSelection ?? DEFAULT_TEXT_GENERATION_MODELS.codex,
       })),
@@ -106,6 +112,16 @@ export const layer = Layer.effect(
 
     return ServerSettingsService.of({
       getSettings: SubscriptionRef.get(settings),
+      updateAutoSettle: (days) =>
+        Effect.gen(function* () {
+          const next = {
+            ...(yield* SubscriptionRef.get(settings)),
+            sidebarAutoSettleAfterDays: days,
+          };
+          yield* write(next);
+          yield* SubscriptionRef.set(settings, next);
+          return next;
+        }).pipe(writes.withPermit),
       updateTextGeneration: (selection) =>
         Effect.gen(function* () {
           const next = {

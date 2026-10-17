@@ -1,3 +1,4 @@
+import * as Settlement from "../ThreadSettlementService.ts";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import { writeFakeCli } from "@playstead/provider-testing/fakeCli";
@@ -125,7 +126,7 @@ export const makeOrchestrationHarness = Effect.fn("makeOrchestrationHarness")(fu
       Layer.provide(adapters),
       Layer.provide(TextGeneration.layer),
       Layer.provide(ProviderRegistry.layer),
-      Layer.provide(ServerSettings.layer),
+      Layer.provideMerge(ServerSettings.layer),
       Layer.provideMerge(OrchestrationRuntime.layer),
       Layer.provide(WorkspacePaths.layer),
       Layer.provide(SqlitePersistence.layerConfig),
@@ -134,6 +135,8 @@ export const makeOrchestrationHarness = Effect.fn("makeOrchestrationHarness")(fu
   );
   const services = yield* Effect.all({
     orchestrator: Orchestrator.OrchestratorV2,
+    settlement: Settlement.ThreadSettlementService,
+    settings: ServerSettings.ServerSettingsService,
     worker: EffectWorker.OrchestrationEffectWorkerV2,
     projects: ProjectService.ProjectService,
     eventStore: EventStore.EventStoreV2,

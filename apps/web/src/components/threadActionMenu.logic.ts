@@ -16,6 +16,9 @@ import {
  * T3 Code's "New thread on (branch)" and **Copy → Branch** never show.
  */
 export type ThreadActionMenuId =
+  | "auto-settle"
+  | "auto-settle:enabled"
+  | "auto-settle:disabled"
   | "pin"
   | "unpin"
   | "settle"
@@ -32,6 +35,7 @@ export type ThreadActionMenuId =
 
 export interface ThreadActionMenuState {
   /** Archive is disabled while the thread's run works, rather than let it stop the run. */
+  readonly autoSettleEnabled?: boolean;
   readonly isRunning: boolean;
   readonly isTitleRegenerating?: boolean;
   /**
@@ -69,6 +73,18 @@ export function buildThreadActionMenuItems(
               : `Filter by ${state.projectFilter.label}`,
           },
         ]),
+    {
+      id: "auto-settle",
+      label: "Auto-settle behavior",
+      children: [
+        { id: "auto-settle:enabled", label: "Enabled", checked: state.autoSettleEnabled !== false },
+        {
+          id: "auto-settle:disabled",
+          label: "Disabled",
+          checked: state.autoSettleEnabled === false,
+        },
+      ],
+    },
     {
       id: "copy",
       label: "Copy",
