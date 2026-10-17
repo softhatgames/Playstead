@@ -404,7 +404,10 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (input: 
        * Stops a command's background terminal, which Codex leaves running when
        * it interrupts a turn, and checks it is gone when Codex says it was not
        * running (T3 Code's `terminateBackgroundTerminal`). A command that
-       * stays is only logged: the turn ends interrupted all the same.
+       * stays is only logged: the turn ends interrupted all the same. Both
+       * calls are experimental in Codex; the schema generator refuses a Codex
+       * without them, and the weekly T3 Code review in docs/t3-code.md
+       * watches them.
        */
       const terminateCommand = (threadId: string, processId: string) =>
         Effect.gen(function* () {
