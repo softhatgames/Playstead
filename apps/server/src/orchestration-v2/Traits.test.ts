@@ -1,43 +1,16 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
-import {
-  decodeProviderReplayNdjson,
-  materializeReplayWorkspace,
-  type ProviderReplayTranscript,
-} from "@playstead/provider-testing/replayTranscript";
+import type { ProviderReplayTranscript } from "@playstead/provider-testing/replayTranscript";
 import * as Effect from "effect/Effect";
-import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
-import * as Path from "effect/Path";
 
-import { makeClaudeReplay } from "./Adapters/ClaudeAdapterV2.testkit.ts";
-import { makeCodexReplay } from "./Adapters/CodexAdapterV2.testkit.ts";
-import { makeOrchestrationHarness } from "./testkit/OrchestratorHarness.ts";
+import { replayClaude, replayCodex } from "./testkit/ProviderReplay.ts";
 import {
   CLAUDE_TRAITS_CHANGE_SCENARIO,
   CODEX_TRAITS_CHANGE_SCENARIO,
   runTraitsChangeScenario,
   TRAITS_CHANGE_IDS,
 } from "./testkit/fixtures/traitsChange.ts";
-
-/**
- * Seam 1 over Playstead's recordings of the signed-in Claude and Codex: a
- * thread's traits (the model's options the person chose) reach each turn
- * start. Every frame the adapter sends is compared with the recording; the
- * checks below say what those frames must be.
- */
-const readRecording = (provider: "claude" | "codex") =>
-  Effect.gen(function* () {
-    const fs = yield* FileSystem.FileSystem;
-    const path = yield* Path.Path;
-    const recordingPath = path.join(
-      path.dirname(yield* path.fromFileUrl(new URL(import.meta.url))),
-      "testkit",
-      "fixtures",
-      `traits_change.${provider}.ndjson`,
-    );
-    return yield* decodeProviderReplayNdjson(yield* fs.readFileString(recordingPath));
-  });
 
 /** The frames the adapter sent, by type or method, as the recording keeps them. */
 const outbound = (recording: ProviderReplayTranscript, kind: string) =>
@@ -49,26 +22,24 @@ const outbound = (recording: ProviderReplayTranscript, kind: string) =>
       : [];
   });
 
+/**
+ * Seam 1 over Playstead's recordings of the signed-in Claude and Codex: a
+ * thread's traits (the model's options the person chose) reach each turn
+ * start. Every frame the adapter sends is compared with the recording; the
+ * checks below say what those frames must be.
+ */
 describe("Traits on the turn start", () => {
   it.layer(NodeServices.layer)((it) => {
     it.effect("Claude opens on the chosen effort, changes it live, and prefixes Ultrathink", () =>
       Effect.gen(function* () {
-        const path = yield* Path.Path;
-        const recorded = yield* readRecording("claude");
-        let replay: Effect.Success<ReturnType<typeof makeClaudeReplay>> | undefined;
-        const harness = yield* makeOrchestrationHarness({
-          claudeRunner: {
-            allocateSessionId: Effect.suspend(() => replay!.runner.allocateSessionId),
-            open: (input) => Effect.suspend(() => replay!.runner.open(input)),
-          },
-        });
-        replay = yield* makeClaudeReplay(
-          yield* materializeReplayWorkspace(recorded, path.join(harness.home, "traits-game")),
+        const { harness, recorded, assertComplete } = yield* replayClaude(
+          "traits_change.claude.ndjson",
+          { workspace: "traits-game" },
         );
 
         const { runs } = yield* runTraitsChangeScenario(harness, CLAUDE_TRAITS_CHANGE_SCENARIO);
 
-        yield* replay.assertComplete;
+        yield* assertComplete;
         assert.deepStrictEqual<unknown>(
           runs.map((run) => [run.status, run.modelSelection.options]),
           CLAUDE_TRAITS_CHANGE_SCENARIO.turns.map((turn) => ["completed", turn.options]),
@@ -119,19 +90,14 @@ describe("Traits on the turn start", () => {
 
     it.effect("Codex gets the chosen effort and service tier and detailed summaries", () =>
       Effect.gen(function* () {
-        const path = yield* Path.Path;
-        const recorded = yield* readRecording("codex");
-        let replay: Effect.Success<ReturnType<typeof makeCodexReplay>> | undefined;
-        const harness = yield* makeOrchestrationHarness({
-          codexClients: { open: (input) => Effect.suspend(() => replay!.clients.open(input)) },
-        });
-        replay = yield* makeCodexReplay(
-          yield* materializeReplayWorkspace(recorded, path.join(harness.home, "traits-game")),
+        const { harness, recorded, assertComplete } = yield* replayCodex(
+          "traits_change.codex.ndjson",
+          { workspace: "traits-game" },
         );
 
         const { runs } = yield* runTraitsChangeScenario(harness, CODEX_TRAITS_CHANGE_SCENARIO);
 
-        yield* replay.assertComplete;
+        yield* assertComplete;
         assert.deepStrictEqual<unknown>(
           runs.map((run) => [run.status, run.modelSelection.options]),
           CODEX_TRAITS_CHANGE_SCENARIO.turns.map((turn) => ["completed", turn.options]),

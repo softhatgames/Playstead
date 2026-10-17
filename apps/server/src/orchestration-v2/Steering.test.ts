@@ -6,19 +6,14 @@ import type {
   OrchestrationV2Command,
   OrchestrationV2Run,
 } from "@playstead/contracts/orchestrationV2";
-import {
-  decodeProviderReplayNdjson,
-  materializeReplayWorkspace,
-} from "@playstead/provider-testing/replayTranscript";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 
 import type { ClaudeAgentSdkQueryRunner } from "./Adapters/ClaudeAdapterV2.ts";
-import { makeClaudeReplay } from "./Adapters/ClaudeAdapterV2.testkit.ts";
-import { makeCodexReplay } from "./Adapters/CodexAdapterV2.testkit.ts";
 import { makeOrchestrationHarness } from "./testkit/OrchestratorHarness.ts";
+import { replayClaude, replayCodex } from "./testkit/ProviderReplay.ts";
 import {
   CLAUDE_MESSAGE_STEERING_SCENARIO,
   CODEX_MESSAGE_STEERING_SCENARIO,
@@ -28,49 +23,11 @@ import {
   runMessageSteeringScenario,
 } from "./testkit/fixtures/messageSteering.ts";
 
-const readRecording = (name: string) =>
-  Effect.gen(function* () {
-    const fs = yield* FileSystem.FileSystem;
-    const path = yield* Path.Path;
-    const file = path.join(
-      path.dirname(yield* path.fromFileUrl(new URL(import.meta.url))),
-      "testkit",
-      "fixtures",
-      name,
-    );
-    return yield* decodeProviderReplayNdjson(yield* fs.readFileString(file));
-  });
-
 /** Seam 1 with Claude's `query()` replaying the steering recording. */
-const claudeReplay = Effect.gen(function* () {
-  const path = yield* Path.Path;
-  const recorded = yield* readRecording("message_steering.claude.ndjson");
-  let replay: Effect.Success<ReturnType<typeof makeClaudeReplay>> | undefined;
-  const harness = yield* makeOrchestrationHarness({
-    claudeRunner: {
-      allocateSessionId: Effect.suspend(() => replay!.runner.allocateSessionId),
-      open: (input) => Effect.suspend(() => replay!.runner.open(input)),
-    },
-  });
-  replay = yield* makeClaudeReplay(
-    yield* materializeReplayWorkspace(recorded, path.join(harness.home, "steer-game")),
-  );
-  return { harness, assertComplete: replay.assertComplete };
-});
+const claudeReplay = replayClaude("message_steering.claude.ndjson", { workspace: "steer-game" });
 
 /** The same with Codex's app-server replayed. */
-const codexReplay = Effect.gen(function* () {
-  const path = yield* Path.Path;
-  const recorded = yield* readRecording("message_steering.codex.ndjson");
-  let replay: Effect.Success<ReturnType<typeof makeCodexReplay>> | undefined;
-  const harness = yield* makeOrchestrationHarness({
-    codexClients: { open: (input) => Effect.suspend(() => replay!.clients.open(input)) },
-  });
-  replay = yield* makeCodexReplay(
-    yield* materializeReplayWorkspace(recorded, path.join(harness.home, "steer-game")),
-  );
-  return { harness, assertComplete: replay.assertComplete };
-});
+const codexReplay = replayCodex("message_steering.codex.ndjson", { workspace: "steer-game" });
 
 /**
  * Runs the steering scenario over a replay and checks what the person

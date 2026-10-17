@@ -12,18 +12,13 @@ import {
   OrchestrationDispatchCommandError,
   type ProviderInteractionMode,
 } from "@playstead/contracts/orchestrationV2";
-import {
-  decodeProviderReplayNdjson,
-  materializeReplayWorkspace,
-} from "@playstead/provider-testing/replayTranscript";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 
-import { makeClaudeReplay } from "./Adapters/ClaudeAdapterV2.testkit.ts";
-import { makeCodexReplay } from "./Adapters/CodexAdapterV2.testkit.ts";
 import { makeOrchestrationHarness } from "./testkit/OrchestratorHarness.ts";
+import { replayClaude, replayCodex } from "./testkit/ProviderReplay.ts";
 import {
   CLAUDE_PROPOSED_PLAN_SCENARIO,
   CODEX_PROPOSED_PLAN_SCENARIO,
@@ -37,52 +32,6 @@ import {
   runTodoListScenario,
   TODO_LIST_IDS,
 } from "./testkit/fixtures/todoList.ts";
-
-const readRecording = (name: string) =>
-  Effect.gen(function* () {
-    const fs = yield* FileSystem.FileSystem;
-    const path = yield* Path.Path;
-    const file = path.join(
-      path.dirname(yield* path.fromFileUrl(new URL(import.meta.url))),
-      "testkit",
-      "fixtures",
-      name,
-    );
-    return yield* decodeProviderReplayNdjson(yield* fs.readFileString(file));
-  });
-
-/** Seam 1 over a recording made in the harness's folder, with Claude's `query()` replayed. */
-const claudeReplay = (name: string) =>
-  Effect.gen(function* () {
-    const path = yield* Path.Path;
-    const recorded = yield* readRecording(name);
-    let replay: Effect.Success<ReturnType<typeof makeClaudeReplay>> | undefined;
-    const harness = yield* makeOrchestrationHarness({
-      claudeRunner: {
-        allocateSessionId: Effect.suspend(() => replay!.runner.allocateSessionId),
-        open: (input) => Effect.suspend(() => replay!.runner.open(input)),
-      },
-    });
-    replay = yield* makeClaudeReplay(
-      yield* materializeReplayWorkspace(recorded, path.join(harness.home, "empty-game")),
-    );
-    return { harness, assertComplete: replay.assertComplete };
-  });
-
-/** The same with Codex's app-server replayed. */
-const codexReplay = (name: string) =>
-  Effect.gen(function* () {
-    const path = yield* Path.Path;
-    const recorded = yield* readRecording(name);
-    let replay: Effect.Success<ReturnType<typeof makeCodexReplay>> | undefined;
-    const harness = yield* makeOrchestrationHarness({
-      codexClients: { open: (input) => Effect.suspend(() => replay!.clients.open(input)) },
-    });
-    replay = yield* makeCodexReplay(
-      yield* materializeReplayWorkspace(recorded, path.join(harness.home, "empty-game")),
-    );
-    return { harness, assertComplete: replay.assertComplete };
-  });
 
 /**
  * Runs the plan-then-Implement scenario over a replay and checks what the
@@ -402,7 +351,7 @@ describe("Plan mode", () => {
       "Codex proposes a plan in plan mode, then implements it back in the default mode",
       () =>
         Effect.gen(function* () {
-          const replay = yield* codexReplay("proposed_plan.codex.ndjson");
+          const replay = yield* replayCodex("proposed_plan.codex.ndjson");
 
           const projection = yield* proposedPlanTurns(replay, CODEX_PROPOSED_PLAN_SCENARIO);
 
@@ -417,7 +366,7 @@ describe("Plan mode", () => {
       "Claude proposes a plan through ExitPlanMode, then resumes its session to implement it",
       () =>
         Effect.gen(function* () {
-          const replay = yield* claudeReplay("proposed_plan.claude.ndjson");
+          const replay = yield* replayClaude("proposed_plan.claude.ndjson");
 
           const projection = yield* proposedPlanTurns(replay, CLAUDE_PROPOSED_PLAN_SCENARIO);
 
@@ -439,7 +388,7 @@ describe("Plan mode", () => {
     ] as const)("%s", ([, recording, provider]) =>
       Effect.gen(function* () {
         const replay =
-          provider === "codex" ? yield* codexReplay(recording) : yield* claudeReplay(recording);
+          provider === "codex" ? yield* replayCodex(recording) : yield* replayClaude(recording);
         const scenario =
           provider === "codex" ? CODEX_TODO_LIST_SCENARIO : CLAUDE_TODO_LIST_SCENARIO;
 

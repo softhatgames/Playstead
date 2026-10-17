@@ -5,21 +5,14 @@ import {
   OrchestrationDispatchCommandError,
   type OrchestrationV2ThreadProjection,
 } from "@playstead/contracts/orchestrationV2";
-import {
-  decodeProviderReplayNdjson,
-  materializeReplayWorkspace,
-  type ProviderReplayTranscript,
-} from "@playstead/provider-testing/replayTranscript";
+import type { ProviderReplayTranscript } from "@playstead/provider-testing/replayTranscript";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
-import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
-import * as Path from "effect/Path";
 import * as TestClock from "effect/testing/TestClock";
 
-import { makeClaudeReplay } from "./Adapters/ClaudeAdapterV2.testkit.ts";
-import { makeCodexReplay } from "./Adapters/CodexAdapterV2.testkit.ts";
 import { makeOrchestrationHarness } from "./testkit/OrchestratorHarness.ts";
+import { replayClaude, replayCodex } from "./testkit/ProviderReplay.ts";
 import {
   FILE_CREATE_IDS,
   FILE_CREATE_SCENARIO,
@@ -34,60 +27,6 @@ import {
   sendLongMessage,
   TURN_INTERRUPT_IDS,
 } from "./testkit/fixtures/turnInterrupt.ts";
-
-const fixturePath = (name: string) =>
-  Effect.gen(function* () {
-    const path = yield* Path.Path;
-    return path.join(
-      path.dirname(yield* path.fromFileUrl(new URL(import.meta.url))),
-      "testkit",
-      "fixtures",
-      name,
-    );
-  });
-
-const readRecording = (name: string) =>
-  Effect.gen(function* () {
-    const fs = yield* FileSystem.FileSystem;
-    return yield* decodeProviderReplayNdjson(yield* fs.readFileString(yield* fixturePath(name)));
-  });
-
-/** Seam 1 with Claude's `query()` replaying a recording made in the harness's folder. */
-const claudeReplay = (name: string) =>
-  Effect.gen(function* () {
-    const path = yield* Path.Path;
-    const recorded = yield* readRecording(name);
-    let replay: Effect.Success<ReturnType<typeof makeClaudeReplay>> | undefined;
-    const harness = yield* makeOrchestrationHarness({
-      claudeRunner: {
-        allocateSessionId: Effect.suspend(() => replay!.runner.allocateSessionId),
-        open: (input) => Effect.suspend(() => replay!.runner.open(input)),
-      },
-    });
-    replay = yield* makeClaudeReplay(
-      yield* materializeReplayWorkspace(recorded, path.join(harness.home, "empty-game")),
-    );
-    return { harness, replay: replay! };
-  });
-
-/** Seam 1 with Codex's app-server replaying a recording made in the harness's folder. */
-const codexReplay = (
-  name: string,
-  edit: (recording: ProviderReplayTranscript) => ProviderReplayTranscript = (recording) =>
-    recording,
-) =>
-  Effect.gen(function* () {
-    const path = yield* Path.Path;
-    const recorded = edit(yield* readRecording(name));
-    let replay: Effect.Success<ReturnType<typeof makeCodexReplay>> | undefined;
-    const harness = yield* makeOrchestrationHarness({
-      codexClients: { open: (input) => Effect.suspend(() => replay!.clients.open(input)) },
-    });
-    replay = yield* makeCodexReplay(
-      yield* materializeReplayWorkspace(recorded, path.join(harness.home, "empty-game")),
-    );
-    return { harness, replay: replay!, recorded };
-  });
 
 /** The `processId` of each command Codex started in a recording. */
 const codexCommandProcesses = (recording: ProviderReplayTranscript) =>
@@ -168,7 +107,7 @@ describe("Interrupt a turn", () => {
       "a run interrupted before its provider turn starts ends interrupted, and the next message runs",
       () =>
         Effect.gen(function* () {
-          const { harness, replay } = yield* claudeReplay("file_create.claude.ndjson");
+          const { harness, replay } = yield* replayClaude("file_create.claude.ndjson");
 
           // The first message's run is still starting when it is interrupted,
           // so Claude never sees it; the recording is the second message's.
@@ -246,8 +185,8 @@ describe("Interrupt a turn", () => {
           Effect.gen(function* () {
             const { harness, replay } =
               provider.name === "Claude"
-                ? yield* claudeReplay("turn_interrupt.claude.ndjson")
-                : yield* codexReplay("turn_interrupt.codex.ndjson");
+                ? yield* replayClaude("turn_interrupt.claude.ndjson")
+                : yield* replayCodex("turn_interrupt.codex.ndjson");
 
             const { first, next } = yield* runTurnInterruptScenario(harness, provider.scenario);
 
@@ -286,7 +225,7 @@ describe("Interrupt a turn", () => {
       "Codex: interrupting a turn stops the command it was running, which Codex's own interrupt leaves running",
       () =>
         Effect.gen(function* () {
-          const { harness, replay, recorded } = yield* codexReplay("turn_interrupt.codex.ndjson");
+          const { harness, replay, recorded } = yield* replayCodex("turn_interrupt.codex.ndjson");
 
           const { first } = yield* runTurnInterruptScenario(harness, CODEX_TURN_INTERRUPT_SCENARIO);
 
@@ -304,9 +243,8 @@ describe("Interrupt a turn", () => {
       () =>
         Effect.gen(function* () {
           // Codex as recorded, up to the interrupt: it never answers it.
-          const { harness, replay } = yield* codexReplay(
-            "turn_interrupt.codex.ndjson",
-            (recording) => {
+          const { harness, replay } = yield* replayCodex("turn_interrupt.codex.ndjson", {
+            edit: (recording) => {
               const at = recording.entries.findIndex(
                 (entry) =>
                   entry.type === "expect_outbound" &&
@@ -314,7 +252,7 @@ describe("Interrupt a turn", () => {
               );
               return { ...recording, entries: recording.entries.slice(0, at + 1) };
             },
-          );
+          });
           const { sent } = yield* sendLongMessage(harness, CODEX_TURN_INTERRUPT_SCENARIO);
           yield* harness.worker.drain;
           const command = yield* awaitCommandRunning(harness, sent.sequence);

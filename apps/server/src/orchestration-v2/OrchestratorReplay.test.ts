@@ -2,18 +2,12 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import { CommandId, MessageId } from "@playstead/contracts/baseSchemas";
 import { OrchestrationDispatchCommandError } from "@playstead/contracts/orchestrationV2";
-import {
-  decodeProviderReplayNdjson,
-  materializeReplayWorkspace,
-  type ProviderReplayEntry,
-} from "@playstead/provider-testing/replayTranscript";
+import type { ProviderReplayEntry } from "@playstead/provider-testing/replayTranscript";
 import * as Effect from "effect/Effect";
-import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 
-import { makeClaudeReplay } from "./Adapters/ClaudeAdapterV2.testkit.ts";
-import { makeOrchestrationHarness } from "./testkit/OrchestratorHarness.ts";
+import { replayClaude } from "./testkit/ProviderReplay.ts";
 import {
   FILE_CREATE_IDS,
   FILE_CREATE_SCENARIO,
@@ -32,39 +26,16 @@ const replayFileCreate = (
   followedBy: ReadonlyArray<ProviderReplayEntry> = [],
   beforeTurn: ReadonlyArray<ProviderReplayEntry> = [],
 ) =>
-  Effect.gen(function* () {
-    const fs = yield* FileSystem.FileSystem;
-    const path = yield* Path.Path;
-    const recordingPath = path.join(
-      path.dirname(yield* path.fromFileUrl(new URL(import.meta.url))),
-      "testkit",
-      "fixtures",
-      "file_create.claude.ndjson",
-    );
-    const recorded = yield* decodeProviderReplayNdjson(yield* fs.readFileString(recordingPath));
-    // The workspace is the harness's own folder, known only once it exists.
-    let replay: Effect.Success<ReturnType<typeof makeClaudeReplay>> | undefined;
-    const harness = yield* makeOrchestrationHarness({
-      claudeRunner: {
-        allocateSessionId: Effect.suspend(() => replay!.runner.allocateSessionId),
-        open: (input) => Effect.suspend(() => replay!.runner.open(input)),
-      },
-    });
-    replay = yield* makeClaudeReplay(
-      yield* materializeReplayWorkspace(
-        {
-          ...recorded,
-          entries: [
-            ...recorded.entries.slice(0, 2),
-            ...beforeTurn,
-            ...recorded.entries.slice(2),
-            ...followedBy,
-          ],
-        },
-        path.join(harness.home, "empty-game"),
-      ),
-    );
-    return { harness, replay: replay! };
+  replayClaude("file_create.claude.ndjson", {
+    edit: (recorded) => ({
+      ...recorded,
+      entries: [
+        ...recorded.entries.slice(0, 2),
+        ...beforeTurn,
+        ...recorded.entries.slice(2),
+        ...followedBy,
+      ],
+    }),
   });
 
 describe("Chat with Claude in a thread", () => {

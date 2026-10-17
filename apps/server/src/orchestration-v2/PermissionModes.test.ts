@@ -2,18 +2,13 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import { CommandId, MessageId, ProjectId, ThreadId } from "@playstead/contracts/baseSchemas";
 import { OrchestrationDispatchCommandError } from "@playstead/contracts/orchestrationV2";
-import {
-  decodeProviderReplayNdjson,
-  materializeReplayWorkspace,
-} from "@playstead/provider-testing/replayTranscript";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 
-import { makeClaudeReplay } from "./Adapters/ClaudeAdapterV2.testkit.ts";
-import { makeCodexReplay } from "./Adapters/CodexAdapterV2.testkit.ts";
 import { makeOrchestrationHarness } from "./testkit/OrchestratorHarness.ts";
+import { replayClaude, replayCodex } from "./testkit/ProviderReplay.ts";
 import {
   AUTO_MODE_IDS,
   type AutoModeScenario,
@@ -21,52 +16,6 @@ import {
   CODEX_AUTO_MODE_SCENARIO,
   runAutoModeScenario,
 } from "./testkit/fixtures/autoMode.ts";
-
-const readRecording = (name: string) =>
-  Effect.gen(function* () {
-    const fs = yield* FileSystem.FileSystem;
-    const path = yield* Path.Path;
-    const file = path.join(
-      path.dirname(yield* path.fromFileUrl(new URL(import.meta.url))),
-      "testkit",
-      "fixtures",
-      name,
-    );
-    return yield* decodeProviderReplayNdjson(yield* fs.readFileString(file));
-  });
-
-/** Seam 1 over a recording made in the harness's folder, with Claude's `query()` replayed. */
-const claudeReplay = (name: string) =>
-  Effect.gen(function* () {
-    const path = yield* Path.Path;
-    const recorded = yield* readRecording(name);
-    let replay: Effect.Success<ReturnType<typeof makeClaudeReplay>> | undefined;
-    const harness = yield* makeOrchestrationHarness({
-      claudeRunner: {
-        allocateSessionId: Effect.suspend(() => replay!.runner.allocateSessionId),
-        open: (input) => Effect.suspend(() => replay!.runner.open(input)),
-      },
-    });
-    replay = yield* makeClaudeReplay(
-      yield* materializeReplayWorkspace(recorded, path.join(harness.home, "empty-game")),
-    );
-    return { harness, assertComplete: replay.assertComplete };
-  });
-
-/** The same with Codex's app-server replayed. */
-const codexReplay = (name: string) =>
-  Effect.gen(function* () {
-    const path = yield* Path.Path;
-    const recorded = yield* readRecording(name);
-    let replay: Effect.Success<ReturnType<typeof makeCodexReplay>> | undefined;
-    const harness = yield* makeOrchestrationHarness({
-      codexClients: { open: (input) => Effect.suspend(() => replay!.clients.open(input)) },
-    });
-    replay = yield* makeCodexReplay(
-      yield* materializeReplayWorkspace(recorded, path.join(harness.home, "empty-game")),
-    );
-    return { harness, assertComplete: replay.assertComplete };
-  });
 
 /**
  * Runs the Auto scenario over a replay and checks what the person sees: the
@@ -219,7 +168,7 @@ describe("Permission modes", () => {
       "Codex writes a file in Auto without asking, then runs the next turn in Full access",
       () =>
         Effect.gen(function* () {
-          const replay = yield* codexReplay("auto_mode.codex.ndjson");
+          const replay = yield* replayCodex("auto_mode.codex.ndjson");
 
           const projection = yield* autoModeTurns(replay, CODEX_AUTO_MODE_SCENARIO);
 
@@ -232,7 +181,7 @@ describe("Permission modes", () => {
       "Claude writes a file in Auto without asking, then resumes its session in Full access",
       () =>
         Effect.gen(function* () {
-          const replay = yield* claudeReplay("auto_mode.claude.ndjson");
+          const replay = yield* replayClaude("auto_mode.claude.ndjson");
 
           const projection = yield* autoModeTurns(replay, CLAUDE_AUTO_MODE_SCENARIO);
 

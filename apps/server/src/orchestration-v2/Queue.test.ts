@@ -7,10 +7,6 @@ import {
   OrchestrationDispatchCommandError,
   type OrchestrationV2Run,
 } from "@playstead/contracts/orchestrationV2";
-import {
-  decodeProviderReplayNdjson,
-  materializeReplayWorkspace,
-} from "@playstead/provider-testing/replayTranscript";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
@@ -23,9 +19,8 @@ import {
   type ClaudeAgentSdkQueryRunner,
   ClaudeAgentSdkQueryRunnerError,
 } from "./Adapters/ClaudeAdapterV2.ts";
-import { makeClaudeReplay } from "./Adapters/ClaudeAdapterV2.testkit.ts";
-import { makeCodexReplay } from "./Adapters/CodexAdapterV2.testkit.ts";
 import { makeOrchestrationHarness } from "./testkit/OrchestratorHarness.ts";
+import { replayClaude, replayCodex } from "./testkit/ProviderReplay.ts";
 import {
   CLAUDE_QUEUED_TURN_SCENARIO,
   CODEX_QUEUED_TURN_SCENARIO,
@@ -158,49 +153,11 @@ const queuedTexts = (projection: Effect.Success<ReturnType<typeof threadOf>>) =>
     .toSorted((left, right) => (left.queuePosition ?? 0) - (right.queuePosition ?? 0))
     .map((run) => projection.messages.find((message) => message.id === run.userMessageId)?.text);
 
-const readRecording = (name: string) =>
-  Effect.gen(function* () {
-    const fs = yield* FileSystem.FileSystem;
-    const path = yield* Path.Path;
-    const file = path.join(
-      path.dirname(yield* path.fromFileUrl(new URL(import.meta.url))),
-      "testkit",
-      "fixtures",
-      name,
-    );
-    return yield* decodeProviderReplayNdjson(yield* fs.readFileString(file));
-  });
-
 /** Seam 1 with Claude's `query()` replaying the queue recording. */
-const claudeReplay = Effect.gen(function* () {
-  const path = yield* Path.Path;
-  const recorded = yield* readRecording("queued_turn.claude.ndjson");
-  let replay: Effect.Success<ReturnType<typeof makeClaudeReplay>> | undefined;
-  const harness = yield* makeOrchestrationHarness({
-    claudeRunner: {
-      allocateSessionId: Effect.suspend(() => replay!.runner.allocateSessionId),
-      open: (input) => Effect.suspend(() => replay!.runner.open(input)),
-    },
-  });
-  replay = yield* makeClaudeReplay(
-    yield* materializeReplayWorkspace(recorded, path.join(harness.home, "queue-game")),
-  );
-  return { harness, assertComplete: replay.assertComplete };
-});
+const claudeReplay = replayClaude("queued_turn.claude.ndjson", { workspace: "queue-game" });
 
 /** The same with Codex's app-server replayed. */
-const codexReplay = Effect.gen(function* () {
-  const path = yield* Path.Path;
-  const recorded = yield* readRecording("queued_turn.codex.ndjson");
-  let replay: Effect.Success<ReturnType<typeof makeCodexReplay>> | undefined;
-  const harness = yield* makeOrchestrationHarness({
-    codexClients: { open: (input) => Effect.suspend(() => replay!.clients.open(input)) },
-  });
-  replay = yield* makeCodexReplay(
-    yield* materializeReplayWorkspace(recorded, path.join(harness.home, "queue-game")),
-  );
-  return { harness, assertComplete: replay.assertComplete };
-});
+const codexReplay = replayCodex("queued_turn.codex.ndjson", { workspace: "queue-game" });
 
 /**
  * Runs the queue scenario over a replay and checks what the person sees.

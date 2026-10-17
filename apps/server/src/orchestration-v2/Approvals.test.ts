@@ -1,19 +1,12 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import { CommandId } from "@playstead/contracts/baseSchemas";
-import {
-  decodeProviderReplayNdjson,
-  materializeReplayWorkspace,
-} from "@playstead/provider-testing/replayTranscript";
 import * as Effect from "effect/Effect";
-import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
-import * as Path from "effect/Path";
 
-import { makeClaudeReplay } from "./Adapters/ClaudeAdapterV2.testkit.ts";
-import { makeCodexReplay } from "./Adapters/CodexAdapterV2.testkit.ts";
 import { makeTestServerConfig } from "../testUtils/testServer.ts";
 import { makeOrchestrationHarness } from "./testkit/OrchestratorHarness.ts";
+import { replayClaude, replayProvider } from "./testkit/ProviderReplay.ts";
 import {
   awaitPendingApproval,
   CLAUDE_SUPERVISED_SCENARIO,
@@ -28,55 +21,6 @@ import {
   SESSION_APPROVAL_SCENARIOS,
   type SessionApprovalScenarioName,
 } from "./testkit/fixtures/sessionApprovals.ts";
-
-const readRecording = (name: string) =>
-  Effect.gen(function* () {
-    const fs = yield* FileSystem.FileSystem;
-    const path = yield* Path.Path;
-    const file = path.join(
-      path.dirname(yield* path.fromFileUrl(new URL(import.meta.url))),
-      "testkit",
-      "fixtures",
-      name,
-    );
-    return yield* decodeProviderReplayNdjson(yield* fs.readFileString(file));
-  });
-
-type HarnessInput = Parameters<typeof makeOrchestrationHarness>[0];
-
-/** Seam 1 with the provider's transport replaying a recording made in the harness's folder. */
-const replayed = (
-  provider: "Claude" | "Codex",
-  name: string,
-  options: Pick<HarnessInput, "config" | "recoverOnStartup"> = {},
-) =>
-  Effect.gen(function* () {
-    const path = yield* Path.Path;
-    const recorded = yield* readRecording(name);
-    if (provider === "Claude") {
-      let replay: Effect.Success<ReturnType<typeof makeClaudeReplay>> | undefined;
-      const harness = yield* makeOrchestrationHarness({
-        ...options,
-        claudeRunner: {
-          allocateSessionId: Effect.suspend(() => replay!.runner.allocateSessionId),
-          open: (input) => Effect.suspend(() => replay!.runner.open(input)),
-        },
-      });
-      replay = yield* makeClaudeReplay(
-        yield* materializeReplayWorkspace(recorded, path.join(harness.home, "empty-game")),
-      );
-      return { harness, assertComplete: replay.assertComplete };
-    }
-    let replay: Effect.Success<ReturnType<typeof makeCodexReplay>> | undefined;
-    const harness = yield* makeOrchestrationHarness({
-      ...options,
-      codexClients: { open: (input) => Effect.suspend(() => replay!.clients.open(input)) },
-    });
-    replay = yield* makeCodexReplay(
-      yield* materializeReplayWorkspace(recorded, path.join(harness.home, "empty-game")),
-    );
-    return { harness, assertComplete: replay.assertComplete };
-  });
 
 type Harness = Effect.Success<ReturnType<typeof makeOrchestrationHarness>>;
 
@@ -108,8 +52,8 @@ describe("Approvals in Supervised", () => {
         `${provider.name}: the change waits for the person's approval, and happens once approved`,
         () =>
           Effect.gen(function* () {
-            const { harness, assertComplete } = yield* replayed(
-              provider.name,
+            const { harness, assertComplete } = yield* replayProvider(
+              provider.file,
               `approval_accept.${provider.file}.ndjson`,
             );
 
@@ -149,8 +93,8 @@ describe("Approvals in Supervised", () => {
         `${provider.name}: a declined change never happens, and the agent is told and goes on`,
         () =>
           Effect.gen(function* () {
-            const { harness, assertComplete } = yield* replayed(
-              provider.name,
+            const { harness, assertComplete } = yield* replayProvider(
+              provider.file,
               `approval_decline.${provider.file}.ndjson`,
             );
 
@@ -186,8 +130,8 @@ describe("Approvals in Supervised", () => {
 
       it.effect(`${provider.name}: Cancel stops the turn, and the change never happens`, () =>
         Effect.gen(function* () {
-          const { harness, assertComplete } = yield* replayed(
-            provider.name,
+          const { harness, assertComplete } = yield* replayProvider(
+            provider.file,
             `approval_cancel.${provider.file}.ndjson`,
           );
 
@@ -210,8 +154,8 @@ describe("Approvals in Supervised", () => {
         `${provider.name}: interrupting a turn waiting on an approval clears the approval`,
         () =>
           Effect.gen(function* () {
-            const { harness, assertComplete } = yield* replayed(
-              provider.name,
+            const { harness, assertComplete } = yield* replayProvider(
+              provider.file,
               `approval_interrupt.${provider.file}.ndjson`,
             );
 
@@ -252,7 +196,7 @@ describe("Approvals in Supervised", () => {
 
     it.effect("an approval is refused without a decision, or with answers instead", () =>
       Effect.gen(function* () {
-        const { harness } = yield* replayed("Claude", "approval_accept.claude.ndjson");
+        const { harness } = yield* replayClaude("approval_accept.claude.ndjson");
         const { sent } = yield* sendSupervisedMessage(harness, CLAUDE_SUPERVISED_SCENARIO);
         const approval = yield* awaitPendingApproval(harness, sent.sequence);
 
@@ -280,13 +224,14 @@ describe("Approvals in Supervised", () => {
         Effect.gen(function* () {
           // The first server stops (is left behind) while Claude waits on the decision.
           const config = yield* makeTestServerConfig();
-          const first = yield* replayed("Claude", "approval_accept.claude.ndjson", { config });
+          const first = yield* replayClaude("approval_accept.claude.ndjson", {
+            harness: { config },
+          });
           const { sent } = yield* sendSupervisedMessage(first.harness, CLAUDE_SUPERVISED_SCENARIO);
           const approval = yield* awaitPendingApproval(first.harness, sent.sequence);
 
-          const { harness } = yield* replayed("Claude", "approval_accept.claude.ndjson", {
-            config,
-            recoverOnStartup: true,
+          const { harness } = yield* replayClaude("approval_accept.claude.ndjson", {
+            harness: { config, recoverOnStartup: true },
           });
           const projection = yield* projectionOf(harness);
           const request = projection.runtimeRequests.find(
@@ -331,8 +276,8 @@ describe("Auto-accept edits and approvals for the session", () => {
     firstAnswer?: "acceptAlways",
   ) =>
     Effect.gen(function* () {
-      const { harness, assertComplete } = yield* replayed(
-        provider.name,
+      const { harness, assertComplete } = yield* replayProvider(
+        provider.file,
         `${name}.${provider.file}.ndjson`,
       );
       const recorded = SESSION_APPROVAL_SCENARIOS[provider.file][name];
