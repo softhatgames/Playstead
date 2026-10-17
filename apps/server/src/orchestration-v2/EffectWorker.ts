@@ -60,7 +60,8 @@ const make = Effect.gen(function* () {
           runId: effect.request.runId,
           providerSessionId: effect.request.providerSessionId,
           requestId: effect.request.requestId,
-          answers: effect.request.answers,
+          ...(effect.request.decision === undefined ? {} : { decision: effect.request.decision }),
+          ...(effect.request.answers === undefined ? {} : { answers: effect.request.answers }),
         });
     }
   };

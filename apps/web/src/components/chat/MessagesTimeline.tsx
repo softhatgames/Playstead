@@ -1,6 +1,6 @@
 import { useEffect, useRef } from "react";
 
-import { FilePenIcon, WrenchIcon } from "../icons.tsx";
+import { FilePenIcon, MessageCircleIcon, WrenchIcon } from "../icons.tsx";
 import type { TimelineRow } from "./timeline.logic.ts";
 
 /**
@@ -113,6 +113,8 @@ function WorkLogRow({ row }: { readonly row: Extract<TimelineRow, { kind: "work"
   const icon =
     row.icon === "file" ? (
       <FilePenIcon className="size-3.5 shrink-0" />
+    ) : row.icon === "approval" ? (
+      <MessageCircleIcon className="size-3.5 shrink-0" />
     ) : (
       <WrenchIcon className="size-3.5 shrink-0" />
     );
