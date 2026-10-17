@@ -63,9 +63,11 @@ export type ProjectServiceError =
   | ProjectOperationError;
 
 /**
- * Projects: adding a folder, and reading them back (T3 Code's
- * `apps/server/src/project/ProjectService.ts` at 2577baf, `create` and the
- * shell reads only). A create is decided by `planProjectCommand` under the
+ * Project management, following T3 Code's `ProjectService.ts` at 2577baf.
+ * Deletion durably deletes children through the orchestrator before committing
+ * project removal, so a partial cascade can be retried. The orchestrator is
+ * requested at deletion time: scratch folder provisioning needs this service
+ * while constructing the orchestrator. A create is decided under the
  * folder's and the project's locks and committed through the event sink, so
  * the event, the projection row and the receipt land together.
  */
@@ -73,7 +75,9 @@ export class ProjectService extends Context.Service<
   ProjectService,
   {
     readonly update: (input: ProjectUpdatePayload) => Effect.Effect<Project, ProjectServiceError>;
-    readonly delete: (input: ProjectDeletePayload) => Effect.Effect<Project, ProjectServiceError>;
+    readonly delete: (
+      input: ProjectDeletePayload,
+    ) => Effect.Effect<Project, ProjectServiceError, Orchestrator.OrchestratorV2>;
     readonly create: (input: ProjectCreateInput) => Effect.Effect<Project, ProjectServiceError>;
     readonly getShell: (
       projectId: ProjectId,
@@ -89,7 +93,6 @@ const make = Effect.gen(function* () {
   const projects = yield* ProjectStore.ProjectStoreV2;
   const receipts = yield* CommandReceiptStore.CommandReceiptStoreV2;
   const projections = yield* ProjectionStore.ProjectionStoreV2;
-  const orchestrator = yield* Orchestrator.OrchestratorV2;
   const eventSink = yield* EventSink.EventSinkV2;
   const workspacePaths = yield* WorkspacePaths.WorkspacePaths;
   const crypto = yield* Crypto.Crypto;
@@ -208,6 +211,7 @@ const make = Effect.gen(function* () {
   });
 
   const deleteProject = Effect.fn("ProjectService.delete")(function* (input: ProjectDeletePayload) {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
     const previous = yield* Effect.all({
       project: receipts.getProjectByCommandId(input.commandId),
       thread: receipts.getByCommandId(input.commandId),
@@ -356,4 +360,4 @@ const make = Effect.gen(function* () {
   });
 });
 
-export const layer = Layer.effect(ProjectService, make).pipe(Layer.provide(Orchestrator.layer));
+export const layer = Layer.effect(ProjectService, make);

@@ -13,6 +13,7 @@ import * as OrchestrationRuntime from "../orchestration-v2/runtimeLayer.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import { makeTestServerConfig } from "../testUtils/testServer.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
+import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import * as ProviderAdapterRegistry from "../orchestration-v2/ProviderAdapterRegistry.ts";
 import * as ProjectService from "./ProjectService.ts";
 
@@ -24,7 +25,7 @@ import * as ProjectService from "./ProjectService.ts";
 const startProjects = Effect.gen(function* () {
   const config = yield* makeTestServerConfig();
   const context = yield* Layer.build(
-    ProjectService.layer.pipe(
+    Layer.mergeAll(ProjectService.layer, Orchestrator.layer).pipe(
       Layer.provide(ProviderAdapterRegistry.layerFromAdapters([])),
       Layer.provide(OrchestrationRuntime.layer),
       Layer.provide(WorkspacePaths.layer),
@@ -33,7 +34,17 @@ const startProjects = Effect.gen(function* () {
     ),
   );
   const projects = yield* ProjectService.ProjectService.pipe(Effect.provideContext(context));
-  return { projects, home: config.baseDir };
+  const orchestrator = yield* Orchestrator.OrchestratorV2.pipe(Effect.provideContext(context));
+  return {
+    projects: {
+      ...projects,
+      delete: (input: Parameters<typeof projects.delete>[0]) =>
+        projects
+          .delete(input)
+          .pipe(Effect.provideService(Orchestrator.OrchestratorV2, orchestrator)),
+    },
+    home: config.baseDir,
+  };
 });
 
 const createInput = (

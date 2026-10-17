@@ -112,6 +112,7 @@ const layerWsRpc = WsRpcGroup.toLayer(
             ? projects.update(mutation)
             : projects.delete(mutation)
         ).pipe(
+          Effect.provideService(Orchestrator.OrchestratorV2, orchestrator),
           Effect.catchTag("ProjectOperationError", (cause) =>
             Effect.fail(
               new ProjectMutationError({

@@ -315,7 +315,9 @@ export function Sidebar() {
     // scope shows it; otherwise the scope's, or the first project.
     const routeThread = routeThreadId === undefined ? undefined : threadsById.get(routeThreadId);
     const inScope = (projectId: string | undefined) =>
-      projectId !== undefined && (scopedProjectIds === null || scopedProjectIds.has(projectId));
+      projectId !== undefined &&
+      projects.some((project) => project.id === projectId) &&
+      (scopedProjectIds === null || scopedProjectIds.has(projectId));
     const current = [routeThread?.projectId, readActiveProjectId()].find(inScope) as
       | ProjectId
       | undefined;
@@ -376,7 +378,7 @@ export function Sidebar() {
               {groups.length > 0 ? (
                 <>
                   <ProjectScopeMenu groups={groups} scopedGroup={scopedGroup} />
-                  {scopedGroup?.projectIds[0] === undefined ? null : (
+                  {scopedGroup?.projectIds[0] === undefined || scopedGroup.isScratch ? null : (
                     <Link
                       to="/settings/projects/$projectId"
                       params={{ projectId: scopedGroup.projectIds[0] }}

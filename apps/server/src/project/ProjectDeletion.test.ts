@@ -3,7 +3,7 @@ import { makeTestServerConfig } from "../testUtils/testServer.ts";
 import * as Stream from "effect/Stream";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
-import { CommandId, ProjectId, ThreadId } from "@playstead/contracts/baseSchemas";
+import { CommandId, MessageId, ProjectId, ThreadId } from "@playstead/contracts/baseSchemas";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import { makeOrchestrationHarness } from "../orchestration-v2/testkit/OrchestratorHarness.ts";
@@ -133,6 +133,14 @@ describe("Project deletion", () => {
             commandId: CommandId.make("archive"),
             threadId: archived,
           });
+          yield* harness.orchestrator.dispatch({
+            type: "message.dispatch",
+            commandId: CommandId.make("queued-message"),
+            threadId: active,
+            messageId: MessageId.make("message:queued"),
+            text: "Build a game",
+            titleSeed: "Build a game",
+          });
           const deletion = { commandId: CommandId.make("remove"), projectId };
           const refused = yield* Effect.flip(harness.projects.delete(deletion));
           assert.strictEqual(refused._tag, "ProjectNotEmptyError");
@@ -145,6 +153,33 @@ describe("Project deletion", () => {
             );
             assert.isNotNull(projection.thread.deletedAt);
           }
+          const stopped = Option.getOrThrow(
+            yield* harness.orchestrator.getThreadProjection(active),
+          );
+          assert.deepStrictEqual(
+            stopped.runs.map((run) => run.status),
+            ["cancelled"],
+          );
+          yield* harness.worker.drain;
+          const refusedCreate = yield* Effect.flip(
+            harness.orchestrator.dispatch({
+              type: "thread.create",
+              commandId: CommandId.make("create-after-delete"),
+              threadId: ThreadId.make("thread:too-late"),
+              projectId,
+              title: "New thread",
+              modelSelection: { instanceId: "claudeAgent", model: "claude-haiku-5-5" },
+            }),
+          );
+          assert.strictEqual(refusedCreate._tag, "OrchestrationDispatchCommandError");
+          const refusedUpdate = yield* Effect.flip(
+            harness.projects.update({
+              commandId: CommandId.make("rename-after-delete"),
+              projectId,
+              title: "Too late",
+            }),
+          );
+          assert.strictEqual(refusedUpdate._tag, "ProjectOperationError");
           assert.deepStrictEqual(yield* harness.projects.listShells, []);
         }).pipe(Effect.scoped),
     );

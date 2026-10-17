@@ -173,6 +173,13 @@ export const makeOrchestrationHarness = Effect.fn("makeOrchestrationHarness")(fu
 
   return {
     ...services,
+    projects: {
+      ...services.projects,
+      delete: (input: Parameters<typeof services.projects.delete>[0]) =>
+        services.projects
+          .delete(input)
+          .pipe(Effect.provideService(Orchestrator.OrchestratorV2, services.orchestrator)),
+    },
     home: config.baseDir,
     awaitRunEnded,
     shell: streamShell.pipe(Stream.provideContext(context), Stream.orDie),
