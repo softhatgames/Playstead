@@ -1,10 +1,12 @@
+import { threadRowInteractions } from "../hooks/threadRowInteractions.ts";
+import type { SidebarSweepAction } from "./Sidebar.drag.ts";
 import { isScratchProject } from "@playstead/client-runtime/state/projects";
 import { useScratchProject } from "../hooks/useScratchProject.ts";
 import {
   SidebarThreadDrag,
   ThreadDropBoundary,
   useThreadDrag,
-  useSettleSweep,
+  useActionSweep,
 } from "./sidebar/SidebarThreadDrag.tsx";
 import { canSnooze } from "@playstead/client-runtime/state/threadSnoozed";
 import { registerSnoozeAndAdvance } from "../snoozeAndAdvance.ts";
@@ -39,14 +41,7 @@ import {
   unsettleThread,
 } from "../hooks/useThreadActions.ts";
 import { registerSettleAndAdvance } from "../settleAndAdvance.ts";
-import {
-  clearThreadSelection,
-  rangeSelectThreadsTo,
-  readThreadSelection,
-  setThreadSelectionAnchor,
-  toggleThreadSelection,
-  useThreadSelection,
-} from "../threadSelection.ts";
+import { clearThreadSelection, useThreadSelection } from "../threadSelection.ts";
 import { failureToast } from "../toast.ts";
 import {
   useProjectOrder,
@@ -70,7 +65,6 @@ import {
   SquarePenIcon,
   Undo2Icon,
 } from "./icons.tsx";
-import { isModClick } from "./LegacySidebar.tsx";
 import {
   buildSidebarProjectGroups,
   buildSidebarSections,
@@ -81,7 +75,6 @@ import {
   type SidebarSection,
   threadAfterPark,
 } from "./Sidebar.inbox.logic.ts";
-import { isTrailingDoubleClick } from "./Sidebar.logic.ts";
 import { SidebarThreadSearch } from "./sidebar/SidebarThreadSearch.tsx";
 import { ThreadStatusIndicator, useThreadRename } from "./sidebar/SidebarThreadParts.tsx";
 
@@ -206,6 +199,27 @@ export function Sidebar() {
   const routeThreadIdRef = useRef(routeThreadId);
   routeThreadIdRef.current = routeThreadId;
 
+  const planParkNavigation = useCallback(
+    (thread: Pick<SidebarThread, "id" | "projectId">, coParkingIds?: ReadonlySet<string>) => {
+      const viewing = routeThreadIdRef.current === thread.id;
+      const next = viewing
+        ? threadAfterPark({
+            orderedIds: orderedIdsRef.current,
+            parkedIds: settledIdsRef.current,
+            threadId: thread.id,
+            ...(coParkingIds === undefined ? {} : { coParkingIds }),
+          })
+        : null;
+      return () => {
+        if (!viewing || routeThreadIdRef.current !== thread.id) return;
+        void (next === null
+          ? navigate({ to: "/draft/$draftId", params: { draftId: createDraft(thread.projectId) } })
+          : navigate({ to: "/threads/$threadId", params: { threadId: next as ThreadId } }));
+      };
+    },
+    [navigate],
+  );
+
   /**
    * Settles a thread; settling the one in view moves to the next thread not
    * settled, or a new draft in its project (T3 Code's `attemptSettle` with
@@ -216,29 +230,12 @@ export function Sidebar() {
       thread: Pick<SidebarThread, "id" | "projectId" | "pinnedAt" | "pinOrderKey" | "snoozedUntil">,
       coSettling?: ReadonlySet<string>,
     ) => {
-      const viewing = routeThreadIdRef.current === thread.id;
-      const next = viewing
-        ? threadAfterPark({
-            orderedIds: orderedIdsRef.current,
-            parkedIds: settledIdsRef.current,
-            threadId: thread.id,
-            ...(coSettling === undefined ? {} : { coParkingIds: coSettling }),
-          })
-        : null;
-      settleThread(thread).then(
-        () => {
-          if (!viewing || routeThreadIdRef.current !== thread.id) return;
-          void (next === null
-            ? navigate({
-                to: "/draft/$draftId",
-                params: { draftId: createDraft(thread.projectId) },
-              })
-            : navigate({ to: "/threads/$threadId", params: { threadId: next as ThreadId } }));
-        },
-        (error: unknown) => failureToast("Failed to settle thread", error),
+      const advance = planParkNavigation(thread, coSettling);
+      settleThread(thread).then(advance, (error: unknown) =>
+        failureToast("Failed to settle thread", error),
       );
     },
-    [navigate],
+    [planParkNavigation],
   );
   const threadsById = useMemo(
     () => new Map(threads.map((thread) => [thread.id as string, thread])),
@@ -263,29 +260,12 @@ export function Sidebar() {
   );
   const attemptSnooze = useCallback(
     (thread: SidebarThread, until: string, coParkingIds?: ReadonlySet<string>) => {
-      const viewing = routeThreadIdRef.current === thread.id;
-      const next = viewing
-        ? threadAfterPark({
-            orderedIds: orderedIdsRef.current,
-            parkedIds: settledIdsRef.current,
-            threadId: thread.id,
-            ...(coParkingIds === undefined ? {} : { coParkingIds }),
-          })
-        : null;
-      snoozeThread(thread.id, until).then(
-        () => {
-          if (!viewing || routeThreadIdRef.current !== thread.id) return;
-          void (next === null
-            ? navigate({
-                to: "/draft/$draftId",
-                params: { draftId: createDraft(thread.projectId) },
-              })
-            : navigate({ to: "/threads/$threadId", params: { threadId: next as ThreadId } }));
-        },
-        (error: unknown) => failureToast("Failed to snooze thread", error),
+      const advance = planParkNavigation(thread, coParkingIds);
+      snoozeThread(thread.id, until).then(advance, (error: unknown) =>
+        failureToast("Failed to snooze thread", error),
       );
     },
-    [navigate],
+    [planParkNavigation],
   );
   useEffect(
     () =>
@@ -346,7 +326,21 @@ export function Sidebar() {
     () => new Map(projects.map((project) => [project.id as string, project.title])),
     [projects],
   );
-  const sweep = useSettleSweep(sections, settleThreads);
+  const sweep = useActionSweep(sections, (action, targets) => {
+    if (action === "settle") {
+      settleThreads(targets);
+      return;
+    }
+    for (const thread of targets) {
+      void (action === "wake" ? unsnoozeThread(thread.id) : unsettleThread(thread.id)).catch(
+        (error: unknown) =>
+          failureToast(
+            action === "wake" ? "Failed to wake thread" : "Failed to un-settle thread",
+            error,
+          ),
+      );
+    }
+  });
   const renderRow = (thread: SidebarThread, section: SidebarSection) => (
     <InboxThreadRow
       key={thread.id}
@@ -698,7 +692,11 @@ function InboxThreadRow(props: {
   readonly orderedIdsRef: { readonly current: ReadonlyArray<string> };
   readonly onSnooze: (thread: SidebarThread, until: string) => void;
   readonly onSettle: (thread: SidebarThread) => void;
-  readonly onSweep: (event: ReactPointerEvent, thread: SidebarThread) => void;
+  readonly onSweep: (
+    event: ReactPointerEvent,
+    thread: SidebarThread,
+    action: SidebarSweepAction,
+  ) => void;
   readonly sweeping: boolean;
   readonly onBulkMenu: (position: { x: number; y: number }) => void;
 }) {
@@ -761,39 +759,13 @@ function InboxThreadRow(props: {
         data-thread-item={thread.id}
         aria-current={current ? "page" : undefined}
         aria-selected={selected || undefined}
-        onClick={(event) => {
-          if (isModClick(event)) {
-            event.preventDefault();
-            toggleThreadSelection(thread.id);
-            return;
-          }
-          if (event.shiftKey) {
-            event.preventDefault();
-            rangeSelectThreadsTo(thread.id, props.orderedIdsRef.current);
-            return;
-          }
-          if (isTrailingDoubleClick(event.detail)) {
-            event.preventDefault();
-            return;
-          }
-          clearThreadSelection();
-          setThreadSelectionAnchor(thread.id);
-          openProject(thread.projectId);
-        }}
-        onDoubleClick={(event) => {
-          event.preventDefault();
-          rename.start();
-        }}
-        onContextMenu={(event) => {
-          event.preventDefault();
-          const position = { x: event.clientX, y: event.clientY };
-          if (readThreadSelection().selectedThreadIds.has(thread.id)) {
-            props.onBulkMenu(position);
-            return;
-          }
-          clearThreadSelection();
-          openMenu(position);
-        }}
+        {...threadRowInteractions({
+          thread,
+          orderedIds: () => props.orderedIdsRef.current,
+          rename: rename.start,
+          bulkMenu: props.onBulkMenu,
+          menu: openMenu,
+        })}
         className={`${rowClass} pr-9`}
       >
         <ThreadStatusIndicator thread={thread} />
@@ -857,7 +829,9 @@ function InboxThreadRow(props: {
           type="button"
           aria-label="Wake thread"
           title="Wake thread"
-          onClick={() =>
+          onPointerDown={(event) => props.onSweep(event, thread, "wake")}
+          onClick={(event) =>
+            event.detail === 0 &&
             unsnoozeThread(thread.id).catch((error: unknown) =>
               failureToast("Failed to wake thread", error),
             )
@@ -871,7 +845,9 @@ function InboxThreadRow(props: {
           type="button"
           aria-label="Un-settle thread"
           title="Un-settle thread"
-          onClick={() =>
+          onPointerDown={(event) => props.onSweep(event, thread, "unsettle")}
+          onClick={(event) =>
+            event.detail === 0 &&
             unsettleThread(thread.id).catch((error: unknown) =>
               failureToast("Failed to un-settle thread", error),
             )
@@ -885,7 +861,7 @@ function InboxThreadRow(props: {
           type="button"
           aria-label="Settle thread"
           title="Settle thread"
-          onPointerDown={(event) => props.onSweep(event, thread)}
+          onPointerDown={(event) => props.onSweep(event, thread, "settle")}
           onClick={(event) => {
             if (event.detail === 0) props.onSettle(thread);
           }}

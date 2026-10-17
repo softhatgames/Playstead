@@ -1,3 +1,4 @@
+import { EventSinkV2, type NewDomainEvent } from "../EventSink.ts";
 import * as Settlement from "../ThreadSettlementService.ts";
 import { streamShell } from "../ShellStream.ts";
 import * as Path from "effect/Path";
@@ -57,6 +58,8 @@ export const makeOrchestrationHarness = Effect.fn("makeOrchestrationHarness")(fu
   readonly config?: ServerConfig.ServerConfig["Service"];
   /** Runs startup recovery before anything is dispatched, as the server's startup does. */
   readonly recoverOnStartup?: boolean;
+  /** Persisted pre-adoption events used to arrange recovery fixtures. */
+  readonly recoveredEvents?: ReadonlyArray<NewDomainEvent>;
 }) {
   const config = input.config ?? (yield* makeTestServerConfig());
   const platform = yield* HostProcess.Platform;
@@ -146,6 +149,11 @@ export const makeOrchestrationHarness = Effect.fn("makeOrchestrationHarness")(fu
     eventStore: EventStore.EventStoreV2,
     recovery: ProviderRuntimeRecoveryService.ProviderRuntimeRecoveryService,
   }).pipe(Effect.provideContext(context));
+  if (input.recoveredEvents !== undefined) {
+    yield* Effect.flatMap(EventSinkV2, (sink) => sink.write(input.recoveredEvents!)).pipe(
+      Effect.provideContext(context),
+    );
+  }
   if (input.recoverOnStartup === true) yield* services.recovery.recover;
 
   /**

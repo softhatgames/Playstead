@@ -74,3 +74,31 @@ export function threadDropOrder(
   next.splice(destination, 0, moved);
   return next.length === current.length && next.every((id, i) => id === current[i]) ? null : next;
 }
+
+export type SidebarSweepAction = "settle" | "unsettle" | "wake";
+
+/** Row actions stay within their shelf, as Sidebar.tsx at T3 Code 2577baf. */
+export function actionSweep(
+  rows: ReadonlyArray<{ readonly id: string; readonly status: string }>,
+  origin: string,
+  target: string,
+  action: SidebarSweepAction,
+  section: SidebarSection,
+): string[] {
+  if (
+    action === "wake"
+      ? section !== "snoozed"
+      : action === "unsettle"
+        ? section !== "settled"
+        : section === "settled" || section === "snoozed"
+  )
+    return [];
+  return settleSweep(
+    rows.map((row) => row.id),
+    origin,
+    target,
+    (id) =>
+      action !== "settle" ||
+      !["starting", "running", "waiting"].includes(rows.find((row) => row.id === id)!.status),
+  );
+}

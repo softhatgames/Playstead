@@ -1,3 +1,4 @@
+import { threadRowInteractions } from "../hooks/threadRowInteractions.ts";
 import { ProjectMenuButton } from "./sidebar/ProjectMenuButton.tsx";
 import { useScratchProject } from "../hooks/useScratchProject.ts";
 import {
@@ -22,9 +23,8 @@ import { useReducedMotion } from "./sidebar/SidebarThreadDrag.tsx";
 import { useProjectOrder, reorderProjects } from "../uiState.ts";
 import type { ProjectId } from "@playstead/contracts/baseSchemas";
 import type { OrchestrationV2ThreadShell } from "@playstead/contracts/orchestrationV2";
-import { isMacPlatform } from "@playstead/shared/keybindings";
 import { Link, useNavigate, useParams } from "@tanstack/react-router";
-import { type MouseEvent, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { useClientSettings, updateClientSettings } from "../clientSettings.ts";
 import { openCommandPalette } from "../commandPaletteBus.ts";
@@ -34,14 +34,7 @@ import { useThreadNavigation } from "../hooks/useThreadNavigation.ts";
 import { useBulkThreadMenu } from "../hooks/useBulkThreadMenu.ts";
 import { useThreadActionMenu } from "../hooks/useThreadActionMenu.ts";
 import { useThreadActions } from "../hooks/useThreadActions.ts";
-import {
-  clearThreadSelection,
-  rangeSelectThreadsTo,
-  readThreadSelection,
-  setThreadSelectionAnchor,
-  toggleThreadSelection,
-  useThreadSelection,
-} from "../threadSelection.ts";
+import { useThreadSelection } from "../threadSelection.ts";
 import { failureToast } from "../toast.ts";
 import {
   openProject,
@@ -51,7 +44,7 @@ import {
   setProjectExpanded,
 } from "../uiState.ts";
 import { ArchiveIcon, FolderIcon, FolderPlusIcon, SquarePenIcon } from "./icons.tsx";
-import { isTrailingDoubleClick, resolveProjectStatusIndicator } from "./Sidebar.logic.ts";
+import { resolveProjectStatusIndicator } from "./Sidebar.logic.ts";
 import {
   ThreadStatusIndicator,
   ThreadStatusDot,
@@ -374,10 +367,6 @@ function ProjectThreadList(props: {
   );
 }
 
-/** Mod-click on a Mac is Command, elsewhere Control (T3 Code's `isModClick`). */
-export const isModClick = (event: Pick<MouseEvent, "metaKey" | "ctrlKey">) =>
-  isMacPlatform(navigator.platform) ? event.metaKey : event.ctrlKey;
-
 /** A thread in the tree (T3 Code's `SidebarThreadRow` in `LegacySidebar.tsx`). */
 function TreeThreadRow(props: {
   readonly thread: SidebarThread;
@@ -428,39 +417,13 @@ function TreeThreadRow(props: {
         to="/threads/$threadId"
         params={{ threadId: thread.id }}
         data-thread-item={thread.id}
-        onClick={(event) => {
-          if (isModClick(event)) {
-            event.preventDefault();
-            toggleThreadSelection(thread.id);
-            return;
-          }
-          if (event.shiftKey) {
-            event.preventDefault();
-            rangeSelectThreadsTo(thread.id, props.orderedIds);
-            return;
-          }
-          if (isTrailingDoubleClick(event.detail)) {
-            event.preventDefault();
-            return;
-          }
-          clearThreadSelection();
-          setThreadSelectionAnchor(thread.id);
-          openProject(thread.projectId);
-        }}
-        onDoubleClick={(event) => {
-          event.preventDefault();
-          rename.start();
-        }}
-        onContextMenu={(event) => {
-          event.preventDefault();
-          const position = { x: event.clientX, y: event.clientY };
-          if (readThreadSelection().selectedThreadIds.has(thread.id)) {
-            props.onBulkMenu(position);
-            return;
-          }
-          clearThreadSelection();
-          openMenu(position);
-        }}
+        {...threadRowInteractions({
+          thread,
+          orderedIds: () => props.orderedIds,
+          rename: rename.start,
+          bulkMenu: props.onBulkMenu,
+          menu: openMenu,
+        })}
         aria-current={current ? "page" : undefined}
         aria-selected={selected || undefined}
         className={`${rowClass} pr-8`}

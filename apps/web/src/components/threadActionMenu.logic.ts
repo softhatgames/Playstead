@@ -180,12 +180,18 @@ export const threadDeleteConfirmation = (title: string) =>
 export function fallbackThreadAfterDelete(
   threads: ReadonlyArray<Pick<OrchestrationV2ThreadShell, "id" | "projectId" | "createdAt">>,
   deletedThreadId: ThreadId,
+  deletedThreadIds: ReadonlySet<string> = new Set(),
 ): ThreadId | null {
   const deleted = threads.find((thread) => thread.id === deletedThreadId);
   if (deleted === undefined) return null;
   return (
     threads
-      .filter((thread) => thread.projectId === deleted.projectId && thread.id !== deletedThreadId)
+      .filter(
+        (thread) =>
+          thread.projectId === deleted.projectId &&
+          thread.id !== deletedThreadId &&
+          !deletedThreadIds.has(thread.id),
+      )
       .toSorted((left, right) => right.createdAt.localeCompare(left.createdAt))[0]?.id ?? null
   );
 }
@@ -195,3 +201,14 @@ export const threadWorkspacePath = (
   thread: { readonly worktreePath?: string | null } | undefined,
   project: { readonly workspaceRoot: string } | undefined,
 ): string | undefined => thread?.worktreePath ?? project?.workspaceRoot;
+
+/** Legacy bulk Archive follows LegacySidebar.tsx at T3 Code 2577baf. */
+export async function requestBulkArchiveConfirmation(input: {
+  readonly enabled: boolean;
+  readonly count: number;
+  readonly confirm: (message: string) => Promise<boolean>;
+}): Promise<boolean> {
+  return (
+    !input.enabled || input.confirm(`Archive ${input.count} thread${input.count === 1 ? "" : "s"}?`)
+  );
+}

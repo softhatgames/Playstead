@@ -38,7 +38,12 @@ import {
   reorderThread,
 } from "../../hooks/useThreadActions.ts";
 import { failureToast } from "../../toast.ts";
-import { planThreadDrop, settleSweep, threadDropOrder } from "../Sidebar.drag.ts";
+import {
+  planThreadDrop,
+  actionSweep,
+  threadDropOrder,
+  type SidebarSweepAction,
+} from "../Sidebar.drag.ts";
 import type { SidebarSection, SidebarSections } from "../Sidebar.inbox.logic.ts";
 
 type Thread = OrchestrationV2ThreadShell;
@@ -252,34 +257,32 @@ export function ThreadDropBoundary(props: {
 
 /** Defer the sweep until release so removing rows cannot move fresh rows
  * under a stationary pointer. Escape, blur, cancellation and unmount discard it. */
-export function useSettleSweep(
+export function useActionSweep(
   sections: SidebarSections,
-  settle: (threads: ReadonlyArray<Thread>) => void,
+  apply: (action: SidebarSweepAction, threads: ReadonlyArray<Thread>) => void,
 ) {
   const [marked, setMarked] = useState<ReadonlySet<string>>(new Set());
   const cleanup = useRef<(() => void) | null>(null);
   useEffect(() => () => cleanup.current?.(), []);
-  const begin = (event: ReactPointerEvent, thread: Thread) => {
-    if (event.button !== 0 || !canSettle(thread)) return;
+  const begin = (event: ReactPointerEvent, thread: Thread, action: SidebarSweepAction) => {
+    if (event.button !== 0) return;
     event.preventDefault();
     event.stopPropagation();
     cleanup.current?.();
-    const order =
-      (Object.values(sections) as ReadonlyArray<ReadonlyArray<Thread>>).find((rows) =>
-        rows.some((row) => row.id === thread.id),
-      ) ?? [];
-    const ids = order.map((t) => t.id as string);
-    let chosen = [thread.id as string];
+    const section = (Object.keys(sections) as SidebarSection[]).find((key) =>
+      sections[key].some((row) => row.id === thread.id),
+    );
+    if (section === undefined) return;
+    const order = sections[section];
+    let chosen = actionSweep(order, thread.id, thread.id, action, section);
+    if (chosen.length === 0) return;
     setMarked(new Set(chosen));
     const move = (e: PointerEvent) => {
       const target = document
         .elementFromPoint(e.clientX, e.clientY)
         ?.closest<HTMLElement>("[data-sweep-thread]")?.dataset.sweepThread;
       if (!target) return;
-      chosen = settleSweep(ids, thread.id, target, (id) => {
-        const row = order.find((t) => t.id === id);
-        return row !== undefined && row.settledOverride !== "settled" && canSettle(row);
-      });
+      chosen = actionSweep(order, thread.id, target, action, section);
       setMarked(new Set(chosen));
     };
     const cancel = () => {
@@ -289,7 +292,7 @@ export function useSettleSweep(
     const up = () => {
       const targets = order.filter((t) => chosen.includes(t.id));
       cancel();
-      settle(targets);
+      apply(action, targets);
     };
     const key = (e: KeyboardEvent) => {
       if (e.key === "Escape") {

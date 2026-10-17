@@ -1,3 +1,4 @@
+import { cancelRunEvents } from "./RunCancellation.ts";
 import { isAutoSettlementCandidate } from "./ThreadSettlementPolicy.ts";
 import {
   type MessageId,
@@ -614,40 +615,7 @@ function dispatchThreadMutation(
   }
   if (command.type === "thread.archive") {
     const queued = projection.runs.filter((run) => QUEUED_RUN_STATUSES.has(run.status));
-    const queuedIds = new Set(queued.map((run) => run.id));
-    for (const run of queued) {
-      events.push({
-        type: "run.updated",
-        threadId: thread.id,
-        runId: run.id,
-        occurredAt: now,
-        payload: { ...run, status: "cancelled", completedAt: now },
-      });
-    }
-    for (const attempt of projection.attempts) {
-      if (!queuedIds.has(attempt.runId)) continue;
-      if (attempt.status !== "pending" && attempt.status !== "running") continue;
-      events.push({
-        type: "run-attempt.updated",
-        threadId: thread.id,
-        runId: attempt.runId,
-        occurredAt: now,
-        payload: { ...attempt, status: "cancelled", completedAt: now },
-      });
-    }
-    for (const node of projection.nodes) {
-      if (node.runId === null || !queuedIds.has(node.runId)) continue;
-      if (node.status !== "pending" && node.status !== "running" && node.status !== "waiting") {
-        continue;
-      }
-      events.push({
-        type: "node.updated",
-        threadId: thread.id,
-        runId: node.runId,
-        occurredAt: now,
-        payload: { ...node, status: "cancelled", completedAt: now },
-      });
-    }
+    events.push(...cancelRunEvents(projection, queued, now));
   }
   // Archive and settle both mean "done with this thread": no live provider
   // session keeps running for it (T3 Code's detach after either). The settle

@@ -1,7 +1,7 @@
 import { orderKeyBetween } from "@playstead/client-runtime/state/threadSort";
 import { CommandId, type ThreadId } from "@playstead/contracts/baseSchemas";
 import type { OrchestrationV2ThreadShell } from "@playstead/contracts/orchestrationV2";
-import { useNavigate, useParams } from "@tanstack/react-router";
+import { useNavigate, useParams, useRouter } from "@tanstack/react-router";
 import { useCallback, useMemo } from "react";
 
 import { readClientSettings } from "../clientSettings.ts";
@@ -11,11 +11,7 @@ import {
   threadDeleteConfirmation,
   threadRuntimeCanArchive,
 } from "../components/threadActionMenu.logic.ts";
-import {
-  requestPrimary,
-  usePrimaryConnectionState,
-  readPrimaryConnectionState,
-} from "../connection/runtime.ts";
+import { requestPrimary, readPrimaryConnectionState } from "../connection/runtime.ts";
 import { createDraft } from "../drafts.ts";
 import { newId } from "../ids.ts";
 import { readLocalApi } from "../localApi.ts";
@@ -264,7 +260,7 @@ export async function snoozeThread(threadId: ThreadId, snoozedUntil: string): Pr
 export function useThreadActions() {
   const navigate = useNavigate();
   const { threadId: routeThreadId } = useParams({ strict: false });
-  const threads = usePrimaryConnectionState()?.shell?.threads;
+  const router = useRouter();
 
   const unarchiveThread = useCallback(
     async (threadId: ThreadId, options: { readonly navigate?: boolean } = {}) => {
@@ -307,15 +303,19 @@ export function useThreadActions() {
   );
 
   const deleteThread = useCallback(
-    async (thread: ThreadActionTarget) => {
-      const fallback = fallbackThreadAfterDelete(threads ?? [], thread.id);
+    async (thread: ThreadActionTarget, deletedThreadIds: ReadonlySet<string> = new Set()) => {
+      const threads = readPrimaryConnectionState()?.shell?.threads ?? [];
+      const fallback = fallbackThreadAfterDelete(threads, thread.id, deletedThreadIds);
       await dispatchThreadCommand("thread.delete", thread.id);
-      if (routeThreadId !== thread.id) return;
+      const viewing = router.state.matches.some(
+        (match) => "threadId" in match.params && match.params.threadId === thread.id,
+      );
+      if (!viewing) return;
       await (fallback === null
         ? navigate({ to: "/", replace: true })
         : navigate({ to: "/threads/$threadId", params: { threadId: fallback }, replace: true }));
     },
-    [navigate, routeThreadId, threads],
+    [navigate, router],
   );
 
   /** Deletes after asking, when **Confirm before deleting** is on; false if the person declined. */

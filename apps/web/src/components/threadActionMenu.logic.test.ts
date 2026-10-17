@@ -8,6 +8,7 @@ import {
   fallbackThreadAfterDelete,
   legacyThreadMenuItems,
   requestThreadUnpinConfirmation,
+  requestBulkArchiveConfirmation,
   threadArchiveConfirmation,
   threadDeleteConfirmation,
   threadRuntimeCanArchive,
@@ -227,6 +228,16 @@ describe("fallbackThreadAfterDelete", () => {
     );
   });
 
+  it("skips earlier successful deletions but retains failed deletions as fallbacks", () => {
+    assert.strictEqual(
+      fallbackThreadAfterDelete(threads, ThreadId.make("deleted"), new Set(["newer"])),
+      ThreadId.make("old"),
+    );
+    assert.isNull(
+      fallbackThreadAfterDelete(threads, ThreadId.make("deleted"), new Set(["newer", "old"])),
+    );
+  });
+
   it("has nowhere to go when the project has no other thread", () => {
     assert.isNull(fallbackThreadAfterDelete(threads, ThreadId.make("elsewhere")));
     assert.isNull(fallbackThreadAfterDelete(threads, ThreadId.make("unknown")));
@@ -243,4 +254,28 @@ it("copies a scratch thread's own path, with the project root as the ordinary-th
   );
   assert.strictEqual(threadWorkspacePath({}, { workspaceRoot: "/game" }), "/game");
   assert.isUndefined(threadWorkspacePath(undefined, undefined));
+});
+
+it("bulk archive asks once when enabled and respects declining", async () => {
+  const asked: string[] = [];
+  assert.isFalse(
+    await requestBulkArchiveConfirmation({
+      enabled: true,
+      count: 2,
+      confirm: async (message) => {
+        asked.push(message);
+        return false;
+      },
+    }),
+  );
+  assert.deepStrictEqual(asked, ["Archive 2 threads?"]);
+  assert.isTrue(
+    await requestBulkArchiveConfirmation({
+      enabled: false,
+      count: 2,
+      confirm: async () => {
+        throw new Error("Must not ask");
+      },
+    }),
+  );
 });

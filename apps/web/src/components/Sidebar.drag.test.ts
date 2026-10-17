@@ -1,5 +1,5 @@
 import { expect, it } from "@effect/vitest";
-import { planThreadDrop, settleSweep } from "./Sidebar.drag.ts";
+import { planThreadDrop, settleSweep, actionSweep } from "./Sidebar.drag.ts";
 
 it("plans shelf transitions, with no placement within time-ordered Active", () => {
   const move = (
@@ -60,4 +60,18 @@ it("places rows at the hovered slot and leaves an unchanged order alone", async 
   expect(threadDropOrder(["a", "b"], "c", null)).toEqual(["c", "a", "b"]);
   expect(threadDropOrder(["a", "b"], "a", null)).toBeNull();
   expect(threadDropOrder(["a", "b"], "a", "a")).toBeNull();
+});
+
+it("sweeps Wake and Un-settle across their own shelves, including skipped rows", () => {
+  const rows = [
+    { id: "a", status: "idle" },
+    { id: "b", status: "running" },
+    { id: "c", status: "idle" },
+  ];
+  expect(actionSweep(rows, "c", "a", "wake", "snoozed")).toEqual(["a", "b", "c"]);
+  expect(actionSweep(rows, "a", "c", "unsettle", "settled")).toEqual(["a", "b", "c"]);
+  expect(actionSweep(rows, "a", "c", "settle", "active")).toEqual(["a", "c"]);
+  expect(actionSweep(rows, "a", "c", "wake", "active")).toEqual([]);
+  expect(actionSweep(rows, "a", "c", "unsettle", "snoozed")).toEqual([]);
+  expect(actionSweep(rows, "a", "outside", "wake", "snoozed")).toEqual([]);
 });

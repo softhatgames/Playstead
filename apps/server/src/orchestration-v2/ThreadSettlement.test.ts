@@ -1,7 +1,7 @@
 import { effectiveSnoozed } from "@playstead/client-runtime/state/threadSnoozed";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
-import { CommandId, MessageId, TurnItemId, ThreadId } from "@playstead/contracts/baseSchemas";
+import { CommandId, MessageId, ThreadId } from "@playstead/contracts/baseSchemas";
 import {
   OrchestrationDispatchCommandError,
   type OrchestrationV2Command,
@@ -15,8 +15,6 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
-import * as Result from "effect/Result";
-import { decideThreadCommand } from "./ThreadCommands.ts";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 
@@ -196,73 +194,65 @@ describe("Pin and settle a thread", () => {
       );
     }
 
-    it.effect(
-      "the command boundary bounds queued-start grace to two minutes in either clock direction",
-      () =>
-        Effect.gen(function* () {
-          const { harness } = yield* makeHarness("restart_resume.claude.ndjson", "resumed-game");
-          yield* runFirstTurn(harness);
-          const projection = yield* projectionOf(harness, RESTART_RESUME_IDS.threadId);
-          const run = projection.runs[0]!;
-          yield* TestClock.adjust("4 days");
-          const messageAt = DateTime.formatIso(yield* DateTime.now);
-          // A recovered pre-adoption projection can contain a message whose run
-          // never reached starting. Exercise the public pure command boundary.
-          const state = {
-            projectExists: true,
-            instanceHasAdapter: true,
-            projection: {
-              ...projection,
-              messages: projection.messages.map((message) =>
-                message.role === "user" ? { ...message, createdAt: messageAt } : message,
-              ),
-            },
-          };
-          const decide = (now: string) =>
-            decideThreadCommand({
-              command: {
-                type: "thread.auto-settle",
-                commandId: CommandId.make("grace"),
-                threadId: projection.thread.id,
-                snapshotAt: projection.thread.updatedAt,
-                settledAt: projection.thread.updatedAt,
-              },
-              state,
-              now,
-              ids: {
-                runId: run.id,
-                attemptId: run.activeAttemptId!,
-                rootNodeId: run.rootNodeId!,
-                providerThreadId: run.providerThreadId!,
-                userItemId: TurnItemId.make("unused"),
-                effectId: "unused",
-              },
+    for (const direction of [-1, 1]) {
+      it.effect(
+        `persisted queued-start grace is enforced through dispatch, clock direction ${direction}`,
+        () =>
+          Effect.gen(function* () {
+            const { harness, config } = yield* makeHarness(
+              "restart_resume.claude.ndjson",
+              "resumed-game",
+            );
+            yield* runFirstTurn(harness);
+            const projection = yield* projectionOf(harness, RESTART_RESUME_IDS.threadId);
+            yield* TestClock.adjust("4 days");
+            const messageAt = DateTime.formatIso(yield* DateTime.now);
+            // Persist the pre-adoption message whose run never started, then read it
+            // through a fresh orchestrator; no local projection is passed to the planner.
+            const recovered = yield* makeOrchestrationHarness({
+              config,
+              recoveredEvents: projection.messages
+                .filter((message) => message.role === "user")
+                .map((message) => ({
+                  type: "message.updated" as const,
+                  threadId: projection.thread.id,
+                  occurredAt: messageAt,
+                  payload: { ...message, createdAt: messageAt },
+                })),
             });
-          assert.isTrue(Result.isFailure(decide(messageAt)));
-          yield* TestClock.adjust("2 minutes");
-          assert.isTrue(Result.isFailure(decide(DateTime.formatIso(yield* DateTime.now))));
-          yield* TestClock.adjust("1 millis");
-          assert.isTrue(Result.isSuccess(decide(DateTime.formatIso(yield* DateTime.now))));
-          assert.isTrue(
-            Result.isFailure(
-              decide(
-                DateTime.formatIso(
-                  DateTime.subtract(DateTime.makeUnsafe(messageAt), { minutes: 2 }),
+            const recoveredThread = yield* threadOf(recovered, projection.thread.id);
+            const settle = (id: string) =>
+              recovered.orchestrator.dispatch({
+                type: "thread.auto-settle",
+                commandId: CommandId.make(id),
+                threadId: projection.thread.id,
+                snapshotAt: recoveredThread.updatedAt,
+                settledAt: projection.thread.updatedAt,
+              });
+            yield* refusal(settle("grace-now"));
+            yield* TestClock.setTime(Date.parse(messageAt) + direction * 120_000);
+            yield* refusal(settle("grace-edge"));
+            assert.isNull((yield* threadOf(recovered, projection.thread.id)).settledOverride);
+            yield* TestClock.setTime(Date.parse(messageAt) + direction * 120_001);
+            const sequence = yield* recovered.eventStore.latestApplicationSequence;
+            yield* settle("grace-expired");
+            const event = yield* recovered.eventStore
+              .streamApplicationEvents({ afterSequence: sequence })
+              .pipe(
+                Stream.filter(
+                  (stored) =>
+                    stored.aggregateKind === "thread" && stored.event.type === "thread.settled",
                 ),
-              ),
-            ),
-          );
-          assert.isTrue(
-            Result.isSuccess(
-              decide(
-                DateTime.formatIso(
-                  DateTime.subtract(DateTime.makeUnsafe(messageAt), { milliseconds: 120_001 }),
-                ),
-              ),
-            ),
-          );
-        }).pipe(Effect.scoped),
-    );
+                Stream.runHead,
+              );
+            assert.isTrue(Option.isSome(event));
+            assert.strictEqual(
+              (yield* threadOf(recovered, projection.thread.id)).settledOverride,
+              "settled",
+            );
+          }).pipe(Effect.scoped),
+      );
+    }
 
     it.effect("new activity wins over an earlier settlement snapshot", () =>
       Effect.gen(function* () {
