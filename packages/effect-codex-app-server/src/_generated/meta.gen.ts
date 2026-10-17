@@ -110,7 +110,9 @@ export type ClientRequestMethod =
   | "config/batchWrite"
   | "configRequirements/read"
   | "account/read"
-  | "fuzzyFileSearch";
+  | "fuzzyFileSearch"
+  | "thread/backgroundTerminals/list"
+  | "thread/backgroundTerminals/terminate";
 
 export const CLIENT_REQUEST_PARAMS = {
   initialize: CodexSchema.InitializeParams,
@@ -219,6 +221,8 @@ export const CLIENT_REQUEST_PARAMS = {
   "configRequirements/read": undefined,
   "account/read": CodexSchema.V2GetAccountParams,
   fuzzyFileSearch: CodexSchema.FuzzyFileSearchParams,
+  "thread/backgroundTerminals/list": CodexSchema.V2ThreadBackgroundTerminalsListParams,
+  "thread/backgroundTerminals/terminate": CodexSchema.V2ThreadBackgroundTerminalsTerminateParams,
 } as const;
 
 export const CLIENT_REQUEST_RESPONSES = {
@@ -329,6 +333,8 @@ export const CLIENT_REQUEST_RESPONSES = {
   "configRequirements/read": CodexSchema.V2ConfigRequirementsReadResponse,
   "account/read": CodexSchema.V2GetAccountResponse,
   fuzzyFileSearch: CodexSchema.FuzzyFileSearchResponse,
+  "thread/backgroundTerminals/list": CodexSchema.V2ThreadBackgroundTerminalsListResponse,
+  "thread/backgroundTerminals/terminate": CodexSchema.V2ThreadBackgroundTerminalsTerminateResponse,
 } as const;
 
 export type ClientNotificationMethod = "initialized";

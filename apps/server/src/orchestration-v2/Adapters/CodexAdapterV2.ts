@@ -58,9 +58,11 @@ import { codexClientInfo, spawnCodexAppServer } from "../../provider/CodexProvid
  * - A file Codex adds is a `file_change` item carrying the file's name and
  *   content, which T3 Code's item keeps only as a diff.
  *
- * - An interrupt is `turn/interrupt` (T3 Code's `interruptTurn`); the turn
- *   ends interrupted on Codex's `turn/completed`, even one that says
- *   completed, or after `INTERRUPT_TERMINAL_TIMEOUT` without one.
+ * - An interrupt is `turn/interrupt` (T3 Code's `interruptTurn`), then
+ *   `thread/backgroundTerminals/terminate` for each command still running,
+ *   which Codex's interrupt leaves running; the turn ends interrupted on
+ *   Codex's `turn/completed`, even one that says completed, or after
+ *   `INTERRUPT_TERMINAL_TIMEOUT` without one.
  *
  * - Codex's `item/tool/requestUserInput` reaches the person as a user-input
  *   request, as T3 Code's handler routes it, and its answer is the
@@ -190,6 +192,11 @@ interface ActiveTurn {
   readonly items: Map<string, OrchestrationV2TurnItem>;
   /** Set once the person asked to stop it (T3 Code's `interruptingNativeTurns`). */
   interrupting: boolean;
+  /**
+   * The background terminal (`processId`) of each command still running, by
+   * item id (T3 Code's `runningCommandItemsByTurn`).
+   */
+  readonly runningCommands: Map<string, string>;
   readonly ended: Deferred.Deferred<void>;
 }
 
@@ -381,10 +388,52 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (input: 
         Effect.gen(function* () {
           const turn = yield* turnFor(nativeTurnId);
           if (turn === undefined) return;
+          if (item.type === "commandExecution") {
+            if (!completed && item.status === "inProgress" && typeof item.processId === "string") {
+              turn.runningCommands.set(item.id, item.processId);
+            } else {
+              turn.runningCommands.delete(item.id);
+            }
+          }
           const built = turnItemFor(turn, item, completed, yield* nowIso);
           if (built === undefined) return;
           yield* putItem(turn, item.id, built.item, built.kind);
         });
+
+      /**
+       * Stops a command's background terminal, which Codex leaves running when
+       * it interrupts a turn, and checks it is gone when Codex says it was not
+       * running (T3 Code's `terminateBackgroundTerminal`). A command that
+       * stays is only logged: the turn ends interrupted all the same.
+       */
+      const terminateCommand = (threadId: string, processId: string) =>
+        Effect.gen(function* () {
+          const { terminated } = yield* client.request("thread/backgroundTerminals/terminate", {
+            threadId,
+            processId,
+          });
+          if (terminated) return;
+          let cursor: string | null = null;
+          while (true) {
+            const page: CodexSchema.V2ThreadBackgroundTerminalsListResponse = yield* client.request(
+              "thread/backgroundTerminals/list",
+              cursor === null ? { threadId } : { threadId, cursor },
+            );
+            if (page.data.some((terminal) => terminal.processId === processId)) {
+              return yield* Effect.logWarning(
+                "Codex kept a command running after the interrupt.",
+              ).pipe(Effect.annotateLogs({ processId }));
+            }
+            if (page.nextCursor === undefined || page.nextCursor === null) return;
+            cursor = page.nextCursor;
+          }
+        }).pipe(
+          Effect.catch((error: CodexAppServerError) =>
+            Effect.logWarning("Codex could not stop a command of an interrupted turn.").pipe(
+              Effect.annotateLogs({ processId, error: error.message }),
+            ),
+          ),
+        );
 
       const endTurn = (
         turn: ActiveTurn,
@@ -635,6 +684,7 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (input: 
               nativeTurnId: undefined,
               items: new Map(),
               interrupting: false,
+              runningCommands: new Map(),
               ended: yield* Deferred.make<void>(),
             };
             yield* Ref.set(activeTurn, turn);
@@ -654,14 +704,25 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (input: 
             const threadId = yield* Ref.get(nativeThreadId);
             // Before `turn/start` has answered, Codex's id for the turn may
             // not be known; then only the timeout ends it.
+            // Codex's interrupt leaves the turn's commands running, so each
+            // is stopped too, as T3 Code's `interruptTurn` does.
             const ask =
               threadId === undefined || turn.nativeTurnId === undefined
                 ? Effect.void
                 : client
                     .request("turn/interrupt", { threadId, turnId: turn.nativeTurnId })
-                    .pipe(Effect.asVoid);
-            const stopped = yield* ask.pipe(
-              Effect.andThen(Deferred.await(turn.ended)),
+                    .pipe(
+                      Effect.andThen(
+                        Effect.forEach(
+                          [...turn.runningCommands.values()],
+                          (processId) => terminateCommand(threadId, processId),
+                          { concurrency: "unbounded", discard: true },
+                        ),
+                      ),
+                    );
+            const stopped = yield* Effect.all([ask, Deferred.await(turn.ended)], {
+              concurrency: "unbounded",
+            }).pipe(
               Effect.timeoutOption(INTERRUPT_TERMINAL_TIMEOUT),
               Effect.mapError(adapterError("interrupt-turn")),
               Effect.ensuring(releaseQuestions(turn)),
