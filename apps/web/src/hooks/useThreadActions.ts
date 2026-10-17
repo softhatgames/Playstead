@@ -25,7 +25,15 @@ export type ThreadActionTarget = Pick<
 
 /** A thread the sidebar or the thread view shows, which can be pinned and settled. */
 export type ThreadLifecycleTarget = ThreadActionTarget &
-  Pick<OrchestrationV2ThreadShell, "pinnedAt" | "pinOrderKey" | "settledOverride">;
+  Pick<
+    OrchestrationV2ThreadShell,
+    | "pinnedAt"
+    | "pinOrderKey"
+    | "settledOverride"
+    | "snoozedUntil"
+    | "snoozedAt"
+    | "latestRunCompletedAt"
+  >;
 
 const commandId = () => CommandId.make(`command:${newId()}`);
 
@@ -77,6 +85,7 @@ export const markThreadUnread = (threadId: ThreadId) =>
  */
 export const pinThread = (threadId: ThreadId, orderKey?: string | null) => {
   ThreadUndo.invalidate("pin", threadId);
+  ThreadUndo.invalidate("snooze", threadId);
   return requestPrimary((client) =>
     client["orchestration.dispatchCommand"]({
       type: "thread.pin",
@@ -142,17 +151,18 @@ export const unsettleThread = (threadId: ThreadId) => {
 
 /**
  * Settles the thread, with **Undo** that un-settles it and pins it back if
- * it was pinned (T3 Code's `settleThread`; the snooze it would also restore
- * comes with #38). The server refuses a thread that is working or waiting
+ * it was pinned, then restores any future snooze (T3 Code's `settleThread`). The server refuses a thread that is working or waiting
  * on the person; the promise rejects with its reason.
  */
 export async function settleThread(
-  thread: Pick<OrchestrationV2ThreadShell, "id" | "pinnedAt" | "pinOrderKey">,
+  thread: Pick<OrchestrationV2ThreadShell, "id" | "pinnedAt" | "pinOrderKey" | "snoozedUntil">,
 ): Promise<void> {
   const wasPinned = thread.pinnedAt !== null;
   const pinOrderKey = thread.pinOrderKey;
+  const snoozedUntil = thread.snoozedUntil;
   // An older unpin's Undo would re-pin, which the server takes as un-settling.
   ThreadUndo.invalidate("pin", thread.id);
+  ThreadUndo.invalidate("snooze", thread.id);
   const claim = ThreadUndo.begin("settle", thread.id);
   try {
     await dispatchThreadCommand("thread.settle", thread.id);
@@ -166,8 +176,55 @@ export async function settleThread(
     undo: async () => {
       await unsettleThread(thread.id);
       if (wasPinned) await pinThread(thread.id, pinOrderKey);
+      if (snoozedUntil !== null && Date.parse(snoozedUntil) > Date.now()) {
+        await requestPrimary((client) =>
+          client["orchestration.dispatchCommand"]({
+            type: "thread.snooze",
+            commandId: commandId(),
+            threadId: thread.id,
+            snoozedUntil,
+          }),
+        );
+      }
     },
     failureTitle: "Failed to undo settle",
+  });
+}
+
+/** Wakes explicitly; an earlier snooze Undo cannot later override this choice. */
+export const unsnoozeThread = (threadId: ThreadId) => {
+  ThreadUndo.invalidate("snooze", threadId);
+  return requestPrimary((client) =>
+    client["orchestration.dispatchCommand"]({
+      type: "thread.unsnooze",
+      commandId: commandId(),
+      threadId,
+      reason: "user",
+    }),
+  );
+};
+
+/** Snoozes through orchestration, with grouped five-second Undo to wake. */
+export async function snoozeThread(threadId: ThreadId, snoozedUntil: string): Promise<void> {
+  const claim = ThreadUndo.begin("snooze", threadId);
+  try {
+    await requestPrimary((client) =>
+      client["orchestration.dispatchCommand"]({
+        type: "thread.snooze",
+        commandId: commandId(),
+        threadId,
+        snoozedUntil,
+      }),
+    );
+  } catch (error) {
+    claim.finish();
+    throw error;
+  }
+  showThreadUndoNotice({
+    action: "Snoozed",
+    claim,
+    undo: () => unsnoozeThread(threadId),
+    failureTitle: "Failed to wake thread",
   });
 }
 

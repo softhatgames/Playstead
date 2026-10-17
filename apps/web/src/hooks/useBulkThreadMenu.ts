@@ -1,3 +1,6 @@
+import { canSnooze } from "@playstead/client-runtime/state/threadSnoozed";
+import { resolveSnoozePresets } from "../components/Sidebar.snooze.ts";
+import { requestCustomSnooze } from "../customSnooze.ts";
 import type { ContextMenuPosition } from "@playstead/contracts/ipc";
 import type { OrchestrationV2ThreadShell } from "@playstead/contracts/orchestrationV2";
 import { useCallback } from "react";
@@ -31,9 +34,13 @@ const bulkThreadDeleteConfirmation = (count: number) =>
 export function useBulkThreadMenu(input: {
   readonly variant: "inbox" | "tree";
   readonly threads: ReadonlyArray<OrchestrationV2ThreadShell>;
+  readonly snoozeThreads?: (
+    threads: ReadonlyArray<OrchestrationV2ThreadShell>,
+    until: string,
+  ) => void;
   readonly settleThreads?: (threads: ReadonlyArray<OrchestrationV2ThreadShell>) => void;
 }) {
-  const { variant, threads, settleThreads } = input;
+  const { variant, threads, settleThreads, snoozeThreads } = input;
   const { archiveThread, deleteThread } = useThreadActions();
 
   return useCallback(
@@ -45,10 +52,12 @@ export function useBulkThreadMenu(input: {
       const settleable = targets.filter((thread) => thread.settledOverride !== "settled");
       void (async () => {
         const api = readLocalApi();
+        const presets = resolveSnoozePresets(new Date());
         const chosen = await api.contextMenu
           .show(
             buildMultiSelectThreadContextMenuItems({
               variant,
+              snooze: { isSnoozed: false, canSnooze: targets.some(canSnooze), presets },
               count: targets.length,
               pinnedCount: pinned.length,
               settleableCount: settleable.length,
@@ -59,6 +68,17 @@ export function useBulkThreadMenu(input: {
             position,
           )
           .catch(() => null);
+        if (chosen?.startsWith("snooze:")) {
+          const wake =
+            chosen === "snooze:custom"
+              ? await requestCustomSnooze()
+              : presets.find((preset) => `snooze:${preset.id}` === chosen)?.snoozedUntil;
+          if (wake != null) {
+            clearThreadSelection();
+            snoozeThreads?.(targets.filter(canSnooze), wake);
+          }
+          return;
+        }
         switch (chosen) {
           case "unpin":
             clearThreadSelection();
@@ -121,6 +141,6 @@ export function useBulkThreadMenu(input: {
         }
       })();
     },
-    [archiveThread, deleteThread, settleThreads, threads, variant],
+    [archiveThread, deleteThread, settleThreads, snoozeThreads, threads, variant],
   );
 }

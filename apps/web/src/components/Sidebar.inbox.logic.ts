@@ -1,3 +1,5 @@
+import { buildSnoozeMenuItems, type SnoozeMenuState, type SnoozeMenuId } from "./Sidebar.snooze.ts";
+import { effectiveSnoozed } from "@playstead/client-runtime/state/threadSnoozed";
 import type { ProjectId } from "@playstead/contracts/baseSchemas";
 import type { ClientSettings, ContextMenuItem } from "@playstead/contracts/ipc";
 import type { OrchestrationProjectShell } from "@playstead/contracts/orchestrationProject";
@@ -13,15 +15,17 @@ import type { OrchestrationV2ThreadShell } from "@playstead/contracts/orchestrat
 type SidebarThread = OrchestrationV2ThreadShell;
 
 /**
- * Where a thread shows in the inbox sidebar. **Snoozed** (#38) comes before
- * Settled when it arrives; **Working** is the optional shelf for threads at
+ * Where a thread shows in the inbox sidebar. Snoozed takes precedence;
+ * **Working** is the optional shelf for threads at
  * work, which a pinned thread never leaves Pinned for.
  */
-export type SidebarSection = "pinned" | "active" | "working" | "settled";
+export type SidebarSection = "pinned" | "active" | "working" | "snoozed" | "settled";
 
 function resolveSidebarThreadSection(
-  thread: Pick<SidebarThread, "settledOverride" | "pinnedAt">,
+  thread: SidebarThread,
+  now: string,
 ): Exclude<SidebarSection, "working"> {
+  if (effectiveSnoozed(thread, now)) return "snoozed";
   if (thread.settledOverride === "settled") return "settled";
   if (thread.pinnedAt !== null) return "pinned";
   return "active";
@@ -153,6 +157,7 @@ export interface SidebarSections {
   readonly pinned: ReadonlyArray<SidebarThread>;
   readonly active: ReadonlyArray<SidebarThread>;
   readonly working: ReadonlyArray<SidebarThread>;
+  readonly snoozed: ReadonlyArray<SidebarThread>;
   readonly settled: ReadonlyArray<SidebarThread>;
 }
 
@@ -165,22 +170,26 @@ export function buildSidebarSections(input: {
   readonly threads: ReadonlyArray<SidebarThread>;
   readonly scopedProjectIds: ReadonlySet<string> | null;
   readonly workingShelfEnabled: boolean;
+  readonly now?: string;
   readonly returnedAt?: (thread: SidebarThread) => number | undefined;
 }): SidebarSections {
   const pinned: SidebarThread[] = [];
   const active: SidebarThread[] = [];
   const working: SidebarThread[] = [];
   const settled: SidebarThread[] = [];
+  const snoozed: SidebarThread[] = [];
   for (const thread of input.threads) {
     if (thread.archivedAt !== null || thread.deletedAt !== null) continue;
     if (input.scopedProjectIds !== null && !input.scopedProjectIds.has(thread.projectId)) continue;
-    const section = resolveSidebarThreadSection(thread);
-    if (section === "pinned") pinned.push(thread);
+    const section = resolveSidebarThreadSection(thread, input.now ?? new Date().toISOString());
+    if (section === "snoozed") snoozed.push(thread);
+    else if (section === "pinned") pinned.push(thread);
     else if (section === "settled") settled.push(thread);
     else if (input.workingShelfEnabled && isSidebarThreadWorking(thread)) working.push(thread);
     else active.push(thread);
   }
   return {
+    snoozed: snoozed.sort((a, b) => timeOf(a.snoozedUntil) - timeOf(b.snoozedUntil) || byId(a, b)),
     pinned: sortPinnedThreads(pinned),
     active: input.workingShelfEnabled
       ? sortInboxThreadsByReturn(active, input.returnedAt)
@@ -191,6 +200,7 @@ export function buildSidebarSections(input: {
 }
 
 export type MultiSelectThreadMenuId =
+  | SnoozeMenuId
   | "unpin"
   | "settle"
   | "regenerate-title"
@@ -201,8 +211,7 @@ export type MultiSelectThreadMenuId =
 /**
  * The menu for several selected threads. The inbox sidebar's (T3 Code's
  * `handleMultiSelectContextMenu`) offers Unpin when some are pinned, Settle,
- * Regenerate titles once threads can, Mark unread and Delete; **Snooze**
- * (#38) joins after Settle. The project tree's (T3 Code's
+ * Snooze, Regenerate titles once threads can, Mark unread and Delete. The project tree's (T3 Code's
  * `buildMultiSelectThreadContextMenuItems`) offers Mark unread, Archive
  * unless one is working, and Delete.
  */
@@ -210,6 +219,7 @@ export function buildMultiSelectThreadContextMenuItems(input: {
   readonly variant: "inbox" | "tree";
   readonly count: number;
   readonly pinnedCount: number;
+  readonly snooze?: SnoozeMenuState;
   /** The selected threads not settled yet. */
   readonly settleableCount: number;
   readonly hasRunningThread: boolean;
@@ -248,6 +258,7 @@ export function buildMultiSelectThreadContextMenuItems(input: {
       ? [{ id: "unpin" as const, label: `Unpin (${input.pinnedCount})` }]
       : []),
     { id: "settle", label: `Settle (${count})`, disabled: input.settleableCount === 0 },
+    ...(input.snooze === undefined ? [] : buildSnoozeMenuItems(input.snooze)),
     ...regenerateItems,
     { id: "mark-unread", label: `Mark unread (${count})` },
     { id: "delete", label: `Delete (${count})`, destructive: true },
@@ -349,8 +360,7 @@ export function resolveSidebarProjectScope(
 /**
  * Where the view goes when the thread in it is settled (T3 Code's
  * `planForwardNavigation` in `Sidebar.tsx`): the next thread in the
- * sidebar's order, wrapping round, that is not parked (settled, and snoozed
- * once #38 arrives) or being parked with it; null when there is none, for
+ * sidebar's order, wrapping round, that is not parked (settled or snoozed) or being parked with it; null when there is none, for
  * the caller to open a new draft in the thread's project.
  */
 export function threadAfterPark(input: {

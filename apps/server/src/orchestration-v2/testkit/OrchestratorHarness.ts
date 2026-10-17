@@ -1,3 +1,4 @@
+import { streamShell } from "../ShellStream.ts";
 import type { ThreadId } from "@playstead/contracts/baseSchemas";
 import { ACTIVE_RUN_STATUSES, type OrchestrationV2Run } from "@playstead/contracts/orchestrationV2";
 import * as HostProcess from "@playstead/shared/hostProcess";
@@ -88,7 +89,7 @@ export const makeOrchestrationHarness = Effect.fn("makeOrchestrationHarness")(fu
       Layer.provide(adapters),
       Layer.provideMerge(OrchestrationRuntime.layer),
       Layer.provide(WorkspacePaths.layer),
-      Layer.provide(SqlitePersistence.layerConfig),
+      Layer.provideMerge(SqlitePersistence.layerConfig),
       Layer.provide(ServerConfig.layer(config)),
     ),
   );
@@ -124,5 +125,10 @@ export const makeOrchestrationHarness = Effect.fn("makeOrchestrationHarness")(fu
       ),
     );
 
-  return { ...services, home: config.baseDir, awaitRunEnded };
+  return {
+    ...services,
+    home: config.baseDir,
+    awaitRunEnded,
+    shell: streamShell.pipe(Stream.provideContext(context), Stream.orDie),
+  };
 });

@@ -63,12 +63,43 @@ describe("project expansion", () => {
 
 it("keeps the Working and Settled shelves folded until opened, independently across reloads", async () => {
   const first = await reload();
-  assert.deepStrictEqual(first.readSidebarShelvesExpanded(), { working: false, settled: false });
+  assert.deepStrictEqual(first.readSidebarShelvesExpanded(), {
+    working: false,
+    settled: false,
+    snoozed: false,
+  });
   first.toggleSidebarShelfExpanded("working");
   const second = await reload();
-  assert.deepStrictEqual(second.readSidebarShelvesExpanded(), { working: true, settled: false });
+  assert.deepStrictEqual(second.readSidebarShelvesExpanded(), {
+    working: true,
+    settled: false,
+    snoozed: false,
+  });
   second.toggleSidebarShelfExpanded("settled");
   second.toggleSidebarShelfExpanded("working");
   const third = await reload();
-  assert.deepStrictEqual(third.readSidebarShelvesExpanded(), { working: false, settled: true });
+  assert.deepStrictEqual(third.readSidebarShelvesExpanded(), {
+    working: false,
+    settled: true,
+    snoozed: false,
+  });
+});
+
+it("opens Snoozed independently and preserves older shelf preferences", async () => {
+  stored.set(
+    STORAGE_KEY,
+    JSON.stringify({
+      sidebarProjectScopeKey: null,
+      sidebarOpen: true,
+      sidebarShelvesExpanded: { working: true, settled: false },
+    }),
+  );
+  const state = await reload();
+  assert.deepStrictEqual(state.readSidebarShelvesExpanded(), {
+    working: true,
+    settled: false,
+    snoozed: false,
+  });
+  state.toggleSidebarShelfExpanded("snoozed");
+  assert.isTrue((await reload()).readSidebarShelvesExpanded().snoozed);
 });

@@ -1,3 +1,8 @@
+import { canSnooze } from "@playstead/client-runtime/state/threadSnoozed";
+import { registerSnoozeAndAdvance } from "../snoozeAndAdvance.ts";
+import { buildSnoozeMenuItems, resolveSnoozePresets, snoozeWakeLabel } from "./Sidebar.snooze.ts";
+import { requestCustomSnooze } from "../customSnooze.ts";
+import { readLocalApi } from "../localApi.ts";
 import type { ProjectId, ThreadId } from "@playstead/contracts/baseSchemas";
 import type { OrchestrationV2ThreadShell } from "@playstead/contracts/orchestrationV2";
 import { Link, useNavigate, useParams } from "@tanstack/react-router";
@@ -9,7 +14,13 @@ import { usePrimaryConnectionState } from "../connection/runtime.ts";
 import { createDraft } from "../drafts.ts";
 import { useBulkThreadMenu } from "../hooks/useBulkThreadMenu.ts";
 import { useThreadActionMenu } from "../hooks/useThreadActionMenu.ts";
-import { settleThread, confirmAndUnpinThread, unsettleThread } from "../hooks/useThreadActions.ts";
+import {
+  snoozeThread,
+  unsnoozeThread,
+  settleThread,
+  confirmAndUnpinThread,
+  unsettleThread,
+} from "../hooks/useThreadActions.ts";
 import { registerSettleAndAdvance } from "../settleAndAdvance.ts";
 import {
   clearThreadSelection,
@@ -29,6 +40,7 @@ import {
   toggleSidebarShelfExpanded,
 } from "../uiState.ts";
 import {
+  ClockIcon,
   CheckIcon,
   ChevronRightIcon,
   FolderIcon,
@@ -101,6 +113,16 @@ export function Sidebar() {
   );
   useEffect(() => clearThreadSelection(), [scopeKey]);
 
+  const [now, setNow] = useState(Date.now);
+  useEffect(() => {
+    const refresh = () => setNow(Date.now());
+    const interval = window.setInterval(refresh, 1000);
+    window.addEventListener("focus", refresh);
+    return () => {
+      window.clearInterval(interval);
+      window.removeEventListener("focus", refresh);
+    };
+  }, []);
   const sections = useMemo(() => {
     inboxReturns.observe(workingShelfEnabled ? threads : null, Date.now());
     return buildSidebarSections({
@@ -108,10 +130,15 @@ export function Sidebar() {
       scopedProjectIds,
       workingShelfEnabled,
       returnedAt: inboxReturns.returnedAt,
+      now: new Date(now).toISOString(),
     });
-  }, [threads, scopedProjectIds, workingShelfEnabled]);
+  }, [threads, scopedProjectIds, workingShelfEnabled, now]);
 
-  const { settled: settledExpanded, working: workingExpanded } = useSidebarShelvesExpanded();
+  const {
+    settled: settledExpanded,
+    working: workingExpanded,
+    snoozed: snoozedExpanded,
+  } = useSidebarShelvesExpanded();
   const toggleSettled = () => toggleSidebarShelfExpanded("settled");
   const toggleWorking = () => toggleSidebarShelfExpanded("working");
   const [settledVisibleCount, setSettledVisibleCount] = useState(SETTLED_TAIL_INITIAL_COUNT);
@@ -129,14 +156,29 @@ export function Sidebar() {
   const visibleWorking = shelfRows(sections.working, workingExpanded);
 
   const orderedThreads = useMemo(
-    () => [...sections.pinned, ...sections.active, ...visibleWorking, ...visibleSettled],
-    [sections.pinned, sections.active, visibleWorking, visibleSettled],
+    () => [
+      ...sections.pinned,
+      ...sections.active,
+      ...visibleWorking,
+      ...(snoozedExpanded ? sections.snoozed : []),
+      ...visibleSettled,
+    ],
+    [
+      sections.pinned,
+      sections.active,
+      sections.snoozed,
+      snoozedExpanded,
+      visibleWorking,
+      visibleSettled,
+    ],
   );
   const orderedIds = useMemo(() => orderedThreads.map((thread) => thread.id), [orderedThreads]);
   const orderedIdsRef = useRef(orderedIds);
   orderedIdsRef.current = orderedIds;
   const settledIdsRef = useRef(new Set<string>());
-  settledIdsRef.current = new Set(sections.settled.map((thread) => thread.id));
+  settledIdsRef.current = new Set(
+    [...sections.settled, ...sections.snoozed].map((thread) => thread.id),
+  );
   const routeThreadIdRef = useRef(routeThreadId);
   routeThreadIdRef.current = routeThreadId;
 
@@ -147,7 +189,7 @@ export function Sidebar() {
    */
   const attemptSettle = useCallback(
     (
-      thread: Pick<SidebarThread, "id" | "projectId" | "pinnedAt" | "pinOrderKey">,
+      thread: Pick<SidebarThread, "id" | "projectId" | "pinnedAt" | "pinOrderKey" | "snoozedUntil">,
       coSettling?: ReadonlySet<string>,
     ) => {
       const viewing = routeThreadIdRef.current === thread.id;
@@ -195,10 +237,53 @@ export function Sidebar() {
     },
     [attemptSettle],
   );
+  const attemptSnooze = useCallback(
+    (thread: SidebarThread, until: string, coParkingIds?: ReadonlySet<string>) => {
+      const viewing = routeThreadIdRef.current === thread.id;
+      const next = viewing
+        ? threadAfterPark({
+            orderedIds: orderedIdsRef.current,
+            parkedIds: settledIdsRef.current,
+            threadId: thread.id,
+            ...(coParkingIds === undefined ? {} : { coParkingIds }),
+          })
+        : null;
+      snoozeThread(thread.id, until).then(
+        () => {
+          if (!viewing || routeThreadIdRef.current !== thread.id) return;
+          void (next === null
+            ? navigate({
+                to: "/draft/$draftId",
+                params: { draftId: createDraft(thread.projectId) },
+              })
+            : navigate({ to: "/threads/$threadId", params: { threadId: next as ThreadId } }));
+        },
+        (error: unknown) => failureToast("Failed to snooze thread", error),
+      );
+    },
+    [navigate],
+  );
+  useEffect(
+    () =>
+      registerSnoozeAndAdvance((id, until) => {
+        const thread = threadsByIdRef.current.get(id);
+        if (thread !== undefined) attemptSnooze(thread, until);
+      }),
+    [attemptSnooze],
+  );
+  const snoozeThreads = useCallback(
+    (targets: ReadonlyArray<SidebarThread>, until: string) => {
+      const coParking = new Set<string>(targets.map((thread) => thread.id));
+      for (const thread of targets) attemptSnooze(thread, until, coParking);
+    },
+    [attemptSnooze],
+  );
+
   const openBulkMenu = useBulkThreadMenu({
     variant: "inbox",
     threads: orderedThreads,
     settleThreads,
+    snoozeThreads,
   });
 
   const startNewThread = () => {
@@ -231,6 +316,7 @@ export function Sidebar() {
       projectName={scopedGroup === null ? (projectNameById.get(thread.projectId) ?? null) : null}
       orderedIdsRef={orderedIdsRef}
       onSettle={attemptSettle}
+      onSnooze={attemptSnooze}
       onBulkMenu={openBulkMenu}
     />
   );
@@ -239,7 +325,8 @@ export function Sidebar() {
     sections.pinned.length +
     sections.active.length +
     sections.working.length +
-    sections.settled.length;
+    sections.settled.length +
+    sections.snoozed.length;
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
@@ -301,6 +388,16 @@ export function Sidebar() {
               />
             ) : null}
             {visibleWorking.map((thread) => renderRow(thread, "working"))}
+            {sections.snoozed.length > 0 ? (
+              <ShelfHeader
+                label={snoozedExpanded ? "Snoozed" : `Snoozed (${sections.snoozed.length})`}
+                expanded={snoozedExpanded}
+                onToggle={() => toggleSidebarShelfExpanded("snoozed")}
+              />
+            ) : null}
+            {snoozedExpanded
+              ? sections.snoozed.map((thread) => renderRow(thread, "snoozed"))
+              : null}
             <ShelfHeader
               label={settledExpanded ? "Settled" : `Settled (${sections.settled.length})`}
               expanded={settledExpanded}
@@ -496,6 +593,7 @@ function InboxThreadRow(props: {
   /** Shown when the sidebar spans several projects. */
   readonly projectName: string | null;
   readonly orderedIdsRef: { readonly current: ReadonlyArray<string> };
+  readonly onSnooze: (thread: SidebarThread, until: string) => void;
   readonly onSettle: (thread: SidebarThread) => void;
   readonly onBulkMenu: (position: { x: number; y: number }) => void;
 }) {
@@ -507,14 +605,17 @@ function InboxThreadRow(props: {
   });
   const selected = useThreadSelection().selectedThreadIds.has(thread.id);
   const settled = section === "settled";
+  const snoozed = section === "snoozed";
   const pinned = thread.pinnedAt !== null;
   const now = Date.now();
-  const timeLabel = compactTimeLabel(
-    settled
-      ? (thread.settledAt ?? thread.updatedAt)
-      : (thread.latestRunRequestedAt ?? thread.updatedAt),
-    now,
-  );
+  const timeLabel = snoozed
+    ? snoozeWakeLabel(thread.snoozedUntil!, now)
+    : compactTimeLabel(
+        settled
+          ? (thread.settledAt ?? thread.updatedAt)
+          : (thread.latestRunRequestedAt ?? thread.updatedAt),
+        now,
+      );
 
   const surface = current
     ? "bg-neutral-200 dark:bg-neutral-800"
@@ -522,7 +623,7 @@ function InboxThreadRow(props: {
       ? "bg-sky-100 dark:bg-sky-950"
       : "hover:bg-neutral-100 dark:hover:bg-neutral-900";
   const rowClass = `group relative flex w-full items-center gap-2 rounded-md px-2.5 text-left text-sm ${
-    settled ? "h-8 text-neutral-500 dark:text-neutral-400" : "min-h-9 py-1.5"
+    settled || snoozed ? "h-8 text-neutral-500 dark:text-neutral-400" : "min-h-9 py-1.5"
   } ${surface}`;
 
   if (rename.input !== null) {
@@ -584,7 +685,7 @@ function InboxThreadRow(props: {
           <span className="truncate" title={thread.title}>
             {thread.title}
           </span>
-          {props.projectName !== null && !settled ? (
+          {props.projectName !== null && !settled && !snoozed ? (
             <span className="truncate text-xs text-neutral-500 dark:text-neutral-400">
               {props.projectName}
             </span>
@@ -611,7 +712,45 @@ function InboxThreadRow(props: {
           <PinOffIcon className="hidden size-3 group-hover/unpin:block" />
         </button>
       ) : null}
-      {settled ? (
+      {!snoozed && !settled && canSnooze(thread) ? (
+        <button
+          type="button"
+          aria-label="Snooze thread"
+          title="Snooze thread"
+          className={`absolute top-1/2 ${pinned ? "right-14" : "right-9"} -translate-y-1/2 rounded-md bg-white p-1 text-xs text-neutral-500 opacity-0 group-hover:opacity-100 focus-visible:opacity-100 dark:bg-neutral-900`}
+          onClick={(event) => {
+            const presets = resolveSnoozePresets(new Date());
+            void (async () => {
+              const choice = await readLocalApi().contextMenu.show(
+                buildSnoozeMenuItems({ isSnoozed: false, canSnooze: true, presets })[0]!.children!,
+                { x: event.clientX, y: event.clientY },
+              );
+              const wake =
+                choice === "snooze:custom"
+                  ? await requestCustomSnooze()
+                  : presets.find((preset) => `snooze:${preset.id}` === choice)?.snoozedUntil;
+              if (wake != null) props.onSnooze(thread, wake);
+            })();
+          }}
+        >
+          <ClockIcon className="size-3.5" />
+        </button>
+      ) : null}
+      {snoozed ? (
+        <button
+          type="button"
+          aria-label="Wake thread"
+          title="Wake thread"
+          onClick={() =>
+            unsnoozeThread(thread.id).catch((error: unknown) =>
+              failureToast("Failed to wake thread", error),
+            )
+          }
+          className="absolute top-1/2 right-1 -translate-y-1/2 rounded-md p-1.5 text-neutral-500 opacity-0 group-hover:opacity-100 focus-visible:opacity-100"
+        >
+          <Undo2Icon className="size-3.5" />
+        </button>
+      ) : settled ? (
         <button
           type="button"
           aria-label="Un-settle thread"

@@ -49,6 +49,9 @@ const thread = (
   settledOverride: null,
   settledAt: null,
   unsettledAt: null,
+  snoozedUntil: null,
+  snoozedAt: null,
+  lastSnoozeWakeAt: null,
   pinnedAt: null,
   pinOrderKey: null,
   activeOrderKey: null,
@@ -362,4 +365,29 @@ describe("project scope", () => {
     assert.isNull(resolveSidebarProjectScope(groups, "rocket-game"));
     assert.isNull(resolveSidebarProjectScope(groups, null));
   });
+});
+
+it("parks even pinned working threads in Snoozed, ordered by wake time, and returns completed ones", () => {
+  const a = thread("later", {
+    pinnedAt: at(1),
+    status: "running",
+    snoozedAt: at(10),
+    snoozedUntil: at(18),
+  });
+  const b = thread("earlier", { snoozedAt: at(10), snoozedUntil: at(15) });
+  const c = thread("woke", {
+    snoozedAt: at(10),
+    snoozedUntil: at(18),
+    status: "completed",
+    latestRunCompletedAt: at(11),
+  });
+  const built = buildSidebarSections({
+    threads: [a, b, c],
+    scopedProjectIds: null,
+    workingShelfEnabled: true,
+    now: at(12),
+  });
+  assert.deepStrictEqual(ids(built.snoozed), ["earlier", "later"]);
+  assert.deepStrictEqual(ids(built.active), ["woke"]);
+  assert.deepStrictEqual(ids(built.working), []);
 });

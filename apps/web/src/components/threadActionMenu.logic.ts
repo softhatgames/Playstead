@@ -1,3 +1,4 @@
+import { buildSnoozeMenuItems, type SnoozeMenuState, type SnoozeMenuId } from "./Sidebar.snooze.ts";
 import type { ThreadId } from "@playstead/contracts/baseSchemas";
 import type { ContextMenuItem } from "@playstead/contracts/ipc";
 import {
@@ -16,6 +17,7 @@ import {
  * T3 Code's "New thread on (branch)" and **Copy → Branch** never show.
  */
 export type ThreadActionMenuId =
+  | SnoozeMenuId
   | "pin"
   | "unpin"
   | "settle"
@@ -40,6 +42,7 @@ export interface ThreadActionMenuState {
   readonly projectFilter: { readonly label: string; readonly isActive: boolean } | null;
   readonly isPinned: boolean;
   readonly isSettled: boolean;
+  readonly snooze?: SnoozeMenuState;
 }
 
 export function buildThreadActionMenuItems(
@@ -51,6 +54,7 @@ export function buildThreadActionMenuItems(
       ? { id: "unsettle", label: "Un-settle thread" }
       : { id: "settle", label: "Settle thread" },
     { id: "rename", label: "Rename thread", separatorBefore: true },
+    ...(state.snooze === undefined ? [] : buildSnoozeMenuItems(state.snooze)),
     { id: "mark-unread", label: "Mark unread" },
     ...(state.projectFilter === null
       ? []

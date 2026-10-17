@@ -14,15 +14,17 @@ import { useSyncExternalStore } from "react";
 
 const STORAGE_KEY = `${identity.urlScheme.production}:ui-state:v1`;
 
-const SHELVES_FOLDED = { working: false, settled: false };
+const SHELVES_FOLDED = { working: false, settled: false, snoozed: false };
 export type SidebarShelf = keyof typeof SHELVES_FOLDED;
 
 const PersistedUiState = Schema.Struct({
   sidebarProjectScopeKey: Schema.NullOr(Schema.String),
   sidebarOpen: Schema.Boolean,
-  sidebarShelvesExpanded: Schema.Struct({ working: Schema.Boolean, settled: Schema.Boolean }).pipe(
-    Schema.withDecodingDefault(Effect.succeed(SHELVES_FOLDED)),
-  ),
+  sidebarShelvesExpanded: Schema.Struct({
+    working: Schema.Boolean,
+    settled: Schema.Boolean,
+    snoozed: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  }).pipe(Schema.withDecodingDefault(Effect.succeed(SHELVES_FOLDED))),
   projectExpandedById: Schema.Record(Schema.String, Schema.Boolean).pipe(
     Schema.withDecodingDefault(Effect.succeed({})),
   ),
