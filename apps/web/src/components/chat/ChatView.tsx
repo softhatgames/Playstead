@@ -242,6 +242,7 @@ export function ChatView(
             projectId: projection.thread.projectId,
             title: projection.thread.title,
             status: latestRun?.status ?? "idle",
+            autoSettleDisabledAt: projection.thread.autoSettleDisabledAt ?? null,
             snoozedUntil: projection.thread.snoozedUntil,
             snoozedAt: projection.thread.snoozedAt,
             latestRunCompletedAt: latestRun?.completedAt ?? null,

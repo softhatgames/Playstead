@@ -68,7 +68,9 @@ const layerWsRpc = WsRpcGroup.toLayer(
       [WS_METHODS.serverUpdateSettings]: (input) =>
         "providerInstanceMutation" in input
           ? settings.updateProviderInstance(input.providerInstanceMutation)
-          : settings.updateTextGeneration(input.textGenerationModelSelection),
+          : "sidebarAutoSettleAfterDays" in input
+            ? settings.updateAutoSettle(input.sidebarAutoSettleAfterDays)
+            : settings.updateTextGeneration(input.textGenerationModelSelection),
       // Both change streams start with their current value, which the
       // snapshot already carries.
       [WS_METHODS.subscribeServerConfig]: () =>

@@ -20,6 +20,7 @@ import { settleAndAdvance } from "../settleAndAdvance.ts";
 import { failureToast, successToast } from "../toast.ts";
 import { readSidebarProjectScopeKey, setSidebarProjectScopeKey } from "../uiState.ts";
 import {
+  setThreadAutoSettle,
   snoozeThread,
   unsnoozeThread,
   regenerateThreadTitle,
@@ -87,6 +88,7 @@ export function useThreadActionMenu(
           variant === "tree"
             ? legacyThreadMenuItems
             : buildThreadActionMenuItems({
+                autoSettleEnabled: thread.autoSettleDisabledAt == null,
                 snooze: {
                   isSnoozed: effectiveSnoozed(thread, now.toISOString()),
                   canSnooze: canSnooze(thread),
@@ -118,6 +120,12 @@ export function useThreadActionMenu(
           return;
         }
         switch (chosen) {
+          case "auto-settle:enabled":
+          case "auto-settle:disabled":
+            await setThreadAutoSettle(thread.id, chosen === "auto-settle:enabled").catch(
+              (error: unknown) => failureToast("Failed to change auto-settle behavior", error),
+            );
+            return;
           case "unsnooze":
             await unsnoozeThread(thread.id).catch((error: unknown) =>
               failureToast("Failed to wake thread", error),
