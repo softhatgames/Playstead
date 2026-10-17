@@ -92,6 +92,40 @@ const removals = (harness: Harness) =>
 
 describe("Remove a project", () => {
   it.layer(NodeServices.layer)((it) => {
+    for (const collision of ["create", "other-delete", "thread"] as const) {
+      it.effect(`refuses a reused ${collision} command id before deleting children`, () =>
+        Effect.gen(function* () {
+          const { harness } = yield* replayClaude("file_create.claude.ndjson");
+          const project = yield* addProject(
+            harness,
+            "kept",
+            yield* makeGameFolder(harness, "kept"),
+          );
+          const threadId = ThreadId.make("thread:kept");
+          yield* createThread(harness, project.id, threadId);
+          let commandId = CommandId.make("command:create:kept");
+          if (collision === "thread") commandId = CommandId.make(`command:create:${threadId}`);
+          if (collision === "other-delete") {
+            const other = yield* addProject(
+              harness,
+              "other",
+              yield* makeGameFolder(harness, "other"),
+            );
+            commandId = CommandId.make("command:delete:other");
+            yield* harness.projects.delete({ commandId, projectId: other.id, force: true });
+          }
+          const result = yield* Effect.result(
+            harness.projects.delete({ commandId, projectId: project.id, force: true }),
+          );
+          assert.strictEqual(result._tag, "Failure");
+          assert.isNull((yield* projectionOf(harness, threadId)).thread.deletedAt);
+          assert.deepStrictEqual(
+            (yield* removals(harness)).filter(([id]) => id === threadId || id === project.id),
+            [],
+          );
+        }).pipe(Effect.scoped),
+      );
+    }
     it.effect(
       "removing an empty project leaves its files, and adding the folder again makes a new project",
       () =>

@@ -88,6 +88,26 @@ describe("ManagedProjectFolders", () => {
       }).pipe(Effect.scoped),
     );
 
+    it.effect("removes and recreates the managed entry while keeping its files", () =>
+      Effect.gen(function* () {
+        const harness = yield* makeOrchestrationHarness({});
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const first = yield* harness.projects.ensureScratchProject;
+        const root = yield* requireRoot(harness);
+        const file = path.join(root, "keep.txt");
+        yield* fs.writeFileString(file, "kept");
+        yield* harness.projects.delete({
+          commandId: CommandId.make("remove-scratch"),
+          projectId: first.projectId,
+          force: true,
+        });
+        const second = yield* harness.projects.ensureScratchProject;
+        assert.notStrictEqual(second.projectId, first.projectId);
+        assert.strictEqual(yield* fs.readFileString(file), "kept");
+      }).pipe(Effect.scoped),
+    );
+
     it.effect("makes the scratch folder again after it is deleted", () =>
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;

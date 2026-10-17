@@ -16,6 +16,7 @@ import * as Option from "effect/Option";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 
+import * as CommandReceiptStore from "../orchestration-v2/CommandReceiptStore.ts";
 import * as EventSink from "../orchestration-v2/EventSink.ts";
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import {
@@ -146,6 +147,7 @@ const make = Effect.gen(function* () {
   const projections = yield* ProjectionStore.ProjectionStoreV2;
   const orchestrator = yield* Orchestrator.OrchestratorV2;
   const eventSink = yield* EventSink.EventSinkV2;
+  const receipts = yield* CommandReceiptStore.CommandReceiptStoreV2;
   const workspacePaths = yield* WorkspacePaths.WorkspacePaths;
   const folders = yield* ManagedProjectFolders.ManagedProjectFolders;
   const crypto = yield* Crypto.Crypto;
@@ -320,6 +322,31 @@ const make = Effect.gen(function* () {
   });
 
   const deleteProject = Effect.fn("ProjectService.delete")(function* (input: ProjectDeleteInput) {
+    const previous = yield* Effect.all({
+      project: receipts.getProjectByCommandId(input.commandId),
+      thread: receipts.getByCommandId(input.commandId),
+    }).pipe(
+      Effect.mapError(
+        (cause) =>
+          new ProjectOperationError({
+            operation: "dispatch-project-command",
+            projectId: input.projectId,
+            cause,
+          }),
+      ),
+    );
+    if (
+      Option.isSome(previous.thread) ||
+      (Option.isSome(previous.project) &&
+        (previous.project.value.projectId !== input.projectId ||
+          previous.project.value.commandType !== "project.delete"))
+    ) {
+      return yield* new ProjectOperationError({
+        operation: "dispatch-project-command",
+        projectId: input.projectId,
+        cause: "Command ID already belongs to another command.",
+      });
+    }
     const { projectId } = input;
     // A removed project still reaches commit, so a retried command id gets
     // its receipt back and any other is refused as not found.
