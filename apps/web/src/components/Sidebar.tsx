@@ -15,7 +15,7 @@ import {
   useSortable,
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import type { OrderKeyAssignment } from "@playstead/client-runtime/state/threadOrder";
+import type { OrderKeyAssignment } from "@playstead/client-runtime/state/threadSort";
 import {
   canSnooze,
   resolveSnoozePresets,
@@ -43,7 +43,7 @@ import { readPrimaryServerSettings, usePrimaryConnectionState } from "../connect
 import { useThreadSearch } from "../connection/useThreadSearch.ts";
 import { createDraft } from "../drafts.ts";
 import { useBulkThreadMenu } from "../hooks/useBulkThreadMenu.ts";
-import { useNewThread } from "../hooks/useNewThread.ts";
+import { useHandleNewThread } from "../hooks/useHandleNewThread.ts";
 import { useIsScratchProject } from "../hooks/useScratchProject.ts";
 import { useSidebarThreadShortcuts } from "../hooks/useSidebarThreadShortcuts.ts";
 import { keybindings, shortcutLabelForCommand } from "../keybindings.ts";
@@ -67,8 +67,8 @@ import {
   setThreadSelectionAnchor,
   toggleThreadSelection,
   useThreadSelection,
-} from "../threadSelection.ts";
-import { failureToast } from "../toast.ts";
+} from "../threadSelectionStore.ts";
+import { failureToast } from "./ui/toast.tsx";
 import { openProject, setSidebarProjectScopeKey, useSidebarProjectScopeKey } from "../uiState.ts";
 import { requestCustomSnooze } from "./CustomSnoozeDialog.tsx";
 import {
@@ -109,21 +109,21 @@ import {
 import { createSidebarListMotion } from "./Sidebar.motion.ts";
 import { SidebarDragLifecycle, SidebarPointerSensor } from "./Sidebar.pointer.ts";
 import {
-  buildSidebarProjectGroups,
   buildSidebarSections,
   compactTimeLabel,
-  createInboxReturnTracker,
-  resolveSidebarProjectScope,
-  type SidebarProjectGroup,
-  type SidebarSection,
-  snoozeMenuChildren,
-  threadAfterPark,
-} from "./Sidebar.inbox.logic.ts";
-import {
   isTrailingDoubleClick,
   moveSearchHighlight,
   searchSidebarThreads,
+  type SidebarSection,
+  threadAfterPark,
 } from "./Sidebar.logic.ts";
+import { snoozeMenuChildren } from "./Sidebar.snooze.ts";
+import {
+  buildSidebarProjectGroups,
+  resolveSidebarProjectScope,
+  type SidebarProjectGroup,
+} from "../sidebarProjectGrouping.ts";
+import { createInboxReturnTracker } from "@playstead/client-runtime/state/threadInbox";
 import {
   SEARCH_RESULTS_ID,
   SidebarSearchField,
@@ -1005,7 +1005,7 @@ export function Sidebar() {
 
   // In the current project while the scope shows it: the thread in view's,
   // the draft's or the last opened; otherwise the scope's first.
-  const newThread = useNewThread({ scopedProjectIds });
+  const newThread = useHandleNewThread({ scopedProjectIds });
   const startNewThread = (event: ReactMouseEvent) => {
     if (!shouldCreateNewThreadInCurrentProject(event.shiftKey, groups.length)) {
       openCommandPalette({ open: "new-thread-in" });

@@ -7,7 +7,7 @@ import {
   removeFromThreadSelection,
   setThreadSelectionAnchor,
   toggleThreadSelection,
-} from "./threadSelection.ts";
+} from "./threadSelectionStore.ts";
 
 /**
  * Selecting several threads in the sidebar (T3 Code's

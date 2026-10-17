@@ -3,7 +3,7 @@ import { useEffect, useRef, useState } from "react";
 
 import { openCommandPalette } from "../../commandPaletteBus.ts";
 import { type ThreadDraft, setDraftProject } from "../../drafts.ts";
-import { useNewThread } from "../../hooks/useNewThread.ts";
+import { useHandleNewThread } from "../../hooks/useHandleNewThread.ts";
 import { openScratchProject, useScratchProject } from "../../hooks/useScratchProject.ts";
 import { keybindings, shortcutLabelForCommand } from "../../keybindings.ts";
 import { openProject } from "../../uiState.ts";
@@ -19,7 +19,7 @@ import { resolveDraftHeadline } from "./draftHero.logic.ts";
  */
 export function DraftHeroHeadline(props: { readonly draft: ThreadDraft }) {
   const { draft } = props;
-  const { groups } = useNewThread();
+  const { groups } = useHandleNewThread();
   const { scratchWorkspaceRoot } = useScratchProject();
   const draftGroup = groups.find((group) => group.projectIds.includes(draft.projectId));
   const isScratchDraft = draftGroup?.isScratch ?? false;

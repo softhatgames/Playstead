@@ -3,7 +3,7 @@ import type { ContextMenuItem } from "@playstead/contracts/ipc";
 import type { OrchestrationV2ThreadShell } from "@playstead/contracts/orchestrationV2";
 import type { SnoozePreset } from "@playstead/client-runtime/state/threadSettled";
 
-import { type SnoozeMenuId, snoozeMenuChildren } from "./Sidebar.inbox.logic.ts";
+import { type SnoozeMenuId, snoozeMenuChildren } from "./Sidebar.snooze.ts";
 
 /**
  * The thread menu (T3 Code's `apps/web/src/components/threadActionMenu.logic.ts`

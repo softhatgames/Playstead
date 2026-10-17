@@ -1,9 +1,9 @@
 import {
   type OrderKeyAssignment,
   planThreadReorder,
-} from "@playstead/client-runtime/state/threadOrder";
+} from "@playstead/client-runtime/state/threadSort";
 
-import type { SidebarSection } from "./Sidebar.inbox.logic.ts";
+import type { SidebarSection } from "./Sidebar.logic.ts";
 
 /**
  * Dragging threads in the inbox sidebar (T3 Code's drag functions in

@@ -42,8 +42,8 @@ import {
   setThreadSelectionAnchor,
   toggleThreadSelection,
   useThreadSelection,
-} from "../threadSelection.ts";
-import { sortThreads } from "../threadSort.ts";
+} from "../threadSelectionStore.ts";
+import { sortThreads } from "@playstead/client-runtime/state/threadSort";
 import { openProject, setProjectOrder, useActiveProjectId, useProjectOrder } from "../uiState.ts";
 import {
   ArchiveIcon,
@@ -56,7 +56,7 @@ import {
 } from "./icons.tsx";
 import { isTrailingDoubleClick, reorderProjects, sortTreeProjects } from "./Sidebar.logic.ts";
 import { readLocalApi } from "../localApi.ts";
-import { failureToast, successToast } from "../toast.ts";
+import { failureToast, successToast } from "./ui/toast.tsx";
 import { projectMenuItems } from "./projectActions.logic.ts";
 import { ProjectRenameDialog } from "./sidebar/ProjectRenameDialog.tsx";
 import {

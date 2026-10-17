@@ -3,7 +3,7 @@ import type { OrchestrationThreadSearchMatch } from "@playstead/contracts/thread
 import type { KeyboardEvent as ReactKeyboardEvent, RefObject } from "react";
 
 import { SearchIcon, XIcon } from "../icons.tsx";
-import { compactTimeLabel } from "../Sidebar.inbox.logic.ts";
+import { compactTimeLabel } from "../Sidebar.logic.ts";
 import { ThreadSearchMatchExcerpt } from "../ThreadSearchMatch.tsx";
 import { ThreadStatusIndicator } from "./SidebarThreadParts.tsx";
 

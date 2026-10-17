@@ -1,6 +1,6 @@
 import { assert, describe, it } from "@effect/vitest";
 
-import { pinOrderKeyBetween, planThreadReorder, spreadOrderKeys } from "./threadOrder.ts";
+import { pinOrderKeyBetween, planThreadReorder, spreadOrderKeys } from "./threadSort.ts";
 
 describe("pinOrderKeyBetween", () => {
   it("makes a key above, below and between others, and none for corrupt bounds", () => {

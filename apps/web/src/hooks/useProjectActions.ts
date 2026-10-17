@@ -15,7 +15,7 @@ import {
 import { discardProjectDrafts } from "../drafts.ts";
 import { newId } from "../ids.ts";
 import { readLocalApi } from "../localApi.ts";
-import { failureToast, warningToast } from "../toast.ts";
+import { failureToast, warningToast } from "../components/ui/toast.tsx";
 
 /** The project an action is for, from the sidebar's shell. */
 export type ProjectActionTarget = Pick<OrchestrationProjectShell, "id" | "title" | "workspaceRoot">;

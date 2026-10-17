@@ -5,7 +5,7 @@ import {
 import { useCallback, useRef, useState } from "react";
 
 import { renameThread } from "../../hooks/useThreadActions.ts";
-import { failureToast, warningToast } from "../../toast.ts";
+import { failureToast, warningToast } from "../ui/toast.tsx";
 import { resolveRenameCommit } from "../chat/ChatHeader.logic.ts";
 import { hasUnseenCompletion } from "../Sidebar.logic.ts";
 

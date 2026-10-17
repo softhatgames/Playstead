@@ -9,7 +9,7 @@ import {
   type ThreadSortInput,
   type ThreadSortOrder,
   threadSortTimestamp,
-} from "../threadSort.ts";
+} from "@playstead/client-runtime/state/threadSort";
 
 /**
  * What the command palette lists and how a query narrows it, kept apart from

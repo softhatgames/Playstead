@@ -25,18 +25,13 @@ import { onOpenCommandPalette } from "../commandPaletteBus.ts";
 import { requestPrimary, usePrimaryConnectionState } from "../connection/runtime.ts";
 import { useThreadSearch } from "../connection/useThreadSearch.ts";
 import { desktopBridge } from "../env.ts";
-import { useNewThread } from "../hooks/useNewThread.ts";
+import { useHandleNewThread } from "../hooks/useHandleNewThread.ts";
 import { useScratchProject } from "../hooks/useScratchProject.ts";
 import { copyThreadReference } from "../hooks/useThreadShortcuts.ts";
 import { newId } from "../ids.ts";
-import {
-  keybindings,
-  resolveShortcutCommand,
-  shortcutLabelForCommand,
-  threadJumpIndexFromCommand,
-} from "../keybindings.ts";
-import { sortThreads } from "../threadSort.ts";
-import { failureToast } from "../toast.ts";
+import { keybindings, resolveShortcutCommand, threadJumpIndexFromCommand } from "../keybindings.ts";
+import { sortThreads } from "@playstead/client-runtime/state/threadSort";
+import { failureToast } from "./ui/toast.tsx";
 import { openProject } from "../uiState.ts";
 import { planAddProject } from "./addProject.logic.ts";
 import {
@@ -47,7 +42,6 @@ import {
   type CommandPaletteActionItem,
   type CommandPaletteEntry,
   type CommandPaletteGroup,
-  type CommandPaletteIcon,
   type CommandPaletteView,
   enumerateCommandPaletteItems,
   filterCommandPaletteGroups,
@@ -58,26 +52,18 @@ import {
   reduceCommandPaletteUiState,
   withNoProjectItem,
 } from "./CommandPalette.logic.ts";
+import { CommandPaletteContent } from "./CommandPaletteContent.tsx";
 import {
-  ArrowLeftIcon,
-  ChevronRightIcon,
-  FolderIcon,
-  FolderPlusIcon,
-  FolderUpIcon,
-  LinkIcon,
-  MessageSquareDashedIcon,
-  MessageSquareIcon,
-  SettingsIcon,
-  SquarePenIcon,
-} from "./icons.tsx";
+  COMMAND_PALETTE_ICON_CLASS,
+  COMMAND_PALETTE_LISTBOX_ID,
+  CommandPaletteResults,
+  commandPaletteOptionId,
+} from "./CommandPaletteResults.tsx";
+import { ArrowLeftIcon, FolderPlusIcon } from "./icons.tsx";
 import { SETTINGS_SECTION_LABELS, searchSettings } from "./settings/settingsSearch.ts";
-import { ThreadStatusIndicator } from "./sidebar/SidebarThreadParts.tsx";
-import { ThreadSearchMatchExcerpt } from "./ThreadSearchMatch.tsx";
 
 /** Where Add project starts browsing (T3 Code's default without a base folder setting). */
 const ADD_PROJECT_INITIAL_QUERY = "~/";
-const LISTBOX_ID = "command-palette-results";
-const optionId = (index: number) => `command-palette-option-${index}`;
 
 const fileManagerName = (platform: string) =>
   /mac/i.test(platform) ? "Finder" : /win/i.test(platform) ? "File Explorer" : "Files";
@@ -90,33 +76,10 @@ const isPrimaryModifierPressed = (event: KeyboardEvent) =>
 const errorMessage = (error: unknown) =>
   error instanceof Error && error.message.length > 0 ? error.message : "An error occurred.";
 
-const ICON_CLASS = "size-4 shrink-0 text-neutral-500 dark:text-neutral-400";
-
-function ItemIcon({ icon }: { readonly icon: CommandPaletteIcon }) {
-  switch (icon) {
-    case "new-thread":
-      return <SquarePenIcon className={ICON_CLASS} />;
-    case "no-project":
-      return <MessageSquareDashedIcon className={ICON_CLASS} />;
-    case "add-project":
-      return <FolderPlusIcon className={ICON_CLASS} />;
-    case "settings":
-      return <SettingsIcon className={ICON_CLASS} />;
-    case "copy":
-      return <LinkIcon className={ICON_CLASS} />;
-    case "project":
-    case "folder":
-      return <FolderIcon className={ICON_CLASS} />;
-    case "folder-up":
-      return <FolderUpIcon className={ICON_CLASS} />;
-    case "thread":
-      return <MessageSquareIcon className={ICON_CLASS} />;
-  }
-}
-
 /**
- * T3 Code's command palette (`apps/web/src/components/CommandPalette.tsx`,
- * `CommandPaletteContent.tsx` and `CommandPaletteResults.tsx` at 2577baf),
+ * T3 Code's command palette (`apps/web/src/components/CommandPalette.tsx`
+ * at 2577baf; its frame is `CommandPaletteContent.tsx` and its list
+ * `CommandPaletteResults.tsx`),
  * in its command mode. `mod+k` opens and closes it; the bus opens it
  * straight into **Add project** or **New thread in…**. T3 Code's file and
  * project-content search modes wait for version control and project
@@ -197,7 +160,7 @@ function OpenCommandPalette(props: {
   const settings = useClientSettings();
   const { threadId: routeThreadId } = useParams({ strict: false });
   const routeThread = threads.find((thread) => thread.id === routeThreadId);
-  const { groups: projectGroups, contextProjectId, startInProject } = useNewThread();
+  const { groups: projectGroups, contextProjectId, startInProject } = useHandleNewThread();
   const { scratchWorkspaceRoot, startScratchThread } = useScratchProject();
 
   useLayoutEffect(() => {
@@ -591,7 +554,9 @@ function OpenCommandPalette(props: {
 
   useEffect(() => {
     if (activeIndex >= 0) {
-      document.getElementById(optionId(activeIndex))?.scrollIntoView({ block: "nearest" });
+      document
+        .getElementById(commandPaletteOptionId(activeIndex))
+        ?.scrollIntoView({ block: "nearest" });
     }
   }, [activeIndex]);
 
@@ -700,213 +665,80 @@ function OpenCommandPalette(props: {
   const modLabel = /mac/i.test(navigator.platform) ? "⌘" : "Ctrl";
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-start justify-center bg-black/30 pt-[15vh]"
-      onMouseDown={(event) => {
-        if (event.target === event.currentTarget) close();
+    <CommandPaletteContent
+      onClose={close}
+      inputRef={inputRef}
+      inputProps={{
+        value: query,
+        onChange: (event) => handleQueryChange(event.target.value),
+        onKeyDown,
+        placeholder: getCommandPaletteInputPlaceholder(mode),
+        "aria-label": isBrowsing ? "Project path" : "Search the command palette",
+        role: "combobox",
+        "aria-expanded": true,
+        "aria-controls": COMMAND_PALETTE_LISTBOX_ID,
+        "aria-activedescendant": activeIndex >= 0 ? commandPaletteOptionId(activeIndex) : undefined,
       }}
+      inputLeading={
+        isSubmenu ? (
+          <button
+            type="button"
+            aria-label="Back"
+            onClick={popView}
+            className="text-neutral-500 hover:text-neutral-900 dark:text-neutral-400 dark:hover:text-neutral-100"
+          >
+            <ArrowLeftIcon className="size-4" />
+          </button>
+        ) : isBrowsing ? (
+          <FolderPlusIcon className={COMMAND_PALETTE_ICON_CLASS} />
+        ) : null
+      }
+      inputAccessory={
+        isBrowsing ? (
+          <button
+            type="button"
+            disabled={busy || resolvedPath.length === 0}
+            onMouseDown={(event) => event.preventDefault()}
+            onClick={() => void addProject(resolvedPath)}
+            className="flex shrink-0 items-center gap-2 rounded-md border border-neutral-300 px-2 py-0.5 text-xs hover:bg-neutral-100 disabled:opacity-50 dark:border-neutral-700 dark:hover:bg-neutral-900"
+          >
+            <span>{busy ? "Adding" : "Add"}</span>
+            <kbd className="opacity-70">
+              {hasHighlightedBrowseItem ? `${modLabel} Enter` : "Enter"}
+            </kbd>
+          </button>
+        ) : null
+      }
+      status={
+        error !== undefined ? (
+          <span className="text-red-600 dark:text-red-400">{error}</span>
+        ) : (
+          browseStatus
+        )
+      }
+      {...(footerActionLabel === undefined ? {} : { footerActionLabel })}
+      showBackHint={isSubmenu}
+      footerTrailing={
+        isBrowsing && desktopBridge !== undefined ? (
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => void pickFolder()}
+            className="rounded-md px-2 py-1 hover:bg-neutral-100 disabled:opacity-50 dark:hover:bg-neutral-900"
+          >
+            {`Open in ${fileManagerName(navigator.platform)}`}
+          </button>
+        ) : null
+      }
     >
-      <div
-        role="dialog"
-        aria-modal="true"
-        aria-label="Command palette"
-        data-command-palette=""
-        className="flex w-full max-w-xl flex-col overflow-hidden rounded-xl border border-neutral-200 bg-white shadow-xl dark:border-neutral-800 dark:bg-neutral-950"
-      >
-        <div className="relative flex items-center gap-2 border-b border-neutral-200 px-4 dark:border-neutral-800">
-          {isSubmenu ? (
-            <button
-              type="button"
-              aria-label="Back"
-              onClick={popView}
-              className="text-neutral-500 hover:text-neutral-900 dark:text-neutral-400 dark:hover:text-neutral-100"
-            >
-              <ArrowLeftIcon className="size-4" />
-            </button>
-          ) : isBrowsing ? (
-            <FolderPlusIcon className={ICON_CLASS} />
-          ) : null}
-          <input
-            ref={inputRef}
-            value={query}
-            onChange={(event) => handleQueryChange(event.target.value)}
-            onKeyDown={onKeyDown}
-            placeholder={getCommandPaletteInputPlaceholder(mode)}
-            aria-label={isBrowsing ? "Project path" : "Search the command palette"}
-            role="combobox"
-            aria-expanded="true"
-            aria-controls={LISTBOX_ID}
-            aria-activedescendant={activeIndex >= 0 ? optionId(activeIndex) : undefined}
-            spellCheck={false}
-            autoComplete="off"
-            className="min-w-0 flex-1 bg-transparent py-3 text-sm outline-none"
-          />
-          {isBrowsing ? (
-            <button
-              type="button"
-              disabled={busy || resolvedPath.length === 0}
-              onMouseDown={(event) => event.preventDefault()}
-              onClick={() => void addProject(resolvedPath)}
-              className="flex shrink-0 items-center gap-2 rounded-md border border-neutral-300 px-2 py-0.5 text-xs hover:bg-neutral-100 disabled:opacity-50 dark:border-neutral-700 dark:hover:bg-neutral-900"
-            >
-              <span>{busy ? "Adding" : "Add"}</span>
-              <kbd className="opacity-70">
-                {hasHighlightedBrowseItem ? `${modLabel} Enter` : "Enter"}
-              </kbd>
-            </button>
-          ) : null}
-        </div>
-        {browseStatus !== undefined || error !== undefined ? (
-          <div role="status" className="px-4 py-2 text-sm text-neutral-500 dark:text-neutral-400">
-            {error !== undefined ? (
-              <span className="text-red-600 dark:text-red-400">{error}</span>
-            ) : (
-              browseStatus
-            )}
-          </div>
-        ) : null}
-        <div
-          id={LISTBOX_ID}
-          role="listbox"
-          aria-label="Results"
-          className="max-h-[min(28rem,70vh)] overflow-y-auto p-2"
-        >
-          {rows.length === 0 && emptyMessage !== undefined ? (
-            <div className="py-10 text-center text-sm text-neutral-500 dark:text-neutral-400">
-              {emptyMessage}
-            </div>
-          ) : (
-            rows.map((row) =>
-              row.kind === "label" ? (
-                <div
-                  key={row.key}
-                  role="presentation"
-                  className={`px-2 pb-1 text-xs font-medium text-neutral-500 dark:text-neutral-400 ${row.first ? "" : "pt-3"}`}
-                >
-                  {row.label}
-                </div>
-              ) : (
-                <ResultRow
-                  key={row.key}
-                  item={row.item}
-                  index={row.itemIndex}
-                  active={row.item.value === activeValue}
-                  thread={
-                    row.item.threadId === undefined ? undefined : threadById.get(row.item.threadId)
-                  }
-                  onHighlight={() => setHighlighted(row.item.value)}
-                  onExecute={() => executeItem(row.item)}
-                />
-              ),
-            )
-          )}
-        </div>
-        <div className="flex items-center justify-between gap-3 border-t border-neutral-200 px-3 py-2 text-xs text-neutral-500 dark:border-neutral-800 dark:text-neutral-400">
-          <div className="flex items-center gap-3">
-            <span>
-              <kbd>↑</kbd> <kbd>↓</kbd> Navigate
-            </span>
-            {footerActionLabel === undefined ? null : (
-              <span>
-                <kbd>Enter</kbd> {footerActionLabel}
-              </span>
-            )}
-            {isSubmenu ? (
-              <span>
-                <kbd>Backspace</kbd> Back
-              </span>
-            ) : null}
-            <span>
-              <kbd>Esc</kbd> Close
-            </span>
-          </div>
-          {isBrowsing && desktopBridge !== undefined ? (
-            <button
-              type="button"
-              disabled={busy}
-              onClick={() => void pickFolder()}
-              className="rounded-md px-2 py-1 hover:bg-neutral-100 disabled:opacity-50 dark:hover:bg-neutral-900"
-            >
-              {`Open in ${fileManagerName(navigator.platform)}`}
-            </button>
-          ) : null}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-/** A result (T3 Code's `CommandPaletteResultRow`). */
-function ResultRow(props: {
-  readonly item: CommandPaletteEntry;
-  readonly index: number | null;
-  readonly active: boolean;
-  readonly thread: Parameters<typeof ThreadStatusIndicator>[0]["thread"] | undefined;
-  readonly onHighlight: () => void;
-  readonly onExecute: () => void;
-}) {
-  const { item } = props;
-  const shortcut =
-    item.shortcutCommand === undefined
-      ? null
-      : shortcutLabelForCommand(keybindings, item.shortcutCommand);
-  const title = (
-    <span className="flex min-w-0 items-center gap-1.5 text-sm text-neutral-900 dark:text-neutral-100">
-      {props.thread === undefined ? null : <ThreadStatusIndicator thread={props.thread} />}
-      <span className="truncate">
-        {item.title}
-        {item.titleEmphasis === undefined ? null : (
-          <>
-            {" "}
-            <span className="font-semibold">{item.titleEmphasis}</span>
-          </>
-        )}
-      </span>
-    </span>
-  );
-  return (
-    <div
-      id={props.index === null ? undefined : optionId(props.index)}
-      role="option"
-      aria-selected={props.active}
-      aria-disabled={item.disabled || undefined}
-      onMouseDown={(event) => event.preventDefault()}
-      onMouseMove={item.disabled ? undefined : props.onHighlight}
-      onClick={item.disabled ? undefined : props.onExecute}
-      className={`flex min-h-8 cursor-default items-center gap-2 rounded-md px-2 py-1.5 ${
-        item.disabled ? "opacity-60" : ""
-      } ${props.active ? "bg-neutral-100 dark:bg-neutral-800" : ""}`}
-    >
-      <ItemIcon icon={item.icon} />
-      {item.description !== undefined || item.threadContentMatch !== undefined ? (
-        <span className="flex min-w-0 flex-1 flex-col">
-          {title}
-          {item.threadContentMatch === undefined ? null : (
-            <ThreadSearchMatchExcerpt
-              match={item.threadContentMatch}
-              query={item.threadContentMatch.query}
-            />
-          )}
-          {item.description === undefined || item.description === "" ? null : (
-            <span className="truncate text-xs text-neutral-500 dark:text-neutral-400">
-              {item.description}
-            </span>
-          )}
-        </span>
-      ) : (
-        <span className="flex min-w-0 flex-1">{title}</span>
-      )}
-      {item.timestamp === undefined ? null : (
-        <span className="min-w-12 shrink-0 text-right text-xs text-neutral-500 tabular-nums dark:text-neutral-400">
-          {item.timestamp}
-        </span>
-      )}
-      {shortcut === null ? null : (
-        <kbd className="shrink-0 text-xs text-neutral-500 dark:text-neutral-400">{shortcut}</kbd>
-      )}
-      {item.kind === "submenu" ? (
-        <ChevronRightIcon className="size-4 shrink-0 text-neutral-500 dark:text-neutral-400" />
-      ) : null}
-    </div>
+      <CommandPaletteResults
+        rows={rows}
+        activeValue={activeValue}
+        emptyMessage={emptyMessage}
+        threadById={threadById}
+        onHighlight={(item) => setHighlighted(item.value)}
+        onExecute={executeItem}
+      />
+    </CommandPaletteContent>
   );
 }

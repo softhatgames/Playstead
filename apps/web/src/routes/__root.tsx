@@ -4,7 +4,7 @@ import { useEffect } from "react";
 import { APP_DISPLAY_NAME } from "../branding.ts";
 import { ConfirmDialogHost } from "../components/ConfirmDialogHost.tsx";
 import { CustomSnoozeDialogHost } from "../components/CustomSnoozeDialog.tsx";
-import { ToastHost } from "../components/ToastHost.tsx";
+import { ToastHost } from "../components/ui/toast.tsx";
 import { useSystemTheme } from "../hooks/useTheme.ts";
 
 function RootRouteView() {

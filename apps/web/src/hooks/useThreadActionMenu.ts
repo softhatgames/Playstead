@@ -10,7 +10,7 @@ import { useCallback } from "react";
 import { copyTextToClipboard } from "../clipboard.ts";
 import { readClientSettings } from "../clientSettings.ts";
 import { requestCustomSnooze } from "../components/CustomSnoozeDialog.tsx";
-import { buildSidebarProjectGroups } from "../components/Sidebar.inbox.logic.ts";
+import { buildSidebarProjectGroups } from "../sidebarProjectGrouping.ts";
 import {
   buildThreadActionMenuItems,
   legacyThreadMenuItems,
@@ -21,7 +21,7 @@ import { usePrimaryConnectionState } from "../connection/runtime.ts";
 import { readLocalApi } from "../localApi.ts";
 import { useIsScratchProject } from "./useScratchProject.ts";
 import { settleAndAdvance } from "../settleAndAdvance.ts";
-import { failureToast, successToast } from "../toast.ts";
+import { failureToast, successToast } from "../components/ui/toast.tsx";
 import { readSidebarProjectScopeKey, setSidebarProjectScopeKey } from "../uiState.ts";
 import {
   markThreadUnread,
