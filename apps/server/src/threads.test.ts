@@ -166,7 +166,7 @@ describe("archive and delete over RPC", () => {
     );
 
     it.effect(
-      "the sidebar shows a renamed thread's new title and its read marker after a visit",
+      "the sidebar shows a renamed thread's new title, its read marker after a visit, its pin and its settling",
       () =>
         Effect.gen(function* () {
           const fs = yield* FileSystem.FileSystem;
@@ -218,6 +218,25 @@ describe("archive and delete over RPC", () => {
             visitedAt: "2026-10-17T12:00:00.000Z",
           });
           yield* sidebarThread((thread) => thread.lastVisitedAt === "2026-10-17T12:00:00.000Z");
+
+          // Pin and settle reach the sidebar too: a pin, then a settle that drops it.
+          yield* dispatch({
+            type: "thread.pin",
+            commandId: CommandId.make("command:pin"),
+            threadId,
+          });
+          yield* sidebarThread((thread) => thread.pinnedAt !== null);
+          yield* dispatch({
+            type: "thread.settle",
+            commandId: CommandId.make("command:settle"),
+            threadId,
+          });
+          yield* sidebarThread(
+            (thread) =>
+              thread.settledOverride === "settled" &&
+              thread.settledAt !== null &&
+              thread.pinnedAt === null,
+          );
         }).pipe(Effect.scoped),
     );
   });

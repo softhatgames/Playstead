@@ -5,51 +5,118 @@ import {
   archivedThreadMenuItems,
   buildThreadActionMenuItems,
   fallbackThreadAfterDelete,
+  legacyThreadMenuItems,
+  requestThreadUnpinConfirmation,
   threadArchiveConfirmation,
   threadDeleteConfirmation,
   threadRuntimeCanArchive,
 } from "./threadActionMenu.logic.ts";
 
+const idle = { isRunning: false, projectFilter: null, isPinned: false, isSettled: false } as const;
+
+/** Each item as `[id, label, disabled, destructive, separatorBefore, children]`. */
+const outline = (items: ReturnType<typeof buildThreadActionMenuItems>) =>
+  items.map((item) => [
+    item.id,
+    item.label,
+    item.disabled === true,
+    item.destructive === true,
+    item.separatorBefore === true,
+    (item.children ?? []).map((child) => [child.id, child.label]),
+  ]);
+
 describe("buildThreadActionMenuItems", () => {
-  it("disables only regeneration while a title is being generated", () => {
-    const items = buildThreadActionMenuItems({ isRunning: false, isTitleRegenerating: true });
+  it("disables regeneration while keeping rename available during generation", () => {
+    const items = buildThreadActionMenuItems({ ...idle, isTitleRegenerating: true });
     assert.deepStrictEqual(
       items.find((item) => item.id === "regenerate-title"),
       { id: "regenerate-title", label: "Regenerating…", disabled: true },
     );
     assert.notStrictEqual(items.find((item) => item.id === "rename")?.disabled, true);
   });
-  it("offers rename and mark unread before Archive thread and Delete", () => {
-    const items = buildThreadActionMenuItems({ isRunning: false });
-    assert.deepStrictEqual(
-      items.map((item) => [item.id, item.label, item.disabled === true, item.destructive === true]),
+  it("offers T3 Code's items in its order: pin, settle, rename, mark unread, copy, archive, then delete", () => {
+    assert.deepStrictEqual(outline(buildThreadActionMenuItems(idle)), [
+      ["pin", "Pin thread", false, false, false, []],
+      ["settle", "Settle thread", false, false, false, []],
+      ["rename", "Rename thread", false, false, true, []],
+      ["regenerate-title", "Regenerate title", false, false, false, []],
+      ["mark-unread", "Mark unread", false, false, false, []],
       [
-        ["rename", "Rename thread", false, false],
-        ["regenerate-title", "Regenerate title", false, false],
-        ["mark-unread", "Mark unread", false, false],
-        ["archive", "Archive thread", false, false],
-        ["delete", "Delete", false, true],
+        "copy",
+        "Copy",
+        false,
+        false,
+        true,
+        [
+          ["copy-path", "Path"],
+          ["copy-thread-id", "Thread ID"],
+        ],
+      ],
+      ["archive", "Archive thread", false, false, true, []],
+      ["delete", "Delete", false, true, false, []],
+    ]);
+  });
+
+  it("offers to filter the sidebar by the thread's project after Mark unread, or to show all projects again", () => {
+    const filterItem = (isActive: boolean) =>
+      outline(
+        buildThreadActionMenuItems({
+          ...idle,
+          projectFilter: { label: "space-game", isActive },
+        }),
+      ).filter((item) => item[0] === "mark-unread" || item[0] === "filter-by-project");
+    assert.deepStrictEqual(filterItem(false), [
+      ["mark-unread", "Mark unread", false, false, false, []],
+      ["filter-by-project", "Filter by space-game", false, false, false, []],
+    ]);
+    assert.deepStrictEqual(filterItem(true)[1], [
+      "filter-by-project",
+      "Show all projects",
+      false,
+      false,
+      false,
+      [],
+    ]);
+  });
+
+  it("offers Unpin thread for a pinned thread and Un-settle thread for a settled one", () => {
+    assert.deepStrictEqual(
+      outline(buildThreadActionMenuItems({ ...idle, isPinned: true, isSettled: true }))
+        .slice(0, 2)
+        .map(([id, label]) => [id, label]),
+      [
+        ["unpin", "Unpin thread"],
+        ["unsettle", "Un-settle thread"],
       ],
     );
   });
 
-  it("disables Archive thread while the thread's run is working, and keeps Delete", () => {
-    const items = buildThreadActionMenuItems({ isRunning: true });
+  it("disables Archive thread while the thread's run is working, and keeps the rest", () => {
+    const items = buildThreadActionMenuItems({ ...idle, isRunning: true });
     assert.deepStrictEqual(
-      items.map((item) => [item.id, item.disabled === true]),
+      items.filter((item) => item.disabled === true).map((item) => item.id),
+      ["archive"],
+    );
+  });
+});
+
+describe("legacyThreadMenuItems", () => {
+  it("offers the project tree's flat menu: rename, mark unread, copy path, copy thread ID, then delete", () => {
+    assert.deepStrictEqual(
+      legacyThreadMenuItems.map((item) => [item.id, item.label, item.destructive === true]),
       [
-        ["rename", false],
-        ["regenerate-title", false],
-        ["mark-unread", false],
-        ["archive", true],
-        ["delete", false],
+        ["rename", "Rename thread", false],
+        ["mark-unread", "Mark unread", false],
+        ["copy-path", "Copy Path", false],
+        ["copy-thread-id", "Copy Thread ID", false],
+        ["delete", "Delete", true],
       ],
     );
   });
 });
 
 describe("threadRuntimeCanArchive", () => {
-  it("is false while any run is active", () => {
+  it("is false for every active run, including a pending question", () => {
     assert.deepStrictEqual(
       (["idle", "starting", "running", "waiting", "completed", "failed"] as const).map((status) => [
         status,
@@ -86,6 +153,38 @@ describe("confirmations", () => {
       threadDeleteConfirmation("Make a maze"),
       'Delete thread "Make a maze"?\nThis permanently clears conversation history for this thread.',
     );
+  });
+});
+
+describe("unpin confirmation", () => {
+  it("unpins without asking while Unpin confirmation is off", async () => {
+    const asked: Array<string> = [];
+    const confirmed = await requestThreadUnpinConfirmation({
+      enabled: false,
+      title: "Pinned thread",
+      confirm: async (message) => {
+        asked.push(message);
+        return false;
+      },
+    });
+    assert.isTrue(confirmed);
+    assert.deepStrictEqual(asked, []);
+  });
+
+  it("asks with the thread's title, in T3 Code's words, and keeps the answer", async () => {
+    const asked: Array<string> = [];
+    const confirmed = await requestThreadUnpinConfirmation({
+      enabled: true,
+      title: "Release prep",
+      confirm: async (message) => {
+        asked.push(message);
+        return false;
+      },
+    });
+    assert.isFalse(confirmed);
+    assert.deepStrictEqual(asked, [
+      'Unpin thread "Release prep"?\nThis will move the thread out of your pinned section.',
+    ]);
   });
 });
 

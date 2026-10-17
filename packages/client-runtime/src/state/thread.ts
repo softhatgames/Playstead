@@ -33,6 +33,10 @@ const applyEvent = (
     case "thread.deleted":
     case "thread.visited":
     case "thread.marked-unread":
+    case "thread.pinned":
+    case "thread.unpinned":
+    case "thread.settled":
+    case "thread.unsettled":
       return { ...projection, thread: event.payload, updatedAt: event.payload.updatedAt };
     case "run.created":
     case "run.updated":

@@ -82,11 +82,25 @@ const NullOrTimeDefaultNull = Schema.NullOr(IsoDateTime).pipe(
   Schema.withDecodingDefault(Effect.succeed(null)),
 );
 
+const NullOrOrderKeyDefaultNull = Schema.NullOr(TrimmedNonEmptyString).pipe(
+  Schema.withDecodingDefault(Effect.succeed(null)),
+);
+
+/** The person settled the thread, or brought it back to active work (T3 Code's). */
+const ThreadSettledOverride = Schema.NullOr(Schema.Literals(["settled", "active"]));
+export type ThreadSettledOverride = typeof ThreadSettledOverride.Type;
+
 /**
  * A thread (T3 Code's `OrchestrationV2AppThread`, trimmed). An archived
  * thread has `archivedAt`; a deleted one keeps its row with `deletedAt`,
  * T3 Code's soft delete, and refuses every command. `lastVisitedAt` is the
  * read marker: the thread is unread while its latest run completed after it.
+ *
+ * A settled thread has `settledOverride` "settled" and `settledAt`; one the
+ * person un-settled has "active" and `unsettledAt`, which keeps automatic
+ * settlement away until a message clears the override. A pinned thread has
+ * `pinnedAt`. `pinOrderKey` and `activeOrderKey` are the pinned and active
+ * lists' a–z order keys, which settling clears.
  */
 const ThreadTitleRegeneration = Schema.Struct({
   requestId: CommandId,
@@ -108,6 +122,12 @@ export const OrchestrationV2AppThread = Schema.Struct({
   deletedAt: NullOrTimeDefaultNull,
   lastVisitedAt: NullOrTimeDefaultNull,
   titleRegeneration: Schema.optionalKey(Schema.NullOr(ThreadTitleRegeneration)),
+  settledOverride: ThreadSettledOverride.pipe(Schema.withDecodingDefault(Effect.succeed(null))),
+  settledAt: NullOrTimeDefaultNull,
+  unsettledAt: NullOrTimeDefaultNull,
+  pinnedAt: NullOrTimeDefaultNull,
+  pinOrderKey: NullOrOrderKeyDefaultNull,
+  activeOrderKey: NullOrOrderKeyDefaultNull,
 });
 export type OrchestrationV2AppThread = typeof OrchestrationV2AppThread.Type;
 
@@ -407,6 +427,10 @@ export const OrchestrationV2DomainEvent = Schema.Union([
   event("thread.deleted", OrchestrationV2AppThread),
   event("thread.visited", OrchestrationV2AppThread),
   event("thread.marked-unread", OrchestrationV2AppThread),
+  event("thread.pinned", OrchestrationV2AppThread),
+  event("thread.unpinned", OrchestrationV2AppThread),
+  event("thread.settled", OrchestrationV2AppThread),
+  event("thread.unsettled", OrchestrationV2AppThread),
   event("run.created", OrchestrationV2Run),
   event("run.updated", OrchestrationV2Run),
   event("run-attempt.created", OrchestrationV2RunAttempt),
@@ -468,10 +492,18 @@ export const OrchestrationV2ThreadShell = Schema.Struct({
   updatedAt: IsoDateTime,
   archivedAt: Schema.NullOr(IsoDateTime),
   deletedAt: Schema.NullOr(IsoDateTime),
+  /** When the latest run was asked for, or null before the first message. */
+  latestRunRequestedAt: Schema.NullOr(IsoDateTime),
   /** When the latest run completed, or null while it has not (T3 Code's `latestRunCompletedAt`). */
   latestRunCompletedAt: Schema.NullOr(IsoDateTime),
   lastVisitedAt: Schema.NullOr(IsoDateTime),
   titleRegeneration: Schema.optionalKey(Schema.NullOr(ThreadTitleRegeneration)),
+  settledOverride: ThreadSettledOverride,
+  settledAt: Schema.NullOr(IsoDateTime),
+  unsettledAt: Schema.NullOr(IsoDateTime),
+  pinnedAt: Schema.NullOr(IsoDateTime),
+  pinOrderKey: Schema.NullOr(TrimmedNonEmptyString),
+  activeOrderKey: Schema.NullOr(TrimmedNonEmptyString),
 });
 export type OrchestrationV2ThreadShell = typeof OrchestrationV2ThreadShell.Type;
 
@@ -579,6 +611,8 @@ export type OrchestrationV2ThreadStreamItem = typeof OrchestrationV2ThreadStream
  * `thread.delete` deletes it. `thread.metadata.update` renames it.
  * `thread.visit` moves its read marker forward when the thread is viewed,
  * and `thread.mark-unread` moves it back before the latest run's completion.
+ * `thread.pin` and `thread.unpin` pin and unpin it; `thread.settle` moves it
+ * out of active work and `thread.unsettle` brings it back.
  */
 export const OrchestrationV2Command = Schema.Union([
   Schema.Struct({
@@ -655,6 +689,30 @@ export const OrchestrationV2Command = Schema.Union([
     threadId: ThreadId,
     requestId: CommandId,
     title: Schema.optionalKey(TrimmedNonEmptyString),
+  }),
+  Schema.Struct({
+    type: Schema.Literal("thread.pin"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    /** The pinned list's order key, kept only by the first pin. */
+    orderKey: Schema.optionalKey(TrimmedNonEmptyString),
+  }),
+  Schema.Struct({
+    type: Schema.Literal("thread.unpin"),
+    commandId: CommandId,
+    threadId: ThreadId,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("thread.settle"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    settledAt: Schema.optionalKey(IsoDateTime),
+  }),
+  Schema.Struct({
+    type: Schema.Literal("thread.unsettle"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    reason: Schema.Literal("user"),
   }),
 ]);
 export type OrchestrationV2Command = typeof OrchestrationV2Command.Type;
