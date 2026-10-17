@@ -1,5 +1,9 @@
 import { closestCenter, type CollisionDetection, type Modifier } from "@dnd-kit/core";
-import type { SortingStrategy } from "@dnd-kit/sortable";
+import {
+  type AnimateLayoutChanges,
+  defaultAnimateLayoutChanges,
+  type SortingStrategy,
+} from "@dnd-kit/sortable";
 
 import {
   resolveSidebarDropTarget,
@@ -39,6 +43,14 @@ const isShelfHeader = (item: SidebarListItem | undefined): boolean =>
 
 const isCardSection = (section: SidebarListSection) =>
   section === "pinned" || section === "active" || section === "working";
+
+/**
+ * The list motion handles ordinary section changes; while sorting, dnd-kit's
+ * transforms move the rows, and replaying the drop would animate it twice
+ * (T3 Code's `animateSidebarLayoutChanges`).
+ */
+export const animateSidebarLayoutChanges: AnimateLayoutChanges = (args) =>
+  args.isSorting ? defaultAnimateLayoutChanges(args) : false;
 
 /**
  * Keeps the lifted row from rising above the Pinned label, `offset` pixels

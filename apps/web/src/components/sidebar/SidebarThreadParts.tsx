@@ -2,18 +2,102 @@ import {
   ACTIVE_RUN_STATUSES,
   type OrchestrationV2ThreadShell,
 } from "@playstead/contracts/orchestrationV2";
-import { useCallback, useRef, useState } from "react";
+import { isMacPlatform } from "@playstead/shared/keybindings";
+import { type MouseEvent, useCallback, useRef, useState } from "react";
 
 import { renameThread } from "../../hooks/useThreadActions.ts";
-import { failureToast, warningToast } from "../ui/toast.tsx";
+import {
+  clearThreadSelection,
+  rangeSelectThreadsTo,
+  readThreadSelection,
+  setThreadSelectionAnchor,
+  toggleThreadSelection,
+} from "../../threadSelectionStore.ts";
+import { openProject } from "../../uiState.ts";
 import { resolveRenameCommit } from "../chat/ChatHeader.logic.ts";
-import { hasUnseenCompletion } from "../Sidebar.logic.ts";
+import { hasUnseenCompletion, isTrailingDoubleClick } from "../Sidebar.logic.ts";
+import { failureToast, warningToast } from "../ui/toast.tsx";
 
 /**
  * What both sidebars' thread rows share (T3 Code's `SidebarThreadRow` in
  * `Sidebar.tsx` and `LegacySidebar.tsx` at 2577baf): the status before the
- * title, and renaming in place.
+ * title, the title, renaming in place, and what clicks on the row do.
  */
+
+/** Mod-click on a Mac is Command, elsewhere Control (T3 Code's `isModClick`). */
+const isModClick = (event: Pick<MouseEvent, "metaKey" | "ctrlKey">) =>
+  isMacPlatform(navigator.platform) ? event.metaKey : event.ctrlKey;
+
+/**
+ * The row link's mouse handlers. Mod-click adds the thread to the selection
+ * or takes it out, shift-click selects the run from the anchor, and a plain
+ * click opens it, clearing the selection (the trailing click of a
+ * double-click does nothing). Double-click renames. Right-click on a
+ * selected row opens the bulk menu, otherwise the thread's own menu.
+ */
+export function sidebarThreadLinkHandlers(input: {
+  readonly thread: Pick<OrchestrationV2ThreadShell, "id" | "projectId">;
+  /** The rows in the order shown, for a shift-click's range. */
+  readonly orderedIds: () => ReadonlyArray<string>;
+  readonly startRename: () => void;
+  readonly openMenu: (position: { x: number; y: number }) => void;
+  readonly onBulkMenu: (position: { x: number; y: number }) => void;
+}) {
+  const { thread } = input;
+  return {
+    onClick: (event: MouseEvent) => {
+      if (isModClick(event)) {
+        event.preventDefault();
+        toggleThreadSelection(thread.id);
+        return;
+      }
+      if (event.shiftKey) {
+        event.preventDefault();
+        rangeSelectThreadsTo(thread.id, input.orderedIds());
+        return;
+      }
+      if (isTrailingDoubleClick(event.detail)) {
+        event.preventDefault();
+        return;
+      }
+      clearThreadSelection();
+      setThreadSelectionAnchor(thread.id);
+      openProject(thread.projectId);
+    },
+    onDoubleClick: (event: MouseEvent) => {
+      event.preventDefault();
+      input.startRename();
+    },
+    onContextMenu: (event: MouseEvent) => {
+      event.preventDefault();
+      const position = { x: event.clientX, y: event.clientY };
+      if (readThreadSelection().selectedThreadIds.has(thread.id)) {
+        input.onBulkMenu(position);
+        return;
+      }
+      clearThreadSelection();
+      input.openMenu(position);
+    },
+  };
+}
+
+/** The row's title, dimmed while a provider writes a new one (T3 Code's `opacity-55`). */
+export function SidebarThreadTitle({
+  thread,
+}: {
+  readonly thread: Pick<OrchestrationV2ThreadShell, "title" | "titleRegeneration">;
+}) {
+  const regenerating = thread.titleRegeneration !== null;
+  return (
+    <span
+      className={`truncate${regenerating ? " opacity-55" : ""}`}
+      title={thread.title}
+      aria-busy={regenerating || undefined}
+    >
+      {thread.title}
+    </span>
+  );
+}
 
 /** Working while the thread's run is, or **Completed** (the unseen-completion dot) until it is viewed. */
 export function ThreadStatusIndicator({
