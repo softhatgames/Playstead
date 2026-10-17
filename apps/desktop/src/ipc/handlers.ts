@@ -4,6 +4,8 @@ import * as NodePath from "node:path";
 
 import {
   ClientSettings,
+  ContextMenuItemSchema,
+  ContextMenuPosition,
   DesktopTheme,
   type DesktopAppBranding,
   type DesktopEnvironmentBootstrap,
@@ -14,6 +16,7 @@ import * as Schema from "effect/Schema";
 import { BrowserWindow, dialog, ipcMain, nativeTheme, shell } from "electron";
 
 import type { DesktopEnvironment } from "../app/DesktopEnvironment.ts";
+import { showNativeContextMenu } from "../electron/contextMenu.ts";
 import { parseSafeExternalUrl } from "../window.ts";
 import { IpcChannels } from "./channels.ts";
 
@@ -22,6 +25,8 @@ const encodeClientSettings = Schema.encodeSync(Schema.fromJsonString(ClientSetti
 const decodeTheme = Schema.decodeUnknownSync(DesktopTheme);
 const decodePickFolderOptions = Schema.decodeUnknownSync(Schema.UndefinedOr(PickFolderOptions));
 const decodeUrl = Schema.decodeUnknownSync(Schema.String);
+const decodeContextMenuItems = Schema.decodeUnknownSync(Schema.Array(ContextMenuItemSchema));
+const decodeContextMenuPosition = Schema.decodeUnknownSync(Schema.UndefinedOr(ContextMenuPosition));
 
 export interface DesktopIpcContext {
   readonly environment: DesktopEnvironment;
@@ -88,6 +93,15 @@ export const installIpcHandlers = (context: DesktopIpcContext) => {
   });
   ipcMain.handle(IpcChannels.setTheme, (_event, theme: unknown) => {
     nativeTheme.themeSource = decodeTheme(theme);
+  });
+  ipcMain.handle(IpcChannels.showContextMenu, async (event, items: unknown, position: unknown) => {
+    const window = BrowserWindow.fromWebContents(event.sender);
+    if (window === null) return null;
+    return showNativeContextMenu({
+      window,
+      items: decodeContextMenuItems(items),
+      position: decodeContextMenuPosition(position),
+    });
   });
   ipcMain.handle(IpcChannels.openExternal, async (_event, raw: unknown) => {
     const url = parseSafeExternalUrl(decodeUrl(raw));

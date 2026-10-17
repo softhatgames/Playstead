@@ -12,4 +12,5 @@ export const IpcChannels = {
   pickFolder: "playstead:pick-folder",
   setTheme: "playstead:set-theme",
   openExternal: "playstead:open-external",
+  showContextMenu: "playstead:show-context-menu",
 } as const;

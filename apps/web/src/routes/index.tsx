@@ -11,7 +11,7 @@ function HomeView() {
     <AppSidebarLayout>
       <main className="mx-auto flex max-w-xl flex-col gap-6 px-6 py-16">
         <EnvironmentStatus />
-        <Link to="/settings/providers" className="text-sm underline">
+        <Link to="/settings/general" className="text-sm underline">
           Settings
         </Link>
       </main>

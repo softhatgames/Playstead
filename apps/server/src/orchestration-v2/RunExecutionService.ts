@@ -208,6 +208,7 @@ const finalRunEvents = (
   status: TerminalStatus,
   failure: OrchestrationV2ProviderFailure | null,
   now: string,
+  sessionEnded: boolean,
 ): ReadonlyArray<EventSink.NewDomainEvent> => {
   const base = { threadId: records.run.threadId, runId: records.run.id, occurredAt: now };
   const failed: ReadonlyArray<EventSink.NewDomainEvent> =
@@ -253,11 +254,15 @@ const finalRunEvents = (
       type: "provider-thread.updated",
       payload: { ...records.providerThread, status: "idle", updatedAt: now },
     },
-    {
-      ...base,
-      type: "provider-session.updated",
-      payload: { ...records.providerSession, status: "ready", updatedAt: now },
-    },
+    ...(sessionEnded
+      ? []
+      : [
+          {
+            ...base,
+            type: "provider-session.updated" as const,
+            payload: { ...records.providerSession, status: "ready" as const, updatedAt: now },
+          },
+        ]),
     { ...base, type: "run.updated", payload: { ...records.run, status, completedAt: now } },
   ];
 };
@@ -411,20 +416,29 @@ const make = Effect.gen(function* () {
     status: TerminalStatus,
     failure: OrchestrationV2ProviderFailure | null,
   ) =>
-    Effect.gen(function* () {
-      const now = yield* nowIso;
-      const settlement = Option.match(yield* projections.getThread(records.run.threadId), {
-        onNone: () => [],
-        onSome: (projection) =>
-          status === "interrupted"
-            ? interruptedRunSettlement(projection, records.run, records.providerTurn.id, now)
-            : unansweredQuestionSettlement(projection, records.run, records.providerTurn.id, now),
-      });
-      yield* whileActive(records.run.id, [
-        ...settlement,
-        ...finalRunEvents(records, status, failure, now),
-      ]);
-    });
+    eventSink.writeIfRunStatus(
+      { runId: records.run.id, statuses: ACTIVE_RUN_STATUSES },
+      Effect.gen(function* () {
+        // Decide against the session in the same transaction as the run end:
+        // archive may have stopped it since the turn began.
+        const now = yield* nowIso;
+
+        const projection = yield* projections.getThread(records.run.threadId);
+
+        const settlement = Option.match(projection, {
+          onNone: () => [],
+          onSome: (current) =>
+            status === "interrupted"
+              ? interruptedRunSettlement(current, records.run, records.providerTurn.id, now)
+              : unansweredQuestionSettlement(current, records.run, records.providerTurn.id, now),
+        });
+        const session = Option.getOrUndefined(projection)?.providerSessions.find(
+          (candidate) => candidate.id === records.providerSession.id,
+        );
+        const sessionEnded = session?.status === "stopped" || session?.status === "error";
+        return [...settlement, ...finalRunEvents(records, status, failure, now, sessionEnded)];
+      }),
+    );
 
   const startRootRun = (input: {
     readonly session: ProviderAdapterV2SessionRuntime;

@@ -68,6 +68,9 @@ const entityKindOf = (event: OrchestrationV2StoredEvent["event"]): EntityKind | 
     case "thread.created":
     case "thread.metadata-updated":
     case "thread.model-selection-updated":
+    case "thread.archived":
+    case "thread.unarchived":
+    case "thread.deleted":
       return "thread";
     case "run.created":
     case "run.updated":
@@ -117,8 +120,13 @@ const toThreadShell = (
     status: latest?.status ?? "idle",
     createdAt: thread.createdAt,
     updatedAt: thread.updatedAt,
+    archivedAt: thread.archivedAt,
+    deletedAt: thread.deletedAt,
   };
 };
+
+/** Where a thread shows: the sidebar, or **Settings → Archive**. */
+export type ThreadShellLocation = "active" | "archive";
 
 /**
  * The thread projections (T3 Code's `apps/server/src/orchestration-v2/ProjectionStore.ts`
@@ -140,11 +148,14 @@ export class ProjectionStoreV2 extends Context.Service<
     readonly getThreadShell: (
       threadId: ThreadId,
     ) => Effect.Effect<Option.Option<OrchestrationV2ThreadShell>, ProjectionStoreV2Error>;
-    /** Oldest first. */
-    readonly listThreadShells: Effect.Effect<
-      ReadonlyArray<OrchestrationV2ThreadShell>,
-      ProjectionStoreV2Error
-    >;
+    /**
+     * The threads shown in one place, oldest first: those not archived, or
+     * the archived ones (T3 Code's `readShellSnapshot({location})`). A
+     * deleted thread shows in neither.
+     */
+    readonly listThreadShells: (
+      location: ThreadShellLocation,
+    ) => Effect.Effect<ReadonlyArray<OrchestrationV2ThreadShell>, ProjectionStoreV2Error>;
     /**
      * Threads whose projection still says a provider is at work: an active
      * run, a provider session not stopped, or an active provider thread
@@ -270,18 +281,25 @@ const make = Effect.gen(function* () {
       return Option.some(toThreadShell(thread.value, yield* readRows(ENTITIES.runs, threadId)));
     }).pipe(Effect.mapError(failWith("getThreadShell")));
 
-  const listThreadShells = Effect.gen(function* () {
-    const rows = yield* sql<{ readonly payloadJson: string }>`
+  const listThreadShells = (location: ThreadShellLocation) =>
+    Effect.gen(function* () {
+      const rows = yield* sql<{ readonly payloadJson: string }>`
       SELECT payload_json AS "payloadJson"
       FROM orchestration_v2_projection_threads
+      WHERE json_extract(payload_json, '$.deletedAt') IS NULL
+        AND ${
+          location === "archive"
+            ? sql`json_extract(payload_json, '$.archivedAt') IS NOT NULL`
+            : sql`json_extract(payload_json, '$.archivedAt') IS NULL`
+        }
       ORDER BY first_sequence ASC
     `;
-    return yield* Effect.forEach(rows, (row) =>
-      Effect.flatMap(decodeThread(row.payloadJson), (thread) =>
-        Effect.map(readRows(ENTITIES.runs, thread.id), (runs) => toThreadShell(thread, runs)),
-      ),
-    );
-  }).pipe(Effect.mapError(failWith("listThreadShells")));
+      return yield* Effect.forEach(rows, (row) =>
+        Effect.flatMap(decodeThread(row.payloadJson), (thread) =>
+          Effect.map(readRows(ENTITIES.runs, thread.id), (runs) => toThreadShell(thread, runs)),
+        ),
+      );
+    }).pipe(Effect.mapError(failWith("listThreadShells")));
 
   const listRecoveryThreadIds = sql<{ readonly threadId: ThreadId }>`
     SELECT thread_id AS "threadId" FROM orchestration_v2_projection_runs

@@ -16,6 +16,10 @@
       "types": "./src/operations/threadTitle.ts",
       "import": "./src/operations/threadTitle.ts"
     },
+    "./state/archivedThreads": {
+      "types": "./src/state/archivedThreads.ts",
+      "import": "./src/state/archivedThreads.ts"
+    },
     "./state/filesystem": {
       "types": "./src/state/filesystem.ts",
       "import": "./src/state/filesystem.ts"

@@ -138,6 +138,22 @@ export function requestPrimary<A, E>(
   return runtime.runPromise(connection.request(call));
 }
 
+/** Runs a subscription on the current connection; its owner restarts it on reconnect. */
+export function runPrimaryStream<A, E>(
+  call: (client: WsRpcClient) => Stream.Stream<A, E>,
+  onItem: (item: A) => void,
+  onError: (error: E | ConnectionTransientError) => void,
+): () => void {
+  if (connection === undefined) return () => {};
+  const fiber = runtime.runFork(
+    connection.stream(call).pipe(
+      Stream.runForEach((item) => Effect.sync(() => onItem(item))),
+      Effect.catch((error) => Effect.sync(() => onError(error))),
+    ),
+  );
+  return () => fiber.interruptUnsafe();
+}
+
 /**
  * Follows one thread over the page's connection until the returned function
  * stops it: the state stays while the server is away, and is replaced once

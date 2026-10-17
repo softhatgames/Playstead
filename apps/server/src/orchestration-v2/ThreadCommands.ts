@@ -16,12 +16,15 @@ import {
   type OrchestrationV2RuntimeRequest,
   type OrchestrationV2ThreadProjection,
   type OrchestrationV2TurnItem,
+  QUEUED_RUN_STATUSES,
 } from "@playstead/contracts/orchestrationV2";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 
 import type { CancelUnsettledEffects, PendingEffect } from "./EffectOutbox.ts";
 import type { NewDomainEvent } from "./EventSink.ts";
+import { detachProviderSessions } from "./ProviderSessionDetach.ts";
+import { planThreadDeletion } from "./ThreadDeletion.ts";
 
 /** Why a thread command was refused; the reason is kept in its receipt. */
 export class ThreadCommandRejection extends Schema.TaggedError<ThreadCommandRejection>()(
@@ -115,6 +118,12 @@ const reject = (command: OrchestrationV2Command, reason: string) =>
  * - `runtime-request.respond` answers a question still pending and
  *   answerable, once every question has an answer; the provider is given
  *   the answers. There are no approval decisions.
+ * - `thread.archive`, `thread.unarchive` and `thread.model-selection.set`
+ *   change the thread itself, through `dispatchThreadMutation`.
+ * - `thread.delete` deletes the thread (`planThreadDeletion`).
+ *
+ * Every command but `thread.create` needs the thread, and a deleted thread
+ * refuses them all.
  */
 export function decideThreadCommand(input: {
   readonly command: OrchestrationV2Command;
@@ -123,66 +132,53 @@ export function decideThreadCommand(input: {
   readonly now: string;
 }): Result.Result<ThreadCommandDecision, ThreadCommandRejection> {
   const { command, state, ids, now } = input;
+  if (command.type === "thread.create") {
+    if (state.projection !== undefined) {
+      return reject(command, `Thread ${command.threadId} already exists.`);
+    }
+    if (!state.projectExists) {
+      return reject(command, `Project ${command.projectId} does not exist.`);
+    }
+    if (!state.instanceHasAdapter) {
+      return reject(
+        command,
+        `Provider instance ${command.modelSelection.instanceId} cannot run threads yet.`,
+      );
+    }
+    const thread: OrchestrationV2AppThread = {
+      id: command.threadId,
+      projectId: command.projectId,
+      title: command.title,
+      providerInstanceId: command.modelSelection.instanceId,
+      modelSelection: command.modelSelection,
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      activeProviderThreadId: null,
+      createdAt: now,
+      updatedAt: now,
+      archivedAt: null,
+      deletedAt: null,
+    };
+    return Result.succeed({
+      events: [{ type: "thread.created", threadId: thread.id, occurredAt: now, payload: thread }],
+      effects: [],
+    });
+  }
+  const projection = state.projection;
+  if (projection === undefined) {
+    return reject(command, `Thread ${command.threadId} does not exist.`);
+  }
+  if (projection.thread.deletedAt !== null) {
+    return reject(command, `Thread ${command.threadId} is deleted.`);
+  }
   switch (command.type) {
-    case "thread.create": {
-      if (state.projection !== undefined) {
-        return reject(command, `Thread ${command.threadId} already exists.`);
-      }
-      if (!state.projectExists) {
-        return reject(command, `Project ${command.projectId} does not exist.`);
-      }
-      if (!state.instanceHasAdapter) {
-        return reject(
-          command,
-          `Provider instance ${command.modelSelection.instanceId} cannot run threads yet.`,
-        );
-      }
-      const thread: OrchestrationV2AppThread = {
-        id: command.threadId,
-        projectId: command.projectId,
-        title: command.title,
-        providerInstanceId: command.modelSelection.instanceId,
-        modelSelection: command.modelSelection,
-        runtimeMode: "full-access",
-        interactionMode: "default",
-        activeProviderThreadId: null,
-        createdAt: now,
-        updatedAt: now,
-      };
-      return Result.succeed({
-        events: [{ type: "thread.created", threadId: thread.id, occurredAt: now, payload: thread }],
-        effects: [],
-      });
-    }
-    case "thread.model-selection.set": {
-      const projection = state.projection;
-      if (projection === undefined) {
-        return reject(command, `Thread ${command.threadId} does not exist.`);
-      }
-      const { thread } = projection;
-      if (command.modelSelection.instanceId !== thread.providerInstanceId) {
-        return reject(
-          command,
-          `Thread ${thread.id} runs on ${thread.providerInstanceId}. Choose one of its models; switching provider is not available yet.`,
-        );
-      }
-      return Result.succeed({
-        events: [
-          {
-            type: "thread.model-selection-updated",
-            threadId: thread.id,
-            occurredAt: now,
-            payload: { ...thread, modelSelection: command.modelSelection, updatedAt: now },
-          },
-        ],
-        effects: [],
-      });
-    }
+    case "thread.model-selection.set":
+    case "thread.archive":
+    case "thread.unarchive":
+      return dispatchThreadMutation(command, projection, now);
+    case "thread.delete":
+      return Result.succeed(planThreadDeletion({ command, projection, now }));
     case "message.dispatch": {
-      const projection = state.projection;
-      if (projection === undefined) {
-        return reject(command, `Thread ${command.threadId} does not exist.`);
-      }
       const active = projection.runs.find((run) => ACTIVE_RUN_STATUSES.has(run.status));
       if (active !== undefined) {
         return reject(
@@ -193,10 +189,6 @@ export function decideThreadCommand(input: {
       return Result.succeed(dispatchMessage(command, projection, ids, now));
     }
     case "run.interrupt": {
-      const projection = state.projection;
-      if (projection === undefined) {
-        return reject(command, `Thread ${command.threadId} does not exist.`);
-      }
       const run = projection.runs.find((candidate) => candidate.id === command.runId);
       if (run === undefined) {
         return reject(command, `Run ${command.runId} is not in thread ${command.threadId}.`);
@@ -211,10 +203,6 @@ export function decideThreadCommand(input: {
       return Result.succeed(dispatchRunInterrupt(projection, run, ids, now));
     }
     case "runtime-request.respond": {
-      const projection = state.projection;
-      if (projection === undefined) {
-        return reject(command, `Thread ${command.threadId} does not exist.`);
-      }
       const request = projection.runtimeRequests.find(
         (candidate) => candidate.id === command.requestId,
       );
@@ -255,6 +243,132 @@ export function decideThreadCommand(input: {
       );
     }
   }
+}
+
+/** The commands that change the thread itself, decided by `dispatchThreadMutation`. */
+type ThreadMutationCommand = Extract<
+  OrchestrationV2Command,
+  { readonly type: "thread.model-selection.set" | "thread.archive" | "thread.unarchive" }
+>;
+
+/**
+ * The commands an archived thread refuses (T3 Code's list: settle, snooze,
+ * pin, reordering and automatic settlement). None has arrived yet; each
+ * joins the list as it does.
+ */
+const REFUSED_WHILE_ARCHIVED: ReadonlySet<ThreadMutationCommand["type"]> = new Set();
+
+/**
+ * The one handler for every command that changes the thread itself (T3 Code's
+ * `dispatchThreadMutation` in `apps/server/src/orchestration-v2/Orchestrator.ts`
+ * at 2577baf): it checks the command's rules, writes the whole updated thread
+ * in the command's own event, and then does what the change brings with it.
+ *
+ * - `thread.model-selection.set` changes the model the next run copies;
+ *   naming another instance is T3 Code's provider switch, which Playstead
+ *   refuses.
+ * - `thread.archive` is refused for an archived thread. It is not refused
+ *   while a run is active (the interface blocks that instead); it cancels
+ *   queued runs with their attempts and nodes, and detaches every live
+ *   provider session.
+ * - `thread.unarchive` is refused for a thread that is not archived.
+ */
+function dispatchThreadMutation(
+  command: ThreadMutationCommand,
+  projection: OrchestrationV2ThreadProjection,
+  now: string,
+): Result.Result<ThreadCommandDecision, ThreadCommandRejection> {
+  const { thread } = projection;
+  if (command.type === "thread.archive" && thread.archivedAt !== null) {
+    return reject(command, `Thread ${thread.id} is already archived.`);
+  }
+  if (command.type === "thread.unarchive" && thread.archivedAt === null) {
+    return reject(command, `Thread ${thread.id} is not archived.`);
+  }
+  if (REFUSED_WHILE_ARCHIVED.has(command.type) && thread.archivedAt !== null) {
+    return reject(command, `Thread ${thread.id} is archived.`);
+  }
+  if (
+    command.type === "thread.model-selection.set" &&
+    command.modelSelection.instanceId !== thread.providerInstanceId
+  ) {
+    return reject(
+      command,
+      `Thread ${thread.id} runs on ${thread.providerInstanceId}. Choose one of its models; switching provider is not available yet.`,
+    );
+  }
+
+  const updated: OrchestrationV2AppThread = (() => {
+    switch (command.type) {
+      case "thread.model-selection.set":
+        return { ...thread, modelSelection: command.modelSelection, updatedAt: now };
+      case "thread.archive":
+        return { ...thread, archivedAt: now, updatedAt: now };
+      case "thread.unarchive":
+        return { ...thread, archivedAt: null, updatedAt: now };
+    }
+  })();
+  const eventType = (() => {
+    switch (command.type) {
+      case "thread.model-selection.set":
+        return "thread.model-selection-updated" as const;
+      case "thread.archive":
+        return "thread.archived" as const;
+      case "thread.unarchive":
+        return "thread.unarchived" as const;
+    }
+  })();
+  const events: Array<NewDomainEvent> = [
+    { type: eventType, threadId: thread.id, occurredAt: now, payload: updated },
+  ];
+  const effects: Array<PendingEffect> = [];
+
+  if (command.type === "thread.archive") {
+    const queued = projection.runs.filter((run) => QUEUED_RUN_STATUSES.has(run.status));
+    const queuedIds = new Set(queued.map((run) => run.id));
+    for (const run of queued) {
+      events.push({
+        type: "run.updated",
+        threadId: thread.id,
+        runId: run.id,
+        occurredAt: now,
+        payload: { ...run, status: "cancelled", completedAt: now },
+      });
+    }
+    for (const attempt of projection.attempts) {
+      if (!queuedIds.has(attempt.runId)) continue;
+      if (attempt.status !== "pending" && attempt.status !== "running") continue;
+      events.push({
+        type: "run-attempt.updated",
+        threadId: thread.id,
+        runId: attempt.runId,
+        occurredAt: now,
+        payload: { ...attempt, status: "cancelled", completedAt: now },
+      });
+    }
+    for (const node of projection.nodes) {
+      if (node.runId === null || !queuedIds.has(node.runId)) continue;
+      if (node.status !== "pending" && node.status !== "running" && node.status !== "waiting") {
+        continue;
+      }
+      events.push({
+        type: "node.updated",
+        threadId: thread.id,
+        runId: node.runId,
+        occurredAt: now,
+        payload: { ...node, status: "cancelled", completedAt: now },
+      });
+    }
+    const detached = detachProviderSessions({
+      projection,
+      commandId: command.commandId,
+      reason: "Thread archived.",
+      now,
+    });
+    events.push(...detached.events);
+    effects.push(...detached.effects);
+  }
+  return Result.succeed({ events, effects });
 }
 
 /**

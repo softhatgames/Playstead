@@ -2,9 +2,16 @@ import { Link, Outlet, createFileRoute, redirect } from "@tanstack/react-router"
 
 import { fetchPrimarySessionState } from "../environments/primary/auth.ts";
 
+/** The pages Playstead has, in T3 Code's order (`SettingsSidebarNav.tsx`). */
+const SETTINGS_PAGES = [
+  { to: "/settings/general", label: "General" },
+  { to: "/settings/providers", label: "Providers" },
+  { to: "/settings/archived", label: "Archive" },
+] as const;
+
 /**
- * Settings, after T3 Code's `apps/web/src/routes/settings.tsx` at 2577baf.
- * **Providers** is the only page, so `/settings` opens it.
+ * Settings, after T3 Code's `apps/web/src/routes/settings.tsx` at 2577baf:
+ * **General**, **Providers** and **Archive**; `/settings` opens General.
  */
 function SettingsLayout() {
   const session = Route.useLoaderData();
@@ -14,13 +21,16 @@ function SettingsLayout() {
         <Link to="/" className="mb-4 text-neutral-500 hover:underline dark:text-neutral-400">
           ← Back
         </Link>
-        <Link
-          to="/settings/providers"
-          className="rounded-md px-2 py-1"
-          activeProps={{ className: "bg-neutral-100 font-medium dark:bg-neutral-900" }}
-        >
-          Providers
-        </Link>
+        {SETTINGS_PAGES.map((page) => (
+          <Link
+            key={page.to}
+            to={page.to}
+            className="rounded-md px-2 py-1"
+            activeProps={{ className: "bg-neutral-100 font-medium dark:bg-neutral-900" }}
+          >
+            {page.label}
+          </Link>
+        ))}
       </nav>
       <main className="min-w-0 flex-1">
         {session.authenticated ? (
@@ -38,7 +48,7 @@ function SettingsLayout() {
 export const Route = createFileRoute("/settings")({
   beforeLoad: ({ location }) => {
     if (location.pathname === "/settings" || location.pathname === "/settings/") {
-      throw redirect({ to: "/settings/providers", replace: true });
+      throw redirect({ to: "/settings/general", replace: true });
     }
   },
   loader: () => fetchPrimarySessionState(),
