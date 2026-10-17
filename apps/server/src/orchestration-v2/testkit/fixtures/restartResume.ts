@@ -30,6 +30,7 @@ const sendAndAwait = (harness: Harness, turn: 1 | 2, text: string) =>
   Effect.gen(function* () {
     const sent = yield* harness.orchestrator.dispatch({
       type: "message.dispatch",
+      dispatchMode: { type: "start_immediately" },
       commandId: CommandId.make(`command:restart-resume:message:${turn}`),
       threadId: RESTART_RESUME_IDS.threadId,
       messageId: MessageId.make(`message:restart-resume:${turn}`),

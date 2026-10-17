@@ -18,6 +18,7 @@ import {
   type OrchestrationV2TurnItem,
 } from "@playstead/contracts/orchestrationV2";
 import { modelSelectionsEqual } from "@playstead/shared/model";
+import { latestExecutedRun } from "@playstead/shared/orchestrationRuns";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 
@@ -41,6 +42,8 @@ export interface ThreadCommandState {
   readonly projectExists: boolean;
   /** For `thread.create`: whether the provider instance can run a thread. */
   readonly instanceHasAdapter: boolean;
+  /** For `message.dispatch`: whether the thread's adapter can queue a message behind an active run. */
+  readonly supportsQueuedMessages: boolean;
 }
 
 /** Ids a message needs, allocated before deciding so the decision stays pure. */
@@ -109,15 +112,22 @@ const reject = (command: OrchestrationV2Command, reason: string) =>
  *   Playstead refuses.
  * - `thread.runtime-mode.set` changes the mode the thread's next turn
  *   starts in; as in T3 Code, an active run does not prevent it.
- * - `message.dispatch` starts a run at once. T3 Code queues a message sent
- *   while a run is active; Playstead has no queue and refuses it. A model
- *   selection the message carries (the composer's traits) becomes the
- *   thread's before the run, which copies it; it must name the thread's
- *   own instance.
+ * - `message.dispatch` starts a run when no run is active, and otherwise
+ *   queues one behind it, whatever its dispatch mode (T3 Code's
+ *   `CommandPolicy.decideMessageDispatch`). A model selection the message
+ *   carries (the composer's traits) must name the thread's own instance; a
+ *   started run makes it the thread's first, and a queued run keeps it
+ *   until it starts. **Resume** continues an interrupted run that is the
+ *   thread's latest.
+ * - `queue.resume`, `queued-run.reorder`, `queued-run.cancel` and
+ *   `queued-run.edit` release, reorder, remove and rewrite queued runs, as
+ *   T3 Code's do; the orchestrator starts the next queued run after a
+ *   resume, and after a run ends (`decideNextQueuedRun`).
  * - `run.interrupt` stops an active run, as T3 Code's `dispatchRunInterrupt`
  *   does: a run whose provider turn has not started ends interrupted at
  *   once and its start is cancelled; otherwise the provider is asked to
- *   stop, and the run ends when its turn does.
+ *   stop, and the run ends when its turn does. With `holdQueue` (**Stop**)
+ *   the queued runs are held too.
  * - `runtime-request.respond` answers a question still pending and
  *   answerable, once every question has an answer; the provider is given
  *   the answers. There are no approval decisions.
@@ -216,14 +226,125 @@ export function decideThreadCommand(input: {
           `Thread ${projection.thread.id} runs on ${projection.thread.providerInstanceId}. Choose one of its models; switching provider is not available yet.`,
         );
       }
+      if (command.manualContinuationOfRunId !== undefined) {
+        const source = projection.runs.find((run) => run.id === command.manualContinuationOfRunId);
+        if (
+          command.dispatchMode.type !== "start_immediately" ||
+          source?.status !== "interrupted" ||
+          latestExecutedRun(projection.runs)?.id !== source.id ||
+          projection.runtimeRequests.some((request) => request.status === "pending")
+        ) {
+          return reject(command, "This thread can no longer be resumed from that run.");
+        }
+      }
+      // Whatever the mode asks, a message sent while a run is active waits
+      // behind it, as T3 Code's `decideMessageDispatch` decides.
       const active = projection.runs.find((run) => ACTIVE_RUN_STATUSES.has(run.status));
-      if (active !== undefined) {
+      if (active === undefined) {
+        return Result.succeed(dispatchMessage(command, projection, ids, now));
+      }
+      if (!state.supportsQueuedMessages) {
         return reject(
           command,
-          `Thread ${command.threadId} is still working on run ${active.id}. Wait for it to finish before sending another message.`,
+          `${projection.thread.providerInstanceId} cannot queue a message while run ${active.id} is active.`,
         );
       }
-      return Result.succeed(dispatchMessage(command, projection, ids, now));
+      return Result.succeed(queueMessage(command, projection, ids, now));
+    }
+    case "queue.resume": {
+      const projection = state.projection;
+      if (projection === undefined) {
+        return reject(command, `Thread ${command.threadId} does not exist.`);
+      }
+      const queued = projection.runs.filter((run) => run.status === "queued");
+      const base = { threadId: command.threadId, occurredAt: now };
+      return Result.succeed({
+        // A queue with nothing in it still records the resume, as T3 Code's does.
+        events:
+          queued.length === 0
+            ? [{ ...base, type: "thread.metadata-updated", payload: projection.thread }]
+            : queued.map((run) => ({
+                ...base,
+                runId: run.id,
+                type: "run.updated",
+                payload: { ...run, queueHeld: false },
+              })),
+        effects: [],
+      });
+    }
+    case "queued-run.reorder": {
+      const projection = state.projection;
+      if (projection === undefined) {
+        return reject(command, `Thread ${command.threadId} does not exist.`);
+      }
+      const queued = queuedRunsInDeliveryOrder(projection.runs);
+      const moving = queued.find((run) => run.id === command.runId);
+      if (moving === undefined) return reject(command, `Run ${command.runId} is not queued.`);
+      const others = queued.filter((run) => run.id !== moving.id);
+      const beforeIndex =
+        command.beforeRunId === null
+          ? others.length
+          : others.findIndex((run) => run.id === command.beforeRunId);
+      if (beforeIndex === -1) {
+        return reject(command, `Queue target ${command.beforeRunId} is not queued.`);
+      }
+      const reordered = [...others.slice(0, beforeIndex), moving, ...others.slice(beforeIndex)];
+      return Result.succeed({
+        events: reordered.flatMap((run, index): ReadonlyArray<NewDomainEvent> =>
+          run.queuePosition === index + 1
+            ? []
+            : [
+                {
+                  type: "run.updated",
+                  threadId: command.threadId,
+                  runId: run.id,
+                  occurredAt: now,
+                  payload: { ...run, queuePosition: index + 1 },
+                },
+              ],
+        ),
+        effects: [],
+      });
+    }
+    case "queued-run.cancel": {
+      const projection = state.projection;
+      if (projection === undefined) {
+        return reject(command, `Thread ${command.threadId} does not exist.`);
+      }
+      const run = projection.runs.find((candidate) => candidate.id === command.runId);
+      if (run === undefined || run.status !== "queued") {
+        return reject(command, `Run ${command.runId} is not queued.`);
+      }
+      return Result.succeed({ events: cancelQueuedRun(projection, run, now), effects: [] });
+    }
+    case "queued-run.edit": {
+      if (command.text.trim().length === 0) {
+        return reject(command, `Queued run ${command.runId} cannot be edited to an empty message.`);
+      }
+      const projection = state.projection;
+      if (projection === undefined) {
+        return reject(command, `Thread ${command.threadId} does not exist.`);
+      }
+      const run = projection.runs.find((candidate) => candidate.id === command.runId);
+      if (run === undefined || run.status !== "queued") {
+        return reject(command, `Run ${command.runId} is not queued.`);
+      }
+      const message = projection.messages.find((candidate) => candidate.id === run.userMessageId);
+      if (message === undefined) {
+        return reject(command, `Queued run ${run.id} has no user message.`);
+      }
+      return Result.succeed({
+        events: [
+          {
+            type: "message.updated",
+            threadId: command.threadId,
+            runId: run.id,
+            occurredAt: now,
+            payload: { ...message, text: command.text, updatedAt: now },
+          },
+        ],
+        effects: [],
+      });
     }
     case "run.interrupt": {
       const projection = state.projection;
@@ -241,7 +362,12 @@ export function decideThreadCommand(input: {
       if (projection.turnItems.some((item) => item.id === requestId)) {
         return reject(command, `Run ${run.id} is already being interrupted.`);
       }
-      return Result.succeed(dispatchRunInterrupt(projection, run, ids, now));
+      const interrupted = dispatchRunInterrupt(projection, run, ids, now);
+      return Result.succeed(
+        command.holdQueue === true
+          ? { ...interrupted, events: [...interrupted.events, ...holdQueue(projection, now)] }
+          : interrupted,
+      );
     }
     case "runtime-request.respond": {
       const projection = state.projection;
@@ -607,6 +733,7 @@ function dispatchMessage(
         type: "user_message",
         messageId: command.messageId,
         text: command.text,
+        inputIntent: "turn_start",
       },
     },
   );
@@ -614,5 +741,262 @@ function dispatchMessage(
   return {
     events,
     effects: [{ id: ids.effectId, request: { type: "provider-turn.start", runId } }],
+  };
+}
+
+/** Queued runs in the order they start (T3 Code's `QueuedRunOrder.queuedRunsInDeliveryOrder`). */
+const queuedRunsInDeliveryOrder = (
+  runs: ReadonlyArray<OrchestrationV2Run>,
+): ReadonlyArray<OrchestrationV2Run> =>
+  runs
+    .filter((run) => run.status === "queued")
+    .toSorted(
+      (left, right) =>
+        (left.queuePosition ?? left.ordinal) - (right.queuePosition ?? right.ordinal) ||
+        left.ordinal - right.ordinal,
+    );
+
+/** Every queued run not held yet becomes held (T3 Code's `holdStoppedThread`). */
+const holdQueue = (
+  projection: OrchestrationV2ThreadProjection,
+  now: string,
+): ReadonlyArray<NewDomainEvent> =>
+  projection.runs.flatMap((run): ReadonlyArray<NewDomainEvent> =>
+    run.status !== "queued" || run.queueHeld === true
+      ? []
+      : [
+          {
+            type: "run.updated",
+            threadId: run.threadId,
+            runId: run.id,
+            occurredAt: now,
+            payload: { ...run, queueHeld: true },
+          },
+        ],
+  );
+
+/** A queued run removed from the queue, with what was made for it (T3 Code's `dispatchQueuedRunCancel`). */
+const cancelQueuedRun = (
+  projection: OrchestrationV2ThreadProjection,
+  run: OrchestrationV2Run,
+  now: string,
+): ReadonlyArray<NewDomainEvent> => {
+  const base = { threadId: run.threadId, runId: run.id, occurredAt: now };
+  const attempt = projection.attempts.find((candidate) => candidate.id === run.activeAttemptId);
+  const rootNode = projection.nodes.find((candidate) => candidate.id === run.rootNodeId);
+  return [
+    {
+      ...base,
+      type: "run.updated",
+      payload: { ...run, status: "cancelled", queuePosition: null, completedAt: now },
+    },
+    ...(attempt === undefined
+      ? []
+      : [
+          {
+            ...base,
+            type: "run-attempt.updated",
+            payload: { ...attempt, status: "cancelled", completedAt: now },
+          } as const,
+        ]),
+    ...(rootNode === undefined
+      ? []
+      : [
+          {
+            ...base,
+            type: "node.updated",
+            payload: { ...rootNode, status: "cancelled", completedAt: now },
+          } as const,
+        ]),
+  ];
+};
+
+/**
+ * A message that waits behind the active run (the queue branch of T3 Code's
+ * `dispatchMessage`): a `queued` run at the end of the queue, held if the
+ * queue is, with its attempt, root node and message. The run keeps the
+ * model selection the message carried; the thread takes it when the run
+ * starts. The message reaches the timeline then, too.
+ */
+function queueMessage(
+  command: Extract<OrchestrationV2Command, { type: "message.dispatch" }>,
+  projection: OrchestrationV2ThreadProjection,
+  ids: ThreadCommandIds,
+  now: string,
+): ThreadCommandDecision {
+  const { thread } = projection;
+  const threadId = thread.id;
+  const runId = ids.runId;
+  const ordinal = projection.runs.reduce((highest, run) => Math.max(highest, run.ordinal), 0) + 1;
+  const events: Array<NewDomainEvent> = [];
+  if (command.titleSeed !== undefined && projection.messages.length === 0) {
+    events.push({
+      type: "thread.metadata-updated",
+      threadId,
+      occurredAt: now,
+      payload: { ...thread, title: command.titleSeed, updatedAt: now },
+    });
+  }
+  const providerThreadId =
+    thread.activeProviderThreadId ??
+    projection.runs.find((run) => ACTIVE_RUN_STATUSES.has(run.status))?.providerThreadId ??
+    ids.providerThreadId;
+  const queued = projection.runs.filter((run) => run.status === "queued");
+  const run: OrchestrationV2Run = {
+    id: runId,
+    threadId,
+    ordinal,
+    providerInstanceId: thread.providerInstanceId,
+    modelSelection: command.modelSelection ?? thread.modelSelection,
+    providerThreadId,
+    userMessageId: command.messageId,
+    rootNodeId: ids.rootNodeId,
+    activeAttemptId: ids.attemptId,
+    status: "queued",
+    queuePosition:
+      Math.max(0, ...queued.map((candidate) => candidate.queuePosition ?? candidate.ordinal)) + 1,
+    ...(queued.some((candidate) => candidate.queueHeld === true) ? { queueHeld: true } : {}),
+    requestedAt: now,
+    startedAt: null,
+    completedAt: null,
+  };
+  const base = { threadId, runId, occurredAt: now };
+  events.push(
+    { ...base, type: "run.created", payload: run },
+    {
+      ...base,
+      type: "run-attempt.created",
+      payload: {
+        id: ids.attemptId,
+        runId,
+        attemptOrdinal: 1,
+        rootNodeId: ids.rootNodeId,
+        providerInstanceId: thread.providerInstanceId,
+        providerThreadId,
+        providerTurnId: null,
+        reason: "initial",
+        status: "pending",
+        startedAt: null,
+        completedAt: null,
+      },
+    },
+    {
+      ...base,
+      type: "node.updated",
+      payload: {
+        id: ids.rootNodeId,
+        threadId,
+        runId,
+        parentNodeId: null,
+        rootNodeId: ids.rootNodeId,
+        kind: "root_turn",
+        status: "pending",
+        providerThreadId,
+        providerTurnId: null,
+        startedAt: null,
+        completedAt: null,
+      },
+    },
+    {
+      ...base,
+      type: "message.updated",
+      payload: {
+        id: command.messageId,
+        threadId,
+        runId,
+        nodeId: ids.rootNodeId,
+        role: "user",
+        text: command.text,
+        streaming: false,
+        createdAt: now,
+        updatedAt: now,
+      },
+    },
+  );
+  return { events, effects: [] };
+}
+
+/**
+ * What follows a run that ended, a resume, or a queued run removed (T3 Code's
+ * `startNextQueuedRun` in `Orchestrator.ts`): nothing while a run is
+ * active, the queue is empty or held. A run that failed with an error of
+ * its own holds the queue, so one failure doesn't run every message behind
+ * it (T3 Code lets a `validation_error` through; no Playstead failure has
+ * that class). Otherwise the first queued run starts: the thread takes its
+ * model selection, its message reaches the timeline as a `queued_turn`,
+ * and its provider turn is started.
+ */
+export function decideNextQueuedRun(input: {
+  readonly projection: OrchestrationV2ThreadProjection;
+  /** The run whose end this follows, when it failed. */
+  readonly failedRunId?: RunId;
+  readonly ids: Pick<ThreadCommandIds, "userItemId" | "effectId">;
+  readonly now: string;
+}): ThreadCommandDecision | undefined {
+  const { projection, ids, now } = input;
+  const queued = queuedRunsInDeliveryOrder(projection.runs);
+  const next = queued[0];
+  if (
+    next === undefined ||
+    projection.runs.some((run) => ACTIVE_RUN_STATUSES.has(run.status)) ||
+    queued.some((run) => run.queueHeld === true)
+  ) {
+    return undefined;
+  }
+  const failedRun = latestExecutedRun(projection.runs);
+  const failedOnItsOwn =
+    failedRun !== undefined &&
+    failedRun.id === input.failedRunId &&
+    failedRun.providerInstanceId === next.providerInstanceId &&
+    projection.turnItems.some((item) => item.type === "error" && item.runId === failedRun.id);
+  if (failedOnItsOwn) {
+    const events = holdQueue(projection, now);
+    return events.length === 0 ? undefined : { events, effects: [] };
+  }
+  const message = projection.messages.find((candidate) => candidate.id === next.userMessageId);
+  if (message === undefined || next.rootNodeId === null) return undefined;
+  const { thread } = projection;
+  const base = { threadId: thread.id, runId: next.id, occurredAt: now };
+  return {
+    events: [
+      ...(modelSelectionsEqual(thread.modelSelection, next.modelSelection)
+        ? []
+        : [
+            {
+              type: "thread.model-selection-updated",
+              threadId: thread.id,
+              occurredAt: now,
+              payload: { ...thread, modelSelection: next.modelSelection, updatedAt: now },
+            } as const,
+          ]),
+      {
+        ...base,
+        type: "turn-item.updated",
+        payload: {
+          id: ids.userItemId,
+          threadId: thread.id,
+          runId: next.id,
+          nodeId: next.rootNodeId,
+          providerThreadId: next.providerThreadId,
+          providerTurnId: null,
+          ordinal: 0,
+          status: "completed",
+          title: null,
+          startedAt: now,
+          completedAt: now,
+          updatedAt: now,
+          type: "user_message",
+          messageId: message.id,
+          text: message.text,
+          inputIntent: "queued_turn",
+        },
+      },
+      {
+        ...base,
+        type: "run.updated",
+        payload: { ...next, status: "starting", queuePosition: null },
+      },
+    ],
+    effects: [{ id: ids.effectId, request: { type: "provider-turn.start", runId: next.id } }],
   };
 }

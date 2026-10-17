@@ -1,4 +1,5 @@
 import { deriveThreadTitleSeed } from "@playstead/client-runtime/operations/threadTitle";
+import type { ComposerDispatchMode } from "@playstead/client-runtime/state/composerDispatch";
 import type {
   CommandId,
   MessageId,
@@ -111,12 +112,16 @@ export function resolveComposerSelection(input: {
  * `persistThreadSettingsForNextTurn` sends it. The first message carries T3
  * Code's title seed. A new thread is created with the composer's model and
  * traits; a message to a started thread carries them, as T3 Code's composer
- * sends them.
+ * sends them. A message sent while a run is active is queued behind it
+ * (`queue_after_active`); otherwise the server starts it, or queues it if a
+ * run started meanwhile (`start_immediately` with `deliveryIntent: "auto"`,
+ * as T3 Code's `startThreadTurn` sends them).
  */
 export function buildSendCommands(input: {
   readonly target: SendTarget;
   /** The mode chosen in the composer. */
   readonly runtimeMode: RuntimeMode;
+  readonly dispatchMode: ComposerDispatchMode;
   readonly text: string;
   readonly ids: {
     readonly threadCommandId: CommandId;
@@ -136,6 +141,9 @@ export function buildSendCommands(input: {
     text,
     ...(firstMessage ? { titleSeed: deriveThreadTitleSeed(text) } : {}),
     ...(target.kind === "existing" ? { modelSelection: target.modelSelection } : {}),
+    ...(input.dispatchMode === "queue"
+      ? { dispatchMode: { type: "queue_after_active" } }
+      : { dispatchMode: { type: "start_immediately" }, deliveryIntent: "auto" }),
   };
   if (target.kind === "existing") {
     return target.runtimeMode === runtimeMode
@@ -166,32 +174,57 @@ export function buildSendCommands(input: {
 
 export type ComposerAction =
   | { readonly kind: "send" }
+  | { readonly kind: "queue" }
+  | { readonly kind: "update-queued" }
+  | { readonly kind: "resume" }
   | { readonly kind: "interrupt"; readonly runId: RunId }
   | { readonly kind: "interrupting" };
 
 /**
- * The composer's one action (T3 Code's `ComposerPrimaryActions` at 2577baf,
- * without the queue or steering): send while no run is active; while one
- * is, only **Interrupt**, and once that is pressed, the run stopping.
+ * The composer's primary action (T3 Code's `ComposerPrimaryActions` at
+ * 2577baf, without steering, plans or compaction). Editing a queued
+ * message saves it. While a run is active an empty composer offers
+ * **Interrupt**, and once that is pressed, the run stopping; with something
+ * typed, the follow-up (queueing). An empty composer offers **Resume**
+ * after a stop or while the queue is held. Otherwise it sends.
  */
-export function deriveComposerAction(
-  runs: ReadonlyArray<OrchestrationV2Run>,
-  turnItems: ReadonlyArray<OrchestrationV2TurnItem>,
-): ComposerAction {
-  const active = runs.findLast((run) => ACTIVE_RUN_STATUSES.has(run.status));
-  if (active === undefined) return { kind: "send" };
-  const requested = turnItems.some(
-    (item) => item.type === "run_interrupt_request" && item.runId === active.id,
-  );
-  return requested ? { kind: "interrupting" } : { kind: "interrupt", runId: active.id };
+export function deriveComposerAction(input: {
+  readonly runs: ReadonlyArray<OrchestrationV2Run>;
+  readonly turnItems: ReadonlyArray<OrchestrationV2TurnItem>;
+  readonly hasContent: boolean;
+  readonly editingQueuedMessage: boolean;
+  readonly canResume: boolean;
+  /** What a message sent now does: `resolveComposerDispatchMode`. */
+  readonly dispatchMode: ComposerDispatchMode;
+}): ComposerAction {
+  if (input.editingQueuedMessage) return { kind: "update-queued" };
+  const active = input.runs.findLast((run) => ACTIVE_RUN_STATUSES.has(run.status));
+  if (active !== undefined && !input.hasContent) {
+    const requested = input.turnItems.some(
+      (item) => item.type === "run_interrupt_request" && item.runId === active.id,
+    );
+    return requested ? { kind: "interrupting" } : { kind: "interrupt", runId: active.id };
+  }
+  if (input.canResume && !input.hasContent) return { kind: "resume" };
+  if (active !== undefined && input.dispatchMode === "queue") return { kind: "queue" };
+  return { kind: "send" };
 }
 
 /**
- * The model can change only while the composer can send: while a run is
- * active, **Interrupt** is the composer's one control.
+ * The model and its traits can change for the next message at any time, as
+ * in T3 Code; a queued message being edited keeps the selection it was
+ * sent with.
  */
 export function canChooseModel(action: ComposerAction): boolean {
-  return action.kind === "send";
+  return action.kind !== "update-queued";
+}
+
+interface ShortcutKeys {
+  readonly key: string;
+  readonly metaKey: boolean;
+  readonly ctrlKey: boolean;
+  readonly shiftKey: boolean;
+  readonly altKey: boolean;
 }
 
 /**
@@ -200,21 +233,37 @@ export function canChooseModel(action: ComposerAction): boolean {
  * opens the mode picker. `mod` is Command on a Mac and Control elsewhere;
  * no other modifier may be held, as T3 Code's matcher requires.
  */
-export function isComposerModeShortcut(
-  event: {
-    readonly key: string;
-    readonly metaKey: boolean;
-    readonly ctrlKey: boolean;
-    readonly shiftKey: boolean;
-    readonly altKey: boolean;
-  },
-  platform: string,
-): boolean {
+export function isComposerModeShortcut(event: ShortcutKeys, platform: string): boolean {
   const mac = /mac/i.test(platform);
   return (
     event.key.toLowerCase() === "a" &&
     event.shiftKey &&
     !event.altKey &&
     (mac ? event.metaKey && !event.ctrlKey : event.ctrlKey && !event.metaKey)
+  );
+}
+
+/**
+ * Whether a key press is `mod+enter`, T3 Code's default keybinding for
+ * `composer.sendAlternate` while a turn runs: it sends the follow-up that
+ * Enter does not.
+ */
+export function isSendAlternateShortcut(event: ShortcutKeys, platform: string): boolean {
+  const mac = /mac/i.test(platform);
+  return (
+    event.key === "Enter" &&
+    !event.shiftKey &&
+    !event.altKey &&
+    (mac ? event.metaKey && !event.ctrlKey : event.ctrlKey && !event.metaKey)
+  );
+}
+
+/**
+ * Whether a key press is `alt+arrowup`, T3 Code's default keybinding for
+ * `thread.editQueuedMessage`, which opens the last queued message for editing.
+ */
+export function isEditQueuedMessageShortcut(event: ShortcutKeys): boolean {
+  return (
+    event.key === "ArrowUp" && event.altKey && !event.shiftKey && !event.metaKey && !event.ctrlKey
   );
 }

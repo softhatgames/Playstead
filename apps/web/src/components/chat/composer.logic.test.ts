@@ -20,6 +20,8 @@ import {
   deriveComposerAction,
   deriveModelPickerEntries,
   isComposerModeShortcut,
+  isEditQueuedMessageShortcut,
+  isSendAlternateShortcut,
   resolveComposerSelection,
 } from "./composer.logic.ts";
 
@@ -107,6 +109,7 @@ describe("buildSendCommands", () => {
         modelSelection: { instanceId: "claudeAgent", model: "claude-fable-5-1" },
       },
       runtimeMode: "auto",
+      dispatchMode: "auto",
       text: "  Make a tiny platformer\n",
       ids,
     });
@@ -128,6 +131,8 @@ describe("buildSendCommands", () => {
         messageId: "message:1",
         text: "Make a tiny platformer",
         titleSeed: "Make a tiny platformer",
+        dispatchMode: { type: "start_immediately" },
+        deliveryIntent: "auto",
       },
     ]);
   });
@@ -146,6 +151,7 @@ describe("buildSendCommands", () => {
         },
       },
       runtimeMode: "full-access",
+      dispatchMode: "auto",
       text: "Now add a jump",
       ids,
     });
@@ -162,6 +168,8 @@ describe("buildSendCommands", () => {
           model: "gpt-5.6-terra",
           options: [{ id: "reasoningEffort", value: "high" }],
         },
+        dispatchMode: { type: "start_immediately" },
+        deliveryIntent: "auto",
       },
     ]);
   });
@@ -176,6 +184,7 @@ describe("buildSendCommands", () => {
         modelSelection: { instanceId: "codex", model: "gpt-5.6-terra" },
       },
       runtimeMode: "auto",
+      dispatchMode: "auto",
       text: "Now add a jump",
       ids,
     });
@@ -194,6 +203,36 @@ describe("buildSendCommands", () => {
         messageId: "message:1",
         text: "Now add a jump",
         modelSelection: { instanceId: "codex", model: "gpt-5.6-terra" },
+        dispatchMode: { type: "start_immediately" },
+        deliveryIntent: "auto",
+      },
+    ]);
+  });
+
+  it("queues a message sent while a run is active behind it", () => {
+    const commands = buildSendCommands({
+      target: {
+        kind: "existing",
+        threadId: ThreadId.make("thread:1"),
+        hasMessages: true,
+        runtimeMode: "full-access",
+        modelSelection: { instanceId: "codex", model: "gpt-5.6-terra" },
+      },
+      runtimeMode: "full-access",
+      dispatchMode: "queue",
+      text: "Then add a second level",
+      ids,
+    });
+
+    assert.deepStrictEqual<unknown>(commands, [
+      {
+        type: "message.dispatch",
+        commandId: "command:message",
+        threadId: "thread:1",
+        messageId: "message:1",
+        text: "Then add a second level",
+        modelSelection: { instanceId: "codex", model: "gpt-5.6-terra" },
+        dispatchMode: { type: "queue_after_active" },
       },
     ]);
   });
@@ -285,23 +324,64 @@ describe("deriveComposerAction", () => {
     message: "Interrupt requested",
   });
 
+  const action = (input: {
+    readonly runs: ReadonlyArray<OrchestrationV2Run>;
+    readonly turnItems?: ReadonlyArray<OrchestrationV2TurnItem>;
+    readonly hasContent?: boolean;
+    readonly editingQueuedMessage?: boolean;
+    readonly canResume?: boolean;
+  }) =>
+    deriveComposerAction({
+      runs: input.runs,
+      turnItems: input.turnItems ?? [],
+      hasContent: input.hasContent ?? false,
+      editingQueuedMessage: input.editingQueuedMessage ?? false,
+      canResume: input.canResume ?? false,
+      dispatchMode: input.runs.some((candidate) => candidate.status === "running")
+        ? "queue"
+        : "auto",
+    });
+
   it("offers sending while no run is active", () => {
-    assert.deepStrictEqual(deriveComposerAction([run("run:1", "interrupted")], []), {
+    assert.deepStrictEqual(action({ runs: [run("run:1", "completed")], hasContent: true }), {
       kind: "send",
     });
   });
 
-  it("offers only Interrupt, for the active run, while one runs", () => {
+  it("offers Interrupt, for the active run, while one runs and nothing is typed", () => {
     assert.deepStrictEqual(
-      deriveComposerAction([run("run:1", "completed"), run("run:2", "starting")], []),
+      action({ runs: [run("run:1", "completed"), run("run:2", "starting")] }),
       { kind: "interrupt", runId: RunId.make("run:2") },
     );
   });
 
+  it("queues what is typed while a run is active", () => {
+    assert.deepStrictEqual(action({ runs: [run("run:2", "running")], hasContent: true }), {
+      kind: "queue",
+    });
+  });
+
   it("shows the run stopping once Interrupt was pressed, until it has", () => {
     assert.deepStrictEqual(
-      deriveComposerAction([run("run:2", "running")], [interruptRequest("run:2")]),
+      action({ runs: [run("run:2", "running")], turnItems: [interruptRequest("run:2")] }),
       { kind: "interrupting" },
+    );
+  });
+
+  it("offers Resume in an empty composer after a stop, and sending once something is typed", () => {
+    assert.deepStrictEqual(
+      [
+        action({ runs: [run("run:1", "interrupted")], canResume: true }),
+        action({ runs: [run("run:1", "interrupted")], canResume: true, hasContent: true }),
+      ],
+      [{ kind: "resume" }, { kind: "send" }],
+    );
+  });
+
+  it("saves a queued message being edited, even while a run is active", () => {
+    assert.deepStrictEqual(
+      action({ runs: [run("run:2", "running")], editingQueuedMessage: true, canResume: true }),
+      { kind: "update-queued" },
     );
   });
 });
@@ -340,15 +420,49 @@ describe("isComposerModeShortcut", () => {
   });
 });
 
+describe("queue shortcuts", () => {
+  const keys = (key: string, held: ReadonlyArray<"meta" | "ctrl" | "shift" | "alt">) => ({
+    key,
+    metaKey: held.includes("meta"),
+    ctrlKey: held.includes("ctrl"),
+    shiftKey: held.includes("shift"),
+    altKey: held.includes("alt"),
+  });
+
+  it("sends the other follow-up with mod+enter", () => {
+    assert.deepStrictEqual(
+      [
+        isSendAlternateShortcut(keys("Enter", ["meta"]), "MacIntel"),
+        isSendAlternateShortcut(keys("Enter", ["ctrl"]), "Win32"),
+        isSendAlternateShortcut(keys("Enter", []), "MacIntel"),
+        isSendAlternateShortcut(keys("Enter", ["meta", "shift"]), "MacIntel"),
+      ],
+      [true, true, false, false],
+    );
+  });
+
+  it("edits the last queued message with alt+arrowup alone", () => {
+    assert.deepStrictEqual(
+      [
+        isEditQueuedMessageShortcut(keys("ArrowUp", ["alt"])),
+        isEditQueuedMessageShortcut(keys("ArrowUp", [])),
+        isEditQueuedMessageShortcut(keys("ArrowUp", ["alt", "shift"])),
+      ],
+      [true, false, false],
+    );
+  });
+});
+
 describe("canChooseModel", () => {
-  it("lets the model change only while the composer can send", () => {
+  it("lets the model change for the next message, but not for a queued one being edited", () => {
     assert.deepStrictEqual(
       [
         canChooseModel({ kind: "send" }),
+        canChooseModel({ kind: "queue" }),
         canChooseModel({ kind: "interrupt", runId: RunId.make("run:1") }),
-        canChooseModel({ kind: "interrupting" }),
+        canChooseModel({ kind: "update-queued" }),
       ],
-      [true, false, false],
+      [true, true, true, false],
     );
   });
 });

@@ -812,7 +812,10 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (input: 
   return {
     instanceId: input.instanceId,
     driver: CODEX,
-    capabilities: { sessions: { supportsRuntimeModeSwitchInSession: true } },
+    capabilities: {
+      sessions: { supportsRuntimeModeSwitchInSession: true },
+      turns: { supportsQueuedMessages: true },
+    },
     openSession,
   } satisfies ProviderAdapterV2;
 });

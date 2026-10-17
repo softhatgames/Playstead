@@ -52,6 +52,11 @@ import {
   runTraitsChangeScenario,
 } from "../src/orchestration-v2/testkit/fixtures/traitsChange.ts";
 import {
+  CLAUDE_QUEUED_TURN_SCENARIO,
+  queuedTurnPrompt,
+  runQueuedTurnScenario,
+} from "../src/orchestration-v2/testkit/fixtures/queuedTurn.ts";
+import {
   readMachineIdentity,
   recordingReplacements,
   type Replacements,
@@ -69,7 +74,7 @@ import { makeTestServerConfig } from "../src/testUtils/testServer.ts";
  * adapter sends). It uses the signed-in `claude` on PATH, in a temporary
  * empty folder, and writes `src/orchestration-v2/testkit/fixtures/<scenario>.claude.ndjson`.
  *
- *   node apps/server/scripts/record-claude-replay.ts [file_create | restart_resume | turn_interrupt | question_answer | question_interrupt | auto_mode | traits_change]
+ *   node apps/server/scripts/record-claude-replay.ts [file_create | restart_resume | turn_interrupt | question_answer | question_interrupt | auto_mode | traits_change | queued_turn]
  *
  * `auto_mode` writes a file in Auto, then changes the thread to Full access,
  * which reopens the query with `resume`, and sends one more message.
@@ -79,7 +84,8 @@ import { makeTestServerConfig } from "../src/testUtils/testServer.ts";
  * `question_answer` answers Claude's `AskUserQuestion` through
  * `runtime-request.respond`; `question_interrupt` interrupts the turn
  * waiting on it instead. `traits_change` sends turns that each carry other
- * reasoning efforts.
+ * reasoning efforts. `queued_turn` queues messages behind a turn, removes
+ * one, and holds the queue with Stop before resuming it.
  *
  * The header carries `claude --version` and the capture date. The frames are
  * scrubbed by `src/orchestration-v2/testkit/replayScrub.ts`, shared with the
@@ -307,6 +313,23 @@ const recordTraitsChange = (options: HarnessOptions) =>
     return { harness, workspace };
   });
 
+/** Queued turns, one removed, and a queue held by Stop and resumed. */
+const recordQueuedTurn = (options: HarnessOptions) =>
+  Effect.gen(function* () {
+    const harness = yield* makeOrchestrationHarness(options);
+    const { workspace, one, two, five } = yield* runQueuedTurnScenario(
+      harness,
+      CLAUDE_QUEUED_TURN_SCENARIO,
+    );
+    yield* Effect.logInfo("The turns ended.").pipe(
+      Effect.annotateLogs({ runs: [one, two, five].map((run) => run.status).join(", ") }),
+    );
+    if ([one, two, five].some((run) => run.status !== "completed")) {
+      return yield* Effect.die("A queued turn did not complete.");
+    }
+    return { harness, workspace };
+  });
+
 /** A file written in Auto, then a turn after the change to Full access. */
 const recordAutoMode = (options: HarnessOptions) =>
   Effect.gen(function* () {
@@ -326,6 +349,14 @@ const recordAutoMode = (options: HarnessOptions) =>
 
 /** Each scenario: how it is recorded, and what the header says about it. */
 const SCENARIOS = {
+  [CLAUDE_QUEUED_TURN_SCENARIO.scenario]: {
+    record: recordQueuedTurn,
+    metadata: {
+      model: CLAUDE_QUEUED_TURN_SCENARIO.model,
+      prompts: [1, 2, 5].map(queuedTurnPrompt),
+      queuedOptions: CLAUDE_QUEUED_TURN_SCENARIO.queuedOptions,
+    },
+  },
   [CLAUDE_TRAITS_CHANGE_SCENARIO.scenario]: {
     record: recordTraitsChange,
     metadata: {

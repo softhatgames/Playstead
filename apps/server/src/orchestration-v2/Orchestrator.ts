@@ -1,4 +1,5 @@
 import {
+  CommandId,
   NodeId,
   ProviderThreadId,
   RunAttemptId,
@@ -21,13 +22,26 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
 
 import * as CommandReceiptStore from "./CommandReceiptStore.ts";
 import * as EventSink from "./EventSink.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProjectStore from "./ProjectStore.ts";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
-import { decideThreadCommand, type ThreadCommandIds } from "./ThreadCommands.ts";
+import * as EventStore from "./EventStore.ts";
+import {
+  decideNextQueuedRun,
+  decideThreadCommand,
+  type ThreadCommandIds,
+} from "./ThreadCommands.ts";
+
+const TERMINAL_RUN_STATUSES: ReadonlySet<string> = new Set([
+  "completed",
+  "interrupted",
+  "failed",
+  "cancelled",
+]);
 
 /** Reading or writing failed; the command may not have been decided. */
 export class OrchestratorDispatchError extends Schema.TaggedError<OrchestratorDispatchError>()(
@@ -47,6 +61,11 @@ export class OrchestratorDispatchError extends Schema.TaggedError<OrchestratorDi
  * `decideThreadCommand`, and commits the decision, or the rejection, through
  * the event sink. A command id sent again gets its first outcome back
  * without running anything twice.
+ *
+ * It also runs the queue, as T3 Code's orchestrator does: whenever a run
+ * ends (except as recovery settles it) and after `queue.resume`, it starts
+ * the thread's next queued run, under the thread's lock, unless the queue
+ * is held or another run is active.
  */
 export class OrchestratorV2 extends Context.Service<
   OrchestratorV2,
@@ -72,6 +91,7 @@ const make = Effect.gen(function* () {
   const projects = yield* ProjectStore.ProjectStoreV2;
   const adapters = yield* ProviderAdapterRegistry.ProviderAdapterRegistryV2;
   const eventSink = yield* EventSink.EventSinkV2;
+  const eventStore = yield* EventStore.EventStoreV2;
   const crypto = yield* Crypto.Crypto;
   const threadLocks = yield* KeyedLock.make<ThreadId>();
 
@@ -123,8 +143,20 @@ const make = Effect.gen(function* () {
               instanceHasAdapter: Option.isSome(
                 yield* adapters.get(command.modelSelection.instanceId),
               ),
+              supportsQueuedMessages: false,
             }
-          : { projection, projectExists: true, instanceHasAdapter: true };
+          : {
+              projection,
+              projectExists: true,
+              instanceHasAdapter: true,
+              supportsQueuedMessages:
+                projection === undefined
+                  ? false
+                  : Option.match(yield* adapters.get(projection.thread.providerInstanceId), {
+                      onNone: () => false,
+                      onSome: (adapter) => adapter.capabilities.turns.supportsQueuedMessages,
+                    }),
+            };
       const now = yield* DateTime.now;
       const decided = decideThreadCommand({
         command,
@@ -152,8 +184,69 @@ const make = Effect.gen(function* () {
           ? {}
           : { cancelUnsettledEffects: decided.success.cancelUnsettledEffects }),
       });
+      if (command.type === "queue.resume" && receipt.status === "accepted") {
+        yield* startNextQueuedRun(command.threadId);
+      }
       return receipt;
     });
+
+  /** Starts the thread's next queued run, or holds the queue; call under the thread's lock. */
+  const startNextQueuedRun = (threadId: ThreadId, failedRunId?: RunId) =>
+    Effect.gen(function* () {
+      const projection = yield* projections.getThread(threadId);
+      if (Option.isNone(projection)) return;
+      const ids = yield* allocateIds;
+      const now = yield* DateTime.now;
+      const decided = decideNextQueuedRun({
+        projection: projection.value,
+        ...(failedRunId === undefined ? {} : { failedRunId }),
+        ids,
+        now: DateTime.formatIso(now),
+      });
+      if (decided === undefined) return;
+      const started = decided.effects.length > 0;
+      yield* eventSink.commitCommand({
+        commandId: CommandId.make(
+          `command:system:${started ? "start-queued" : "hold-queue"}:${ids.effectId}`,
+        ),
+        threadId,
+        commandType: started ? "queue.start-next" : "queue.hold",
+        acceptedAt: now,
+        events: decided.events,
+        effects: decided.effects,
+      });
+    });
+
+  // Each run that ends lets the next queued run start (T3 Code's
+  // `handleTerminalRun`). Recovery's settlements are left alone: it holds
+  // the queue itself.
+  const latest = yield* eventStore.latestApplicationSequence;
+  yield* eventStore.streamApplicationEvents({ afterSequence: latest }).pipe(
+    Stream.runForEach((stored) => {
+      if (
+        stored.aggregateKind !== "thread" ||
+        stored.event.type !== "run.updated" ||
+        String(stored.commandId).startsWith("command:runtime-reconcile:")
+      ) {
+        return Effect.void;
+      }
+      const run = stored.event.payload;
+      if (!TERMINAL_RUN_STATUSES.has(run.status)) return Effect.void;
+      return threadLocks
+        .withLock(
+          run.threadId,
+          startNextQueuedRun(run.threadId, run.status === "failed" ? run.id : undefined),
+        )
+        .pipe(
+          Effect.catchCause((cause) =>
+            Effect.logWarning("Starting the next queued run failed.").pipe(
+              Effect.annotateLogs({ threadId: run.threadId, cause: String(cause) }),
+            ),
+          ),
+        );
+    }),
+    Effect.forkScoped,
+  );
 
   const dispatch = (command: OrchestrationV2Command) =>
     threadLocks.withLock(command.threadId, decideAndCommit(command)).pipe(

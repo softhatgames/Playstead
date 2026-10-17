@@ -160,43 +160,6 @@ describe("Chat with Claude in a thread", () => {
       }).pipe(Effect.scoped),
     );
 
-    it.effect("refuses a message while the thread's run is active", () =>
-      Effect.gen(function* () {
-        const { harness, replay } = yield* replayFileCreate();
-        const sendAgain = {
-          type: "message.dispatch",
-          commandId: CommandId.make("command:file-create:too-soon"),
-          threadId: FILE_CREATE_IDS.threadId,
-          messageId: MessageId.make("message:file-create:too-soon"),
-          text: "And another file, please.",
-        } as const;
-
-        // Sent while the first run is still starting: the effect worker has
-        // not started the turn yet. T3 Code would queue it.
-        const { run, interjected } = yield* runFileCreateScenario(
-          harness,
-          Effect.flip(harness.orchestrator.dispatch(sendAgain)),
-        );
-
-        assert.instanceOf(interjected, OrchestrationDispatchCommandError);
-        assert.match(interjected.message, /is still working on run .+\. Wait for it to finish/);
-        // The same command sent again gets its first answer, not a new decision.
-        const again = yield* Effect.flip(harness.orchestrator.dispatch(sendAgain));
-        assert.strictEqual(again.message, interjected.message);
-        const projection = Option.getOrThrow(
-          yield* harness.orchestrator.getThreadProjection(FILE_CREATE_IDS.threadId),
-        );
-        assert.deepStrictEqual(
-          projection.messages
-            .filter((message) => message.role === "user")
-            .map((message) => message.id),
-          [FILE_CREATE_IDS.messageId],
-        );
-        yield* replay.assertComplete;
-        assert.strictEqual(run.status, "completed");
-      }).pipe(Effect.scoped),
-    );
-
     it.effect("after a model change, the next turn asks Claude for the new model", () =>
       Effect.gen(function* () {
         const followUp = "Now say hello in one word.";
@@ -241,6 +204,7 @@ describe("Chat with Claude in a thread", () => {
         });
         const sent = yield* harness.orchestrator.dispatch({
           type: "message.dispatch",
+          dispatchMode: { type: "start_immediately" },
           commandId: CommandId.make("command:file-create:follow-up"),
           threadId: FILE_CREATE_IDS.threadId,
           messageId: MessageId.make("message:file-create:2"),

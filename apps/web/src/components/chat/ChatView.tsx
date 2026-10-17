@@ -1,3 +1,8 @@
+import type { ComposerDispatchMode } from "@playstead/client-runtime/state/composerDispatch";
+import {
+  deriveThreadQueueWorkflowState,
+  resolveResumableRunId,
+} from "@playstead/client-runtime/state/threadWorkflows";
 import {
   CommandId,
   MessageId,
@@ -15,6 +20,7 @@ import {
 import { useNavigate } from "@tanstack/react-router";
 import { useMemo } from "react";
 
+import { useClientSettings } from "../../clientSettings.ts";
 import { requestPrimary, usePrimaryConnectionState } from "../../connection/runtime.ts";
 import { useThreadState } from "../../connection/useThread.ts";
 import {
@@ -37,7 +43,6 @@ import { ChatComposer } from "./ChatComposer.tsx";
 import {
   buildSendCommands,
   defaultModelSelection,
-  deriveComposerAction,
   deriveModelPickerEntries,
   resolveComposerSelection,
   type SendTarget,
@@ -50,12 +55,14 @@ import { deriveTimelineRows } from "./timeline.logic.ts";
 const sendCommands = async (
   target: SendTarget,
   runtimeMode: RuntimeMode,
+  dispatchMode: ComposerDispatchMode,
   text: string,
   threadCommandId: CommandId,
 ) => {
   const commands = buildSendCommands({
     target,
     runtimeMode,
+    dispatchMode,
     text,
     ids: {
       threadCommandId,
@@ -80,7 +87,10 @@ const setThreadModelSelection = (threadId: ThreadId, modelSelection: ModelSelect
     }),
   );
 
-/** **Interrupt** for the thread's active run (T3 Code's `run.interrupt`). */
+/**
+ * **Interrupt** for the thread's active run, which holds the queue behind it
+ * (T3 Code's `interruptThreadTurn` sends `run.interrupt` with `holdQueue`).
+ */
 const interruptRun = (threadId: ThreadId, runId: RunId) =>
   requestPrimary((client) =>
     client["orchestration.dispatchCommand"]({
@@ -88,8 +98,34 @@ const interruptRun = (threadId: ThreadId, runId: RunId) =>
       commandId: CommandId.make(`command:${newId()}`),
       threadId,
       runId,
+      holdQueue: true,
     }),
   );
+
+/** One of the queue's commands, with a new command id. */
+const dispatchQueueCommand = (
+  command:
+    | { readonly type: "queue.resume"; readonly threadId: ThreadId }
+    | {
+        readonly type: "queued-run.reorder";
+        readonly threadId: ThreadId;
+        readonly runId: RunId;
+        readonly beforeRunId: RunId | null;
+      }
+    | { readonly type: "queued-run.cancel"; readonly threadId: ThreadId; readonly runId: RunId }
+    | {
+        readonly type: "queued-run.edit";
+        readonly threadId: ThreadId;
+        readonly runId: RunId;
+        readonly text: string;
+      },
+) =>
+  requestPrimary((client) =>
+    client["orchestration.dispatchCommand"]({
+      ...command,
+      commandId: CommandId.make(`command:${newId()}`),
+    }),
+  ).then(() => undefined);
 
 /** The person's answers to a provider's question (T3 Code's `runtime-request.respond`). */
 const respondToUserInput = (
@@ -132,7 +168,17 @@ export function ChatView(
     [projection?.turnItems, project?.workspaceRoot],
   );
   const working = projection?.runs.some((run) => ACTIVE_RUN_STATUSES.has(run.status)) ?? false;
-  const action = deriveComposerAction(projection?.runs ?? [], projection?.turnItems ?? []);
+  const { followUpBehavior } = useClientSettings();
+  const queue = useMemo(
+    () =>
+      deriveThreadQueueWorkflowState({
+        runs: projection?.runs ?? [],
+        messages: projection?.messages ?? [],
+      }),
+    [projection?.runs, projection?.messages],
+  );
+  const resumableRunId =
+    projection === undefined ? null : resolveResumableRunId({ runs: projection.runs });
   const pendingUserInput = useMemo(
     () =>
       derivePendingUserInputs(projection?.runtimeRequests ?? [], projection?.turnItems ?? [])[0],
@@ -172,7 +218,7 @@ export function ChatView(
   const runtimeMode =
     props.kind === "draft" ? props.draft.runtimeMode : (composerRuntimeMode ?? threadRuntimeMode);
 
-  const onSend = async (text: string) => {
+  const onSend = async (text: string, dispatchMode: ComposerDispatchMode) => {
     if (dispatchSelection === undefined) return;
     if (props.kind === "thread") {
       await sendCommands(
@@ -184,6 +230,7 @@ export function ChatView(
           modelSelection: dispatchSelection,
         },
         runtimeMode,
+        dispatchMode,
         text,
         CommandId.make(`command:${newId()}`),
       );
@@ -200,6 +247,7 @@ export function ChatView(
         modelSelection: dispatchSelection,
       },
       runtimeMode,
+      dispatchMode,
       text,
       draft.threadCommandId,
     );
@@ -210,6 +258,52 @@ export function ChatView(
       replace: true,
     });
     discardDraft(draft.draftId);
+  };
+
+  /**
+   * **Resume** (T3 Code's `onResume` in `ChatView.tsx`): after a stop it
+   * continues the interrupted run with "Continue where you left off.", in
+   * the composer's mode and model, then releases a held queue behind it;
+   * with only a held queue, it releases that.
+   */
+  const onResume = async () => {
+    if (props.kind !== "thread") return;
+    if (resumableRunId !== null && dispatchSelection !== undefined) {
+      const commands = buildSendCommands({
+        target: {
+          kind: "existing",
+          threadId: props.threadId,
+          hasMessages: true,
+          runtimeMode: threadRuntimeMode,
+          modelSelection: dispatchSelection,
+        },
+        runtimeMode,
+        dispatchMode: "auto",
+        text: "Continue where you left off.",
+        ids: {
+          threadCommandId: CommandId.make(`command:${newId()}`),
+          messageCommandId: CommandId.make(`command:${newId()}`),
+          messageId: MessageId.make(`message:${newId()}`),
+          runtimeModeCommandId: CommandId.make(`command:${newId()}`),
+        },
+      });
+      for (const command of commands) {
+        await requestPrimary((client) =>
+          client["orchestration.dispatchCommand"](
+            command.type === "message.dispatch"
+              ? {
+                  ...command,
+                  dispatchMode: { type: "start_immediately" },
+                  manualContinuationOfRunId: resumableRunId,
+                }
+              : command,
+          ),
+        );
+      }
+      clearComposerRuntimeMode(props.threadId);
+      if (!queue.isHeld) return;
+    }
+    await dispatchQueueCommand({ type: "queue.resume", threadId: props.threadId });
   };
 
   const title = projection?.thread.title ?? "New thread";
@@ -251,9 +345,23 @@ export function ChatView(
             ? setDraftRuntimeMode(props.draft.draftId, next)
             : setComposerRuntimeMode(props.threadId, next)
         }
-        action={action}
+        runs={projection?.runs ?? []}
+        turnItems={projection?.turnItems ?? []}
+        followUpBehavior={followUpBehavior}
         onSend={onSend}
         onInterrupt={(runId) => interruptRun(threadId, runId).then(() => undefined)}
+        canResume={props.kind === "thread" && (resumableRunId !== null || queue.isHeld)}
+        onResume={onResume}
+        queuedRuns={queue.queuedRuns}
+        onReorderQueuedRun={(runId, beforeRunId) =>
+          dispatchQueueCommand({ type: "queued-run.reorder", threadId, runId, beforeRunId })
+        }
+        onRemoveQueuedRun={(runId) =>
+          dispatchQueueCommand({ type: "queued-run.cancel", threadId, runId })
+        }
+        onUpdateQueuedRun={(runId, text) =>
+          dispatchQueueCommand({ type: "queued-run.edit", threadId, runId, text })
+        }
         pendingUserInput={pendingUserInput}
         onRespondToUserInput={(requestId, answers) =>
           respondToUserInput(threadId, requestId, answers).then(() => undefined)

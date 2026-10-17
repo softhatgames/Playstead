@@ -172,10 +172,13 @@ export const INTERRUPT_TERMINAL_TIMEOUT = "10 seconds";
  * `OrchestrationV2ProviderCapabilities`, trimmed). A session that cannot
  * switch runtime mode in session is closed and opened again, continuing the
  * provider's conversation, when a turn starts in another mode than the
- * session opened with.
+ * session opened with. An adapter that supports queued messages lets the
+ * orchestrator queue a message sent while a run is active, and start it as
+ * a turn of its own once that run ends.
  */
 export interface ProviderAdapterV2Capabilities {
   readonly sessions: { readonly supportsRuntimeModeSwitchInSession: boolean };
+  readonly turns: { readonly supportsQueuedMessages: boolean };
 }
 
 export interface ProviderAdapterV2 {

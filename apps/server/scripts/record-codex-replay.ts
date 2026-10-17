@@ -40,6 +40,11 @@ import {
   runTraitsChangeScenario,
 } from "../src/orchestration-v2/testkit/fixtures/traitsChange.ts";
 import {
+  CODEX_QUEUED_TURN_SCENARIO,
+  queuedTurnPrompt,
+  runQueuedTurnScenario,
+} from "../src/orchestration-v2/testkit/fixtures/queuedTurn.ts";
+import {
   readMachineIdentity,
   recordingReplacements,
   scrubbed,
@@ -55,12 +60,14 @@ import {
  * `codex` on PATH, in a temporary empty folder, and writes
  * `src/orchestration-v2/testkit/fixtures/<scenario>.codex.ndjson`.
  *
- *   node apps/server/scripts/record-codex-replay.ts [file_create | turn_interrupt | auto_mode | traits_change | --help]
+ *   node apps/server/scripts/record-codex-replay.ts [file_create | turn_interrupt | auto_mode | traits_change | queued_turn | --help]
  *
  * `turn_interrupt` interrupts a long command once it runs, then sends one
  * more message. `auto_mode` writes a file in Auto, then sends one more
  * message after the change to Full access. `traits_change` sends turns that
- * each carry another reasoning effort and service tier.
+ * each carry another reasoning effort and service tier. `queued_turn`
+ * queues messages behind a turn, removes one, and holds the queue with
+ * Stop before resuming it.
  *
  * `question_answer` and `question_interrupt` cannot be recorded, and the
  * recorder says so when asked for them: Codex 0.163.0 refuses
@@ -136,6 +143,22 @@ const recordTraitsChange = (harness: Harness) =>
     return workspace;
   });
 
+/** Queued turns, one removed, and a queue held by Stop and resumed. */
+const recordQueuedTurn = (harness: Harness) =>
+  Effect.gen(function* () {
+    const { workspace, one, two, five } = yield* runQueuedTurnScenario(
+      harness,
+      CODEX_QUEUED_TURN_SCENARIO,
+    );
+    yield* Effect.logInfo("The turns ended.").pipe(
+      Effect.annotateLogs({ runs: [one, two, five].map((run) => run.status).join(", ") }),
+    );
+    if ([one, two, five].some((run) => run.status !== "completed")) {
+      return yield* Effect.die("A queued turn did not complete.");
+    }
+    return workspace;
+  });
+
 /** A file written in Auto, then a turn after the change to Full access. */
 const recordAutoMode = (harness: Harness) =>
   Effect.gen(function* () {
@@ -154,6 +177,14 @@ const recordAutoMode = (harness: Harness) =>
 
 /** Each scenario: how it is recorded, and what the header says about it. */
 const SCENARIOS = {
+  [CODEX_QUEUED_TURN_SCENARIO.scenario]: {
+    record: recordQueuedTurn,
+    metadata: {
+      model: CODEX_QUEUED_TURN_SCENARIO.model,
+      prompts: [1, 2, 5].map(queuedTurnPrompt),
+      queuedOptions: CODEX_QUEUED_TURN_SCENARIO.queuedOptions,
+    },
+  },
   [CODEX_TRAITS_CHANGE_SCENARIO.scenario]: {
     record: recordTraitsChange,
     metadata: {

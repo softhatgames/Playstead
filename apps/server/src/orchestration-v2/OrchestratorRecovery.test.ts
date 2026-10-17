@@ -149,6 +149,7 @@ describe("Survive a restart", () => {
 
           const next = yield* restarted.orchestrator.dispatch({
             type: "message.dispatch",
+            dispatchMode: { type: "start_immediately" },
             commandId: CommandId.make("command:file-create:after-restart"),
             threadId: FILE_CREATE_IDS.threadId,
             messageId: MessageId.make("message:file-create:after-restart"),
@@ -283,6 +284,7 @@ describe("Survive a restart", () => {
 
           yield* restarted.orchestrator.dispatch({
             type: "message.dispatch",
+            dispatchMode: { type: "start_immediately" },
             commandId: CommandId.make("command:file-create:after-hang"),
             threadId: FILE_CREATE_IDS.threadId,
             messageId: MessageId.make("message:file-create:after-hang"),
