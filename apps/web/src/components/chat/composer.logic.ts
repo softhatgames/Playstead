@@ -63,12 +63,48 @@ export type SendTarget =
       readonly projectId: ProjectId;
       readonly modelSelection: ModelSelection;
     }
-  | { readonly kind: "existing"; readonly threadId: ThreadId; readonly hasMessages: boolean };
+  | {
+      readonly kind: "existing";
+      readonly threadId: ThreadId;
+      readonly hasMessages: boolean;
+      /** The composer's model and traits, which the message makes the thread's. */
+      readonly modelSelection: ModelSelection;
+    };
+
+/**
+ * The model selection the composer shows and sends, as T3 Code's composer
+ * draft resolves it: the traits chosen in this composer for the model, else
+ * the thread's own, and for a new thread the traits remembered for the
+ * model (T3 Code's sticky options).
+ */
+export function resolveComposerSelection(input: {
+  readonly selection: ModelSelection | undefined;
+  readonly chosen: ModelSelection | undefined;
+  readonly recall: (
+    instanceId: ModelSelection["instanceId"],
+    model: string,
+  ) => ModelSelection["options"];
+  readonly isDraft: boolean;
+}): ModelSelection | undefined {
+  const { selection, chosen } = input;
+  if (selection === undefined) return undefined;
+  const base = { instanceId: selection.instanceId, model: selection.model };
+  const options =
+    chosen !== undefined &&
+    chosen.instanceId === selection.instanceId &&
+    chosen.model === selection.model
+      ? chosen.options
+      : (selection.options ??
+        (input.isDraft ? input.recall(selection.instanceId, selection.model) : undefined));
+  return options === undefined ? base : { ...base, options };
+}
 
 /**
  * The commands a send dispatches, in order. From a new thread that is
  * `thread.create` and then `message.dispatch`; T3 Code folds the first into
  * the message's `bootstrap`. The first message carries T3 Code's title seed.
+ * A new thread is created with the composer's model and traits; a message
+ * to a started thread carries them, as T3 Code's composer sends them.
  */
 export function buildSendCommands(input: {
   readonly target: SendTarget;
@@ -89,6 +125,7 @@ export function buildSendCommands(input: {
     messageId: ids.messageId,
     text,
     ...(firstMessage ? { titleSeed: deriveThreadTitleSeed(text) } : {}),
+    ...(target.kind === "existing" ? { modelSelection: target.modelSelection } : {}),
   };
   if (target.kind === "existing") return [message];
   return [

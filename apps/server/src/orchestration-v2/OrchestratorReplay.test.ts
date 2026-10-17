@@ -113,7 +113,8 @@ describe("Chat with Claude in a thread", () => {
         // Claude Code's own turn after a background command finished, as
         // Claude 2.1.301 sent it (seen by hand): its frames carry no
         // prompt's uuid, and it ends with a result of its own.
-        const sessionId = "c4aedb90-2046-46ac-b9bb-bfc68d7d8381";
+        // The recording's session.
+        const sessionId = "bf6441b1-40e8-458b-84fb-27e654cf2f5c";
         const ownTurn = "The background `sleep 15` finished with exit code 0.";
         const { harness, replay } = yield* replayFileCreate(
           [],
@@ -206,6 +207,15 @@ describe("Chat with Claude in a thread", () => {
           {
             type: "expect_outbound",
             frame: { type: "query.set_model", model: "claude-sonnet-5-5" },
+          },
+          // Sonnet's default effort is high, Haiku's medium: the new model's
+          // effort is applied live with it, as T3 Code applies a selection.
+          {
+            type: "expect_outbound",
+            frame: {
+              type: "query.apply_flag_settings",
+              settings: { effortLevel: "high", fastMode: null, ultracode: null },
+            },
           },
           {
             type: "expect_outbound",

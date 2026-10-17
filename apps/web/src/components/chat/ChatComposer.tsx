@@ -10,6 +10,7 @@ import { canChooseModel, type ComposerAction, type ModelPickerEntry } from "./co
 import { ComposerPendingUserInputPanel } from "./ComposerPendingUserInputPanel.tsx";
 import type { PendingUserInput } from "./pendingUserInput.logic.ts";
 import { ProviderModelPicker } from "./ProviderModelPicker.tsx";
+import { TraitsPicker } from "./TraitsPicker.tsx";
 
 const errorMessage = (cause: unknown, fallback: string) =>
   typeof cause === "object" && cause !== null && "message" in cause
@@ -24,11 +25,15 @@ const errorMessage = (cause: unknown, fallback: string) =>
  * **Interrupt**, and once pressed the composer says the run is stopping. A
  * question the provider waits on shows above it, in the pending user-input
  * panel, the oldest first (T3 Code's `ChatComposer` renders it there too).
+ * Beside the model picker is the reasoning and traits picker for the
+ * selected model, which can rewrite the prompt for Ultrathink.
  */
 export function ChatComposer(props: {
   readonly entries: ReadonlyArray<ModelPickerEntry>;
   readonly selection: ModelSelection | undefined;
   readonly onSelectModel: (selection: ModelSelection) => void | Promise<void>;
+  /** The traits picker's new choices for the selected model. */
+  readonly onTraitsChange: (options: ModelSelection["options"]) => void;
   readonly action: ComposerAction;
   readonly onSend: (text: string) => Promise<void>;
   readonly onInterrupt: (
@@ -115,12 +120,29 @@ export function ChatComposer(props: {
           className="w-full resize-none bg-transparent px-2 py-1 text-sm outline-none placeholder:text-neutral-400"
         />
         <div className="flex items-center justify-between">
-          <ProviderModelPicker
-            entries={props.entries}
-            selection={props.selection}
-            disabled={!canChooseModel(action) || sending}
-            onSelect={(selection) => void selectModel(selection)}
-          />
+          <div className="flex min-w-0 items-center gap-1">
+            <ProviderModelPicker
+              entries={props.entries}
+              selection={props.selection}
+              disabled={!canChooseModel(action) || sending}
+              onSelect={(selection) => void selectModel(selection)}
+            />
+            {props.selection === undefined ? null : (
+              <TraitsPicker
+                provider={props.selection.instanceId}
+                capabilities={
+                  props.entries
+                    .find((entry) => entry.instanceId === props.selection?.instanceId)
+                    ?.models.find((model) => model.slug === props.selection?.model)?.capabilities
+                }
+                options={props.selection.options}
+                prompt={text}
+                onPromptChange={setText}
+                onOptionsChange={props.onTraitsChange}
+                disabled={!canChooseModel(action) || sending}
+              />
+            )}
+          </div>
           {action.kind === "interrupt" ? (
             <InterruptButton disabled={interrupting} onClick={() => void interrupt(action.runId)} />
           ) : action.kind === "interrupting" ? (

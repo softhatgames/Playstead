@@ -17,6 +17,7 @@ import {
   type OrchestrationV2ThreadProjection,
   type OrchestrationV2TurnItem,
 } from "@playstead/contracts/orchestrationV2";
+import { modelSelectionsEqual } from "@playstead/shared/model";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 
@@ -107,7 +108,10 @@ const reject = (command: OrchestrationV2Command, reason: string) =>
  *   copies. Naming another instance is T3 Code's provider switch, which
  *   Playstead refuses.
  * - `message.dispatch` starts a run at once. T3 Code queues a message sent
- *   while a run is active; Playstead has no queue and refuses it.
+ *   while a run is active; Playstead has no queue and refuses it. A model
+ *   selection the message carries (the composer's traits) becomes the
+ *   thread's before the run, which copies it; it must name the thread's
+ *   own instance.
  * - `run.interrupt` stops an active run, as T3 Code's `dispatchRunInterrupt`
  *   does: a run whose provider turn has not started ends interrupted at
  *   once and its start is cancelled; otherwise the provider is asked to
@@ -182,6 +186,15 @@ export function decideThreadCommand(input: {
       const projection = state.projection;
       if (projection === undefined) {
         return reject(command, `Thread ${command.threadId} does not exist.`);
+      }
+      if (
+        command.modelSelection !== undefined &&
+        command.modelSelection.instanceId !== projection.thread.providerInstanceId
+      ) {
+        return reject(
+          command,
+          `Thread ${projection.thread.id} runs on ${projection.thread.providerInstanceId}. Choose one of its models; switching provider is not available yet.`,
+        );
       }
       const active = projection.runs.find((run) => ACTIVE_RUN_STATUSES.has(run.status));
       if (active !== undefined) {
@@ -415,11 +428,25 @@ function dispatchMessage(
   ids: ThreadCommandIds,
   now: string,
 ): ThreadCommandDecision {
-  const { thread } = projection;
-  const threadId = thread.id;
+  const threadId = projection.thread.id;
   const runId = ids.runId;
   const ordinal = projection.runs.reduce((highest, run) => Math.max(highest, run.ordinal), 0) + 1;
   const events: Array<NewDomainEvent> = [];
+
+  // The message's model and options become the thread's first, as T3
+  // Code's `dispatchMessage` does, and its run copies them.
+  const modelSelection = command.modelSelection ?? projection.thread.modelSelection;
+  const thread = modelSelectionsEqual(projection.thread.modelSelection, modelSelection)
+    ? projection.thread
+    : { ...projection.thread, modelSelection, updatedAt: now };
+  if (thread !== projection.thread) {
+    events.push({
+      type: "thread.model-selection-updated",
+      threadId,
+      occurredAt: now,
+      payload: thread,
+    });
+  }
 
   // The first message titles the thread, as T3 Code's title seed does.
   const titled =

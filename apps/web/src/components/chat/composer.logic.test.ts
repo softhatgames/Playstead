@@ -19,6 +19,7 @@ import {
   defaultModelSelection,
   deriveComposerAction,
   deriveModelPickerEntries,
+  resolveComposerSelection,
 } from "./composer.logic.ts";
 
 const provider = (
@@ -35,10 +36,15 @@ const provider = (
   checkedAt: "2026-10-17T00:00:00.000Z",
   models:
     instanceId === "codex"
-      ? [{ slug: "gpt-fake", name: "GPT Fake", isDefault: true }]
+      ? [{ slug: "gpt-fake", name: "GPT Fake", isDefault: true, capabilities: null }]
       : [
-          { slug: "claude-opus-5-5", name: "Claude Opus 5.5" },
-          { slug: "claude-fable-5-1", name: "Claude Fable 5.1", isDefault: true },
+          { slug: "claude-opus-5-5", name: "Claude Opus 5.5", capabilities: null },
+          {
+            slug: "claude-fable-5-1",
+            name: "Claude Fable 5.1",
+            isDefault: true,
+            capabilities: null,
+          },
         ],
   ...overrides,
 });
@@ -122,9 +128,18 @@ describe("buildSendCommands", () => {
     ]);
   });
 
-  it("sends only the message to a thread that has one already", () => {
+  it("sends only the message to a thread that has one already, with the composer's traits", () => {
     const commands = buildSendCommands({
-      target: { kind: "existing", threadId: ThreadId.make("thread:1"), hasMessages: true },
+      target: {
+        kind: "existing",
+        threadId: ThreadId.make("thread:1"),
+        hasMessages: true,
+        modelSelection: {
+          instanceId: "codex",
+          model: "gpt-5.6-terra",
+          options: [{ id: "reasoningEffort", value: "high" }],
+        },
+      },
       text: "Now add a jump",
       ids,
     });
@@ -136,8 +151,65 @@ describe("buildSendCommands", () => {
         threadId: "thread:1",
         messageId: "message:1",
         text: "Now add a jump",
+        modelSelection: {
+          instanceId: "codex",
+          model: "gpt-5.6-terra",
+          options: [{ id: "reasoningEffort", value: "high" }],
+        },
       },
     ]);
+  });
+});
+
+describe("resolveComposerSelection", () => {
+  const terra = { instanceId: "codex", model: "gpt-5.6-terra" } as const;
+  const high = [{ id: "reasoningEffort", value: "high" }] as const;
+  const low = [{ id: "reasoningEffort", value: "low" }] as const;
+  const recall = (instanceId: string, model: string) =>
+    instanceId === "codex" && model === "gpt-5.6-terra" ? low : undefined;
+
+  it("starts a new thread on the traits remembered for its model", () => {
+    assert.deepStrictEqual(
+      resolveComposerSelection({ selection: terra, chosen: undefined, recall, isDraft: true }),
+      { ...terra, options: low },
+    );
+    assert.deepStrictEqual(
+      resolveComposerSelection({
+        selection: { instanceId: "codex", model: "gpt-6.1-sol" },
+        chosen: undefined,
+        recall,
+        isDraft: true,
+      }),
+      { instanceId: "codex", model: "gpt-6.1-sol" },
+    );
+  });
+
+  it("keeps a started thread's own traits rather than the remembered ones", () => {
+    assert.deepStrictEqual(
+      resolveComposerSelection({ selection: terra, chosen: undefined, recall, isDraft: false }),
+      terra,
+    );
+  });
+
+  it("uses the traits chosen in the composer, but only for the model they were chosen on", () => {
+    assert.deepStrictEqual(
+      resolveComposerSelection({
+        selection: terra,
+        chosen: { ...terra, options: high },
+        recall,
+        isDraft: false,
+      }),
+      { ...terra, options: high },
+    );
+    assert.deepStrictEqual(
+      resolveComposerSelection({
+        selection: terra,
+        chosen: { instanceId: "codex", model: "gpt-6.1-sol", options: high },
+        recall,
+        isDraft: false,
+      }),
+      terra,
+    );
   });
 });
 

@@ -1,3 +1,4 @@
+import type { ModelCapabilities, ProviderOptionDescriptor } from "@playstead/contracts/model";
 import type { ServerProviderAuth, ServerProviderModel } from "@playstead/contracts/server";
 import { DEFAULT_BINARY_PATHS } from "@playstead/contracts/settings";
 import * as CodexClient from "@playstead/effect-codex-app-server/client";
@@ -158,6 +159,93 @@ const formatCodexModelName = (name: string) =>
     .replace(/^gpt/i, "GPT")
     .replace(/-([a-z])/g, (_, letter: string) => `-${letter.toUpperCase()}`);
 
+/** `REASONING_EFFORT_LABELS` at 2577baf; an effort without one shows its id. */
+const REASONING_EFFORT_LABELS: Readonly<Record<string, string>> = {
+  none: "None",
+  minimal: "Minimal",
+  low: "Low",
+  medium: "Medium",
+  high: "High",
+  xhigh: "Extra High",
+  max: "Max",
+  ultra: "Ultra",
+};
+
+/** The service tier Codex runs when none is chosen, offered as **Standard**. */
+const DEFAULT_SERVICE_TIER_ID = "default";
+
+const SERVICE_TIER_DESCRIPTIONS: Readonly<Record<string, string>> = {
+  ultrafast: "Even faster, more expensive",
+};
+
+/** `codexModelFamily` at 2577baf: a model's name without the `openai.` prefix. */
+const codexModelFamily = (slug: string) =>
+  slug.startsWith("openai.gpt-") ? slug.slice("openai.".length) : slug;
+
+/**
+ * A Codex model's options, as T3 Code's `mapCodexModelCapabilities` reads
+ * them from `model/list`: **Reasoning** from its supported efforts, starting
+ * on Codex's default (medium for the gpt-6-astra family, as T3 Code has it),
+ * and **Service Tier** from its tiers (or the older speed tiers), after a
+ * **Standard** choice for Codex's own default.
+ */
+const mapCodexModelCapabilities = (model: CodexSchema.V2Model): ModelCapabilities => {
+  const defaultEffort =
+    codexModelFamily(model.model) === "gpt-6-astra" ? "medium" : model.defaultReasoningEffort;
+  const reasoningOptions = model.supportedReasoningEfforts.map(({ reasoningEffort }) => ({
+    id: reasoningEffort,
+    label: REASONING_EFFORT_LABELS[reasoningEffort] ?? reasoningEffort,
+    ...(reasoningEffort === defaultEffort ? { isDefault: true } : {}),
+  }));
+  const defaultReasoning = reasoningOptions.find((option) => option.isDefault === true)?.id;
+  const serviceTiers =
+    model.serviceTiers !== undefined && model.serviceTiers.length > 0
+      ? model.serviceTiers
+      : (model.additionalSpeedTiers ?? []).map((id) => ({
+          id,
+          name: id === "fast" ? "Fast" : id,
+          description: "",
+        }));
+  const defaultServiceTier =
+    serviceTiers.find((tier) => tier.id === model.defaultServiceTier)?.id ??
+    DEFAULT_SERVICE_TIER_ID;
+  const optionDescriptors: Array<ProviderOptionDescriptor> = [];
+  if (reasoningOptions.length > 0) {
+    optionDescriptors.push({
+      id: "reasoningEffort",
+      label: "Reasoning",
+      type: "select",
+      options: reasoningOptions,
+      ...(defaultReasoning === undefined ? {} : { currentValue: defaultReasoning }),
+    });
+  }
+  if (serviceTiers.length > 0) {
+    optionDescriptors.push({
+      id: "serviceTier",
+      label: "Service Tier",
+      type: "select",
+      options: [
+        {
+          id: DEFAULT_SERVICE_TIER_ID,
+          label: "Standard",
+          ...(defaultServiceTier === DEFAULT_SERVICE_TIER_ID ? { isDefault: true } : {}),
+        },
+        ...serviceTiers.map((tier) => {
+          const description = SERVICE_TIER_DESCRIPTIONS[tier.id] ?? tier.description;
+          return {
+            id: tier.id,
+            label: tier.name,
+            ...(description ? { description } : {}),
+            ...(defaultServiceTier === tier.id ? { isDefault: true } : {}),
+          };
+        }),
+      ],
+      currentValue: defaultServiceTier,
+    });
+  }
+  return { optionDescriptors };
+};
+
 /** Every page of `model/list`, as `requestAllCodexModels` at 2577baf. Codex's own default stays the default. */
 const listCodexModels = Effect.fn("listCodexModels")(function* (
   client: CodexClient.CodexAppServerClient["Service"],
@@ -171,6 +259,7 @@ const listCodexModels = Effect.fn("listCodexModels")(function* (
         slug: model.model,
         name: formatCodexModelName(model.displayName),
         ...(model.isDefault ? { isDefault: true } : {}),
+        capabilities: mapCodexModelCapabilities(model),
       });
     }
     cursor = page.nextCursor;

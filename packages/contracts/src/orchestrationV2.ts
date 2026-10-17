@@ -19,6 +19,7 @@ import {
   TrimmedNonEmptyString,
   TurnItemId,
 } from "./baseSchemas.ts";
+import { ProviderOptionSelections } from "./model.ts";
 import { OrchestrationProjectShell } from "./orchestrationProject.ts";
 import { ProviderDriverKind, ProviderInstanceId } from "./providerInstance.ts";
 
@@ -41,10 +42,15 @@ export const ORCHESTRATION_V2_WS_METHODS = {
   subscribeThread: "orchestration.subscribeThread",
 } as const;
 
-/** The provider instance and model a thread runs (T3 Code's `ModelSelection`, without options). */
+/**
+ * The provider instance and model a thread runs, and the person's choices
+ * among the model's options (T3 Code's `ModelSelection`). An option left out
+ * is the provider's own default.
+ */
 export const ModelSelection = Schema.Struct({
   instanceId: ProviderInstanceId,
   model: TrimmedNonEmptyString,
+  options: Schema.optionalKey(ProviderOptionSelections),
 });
 export type ModelSelection = typeof ModelSelection.Type;
 
@@ -473,7 +479,9 @@ export type OrchestrationV2ThreadStreamItem = typeof OrchestrationV2ThreadStream
  * A thread is created with its project, provider instance and model, always in
  * Full access and the default interaction mode. Its model can change to
  * another of the same provider instance's. A message is plain text; the
- * first one's `titleSeed` titles the thread. `run.interrupt` stops a run
+ * first one's `titleSeed` titles the thread, and its `modelSelection`, when
+ * given, becomes the thread's before its run starts (the composer sends the
+ * model's options this way, as T3 Code's does). `run.interrupt` stops a run
  * that is still active. `runtime-request.respond` answers a provider's
  * question; there are no approval decisions.
  */
@@ -499,6 +507,8 @@ export const OrchestrationV2Command = Schema.Union([
     messageId: MessageId,
     text: TrimmedNonEmptyString,
     titleSeed: Schema.optionalKey(TrimmedNonEmptyString),
+    /** The model and options for this message's run, when they differ from the thread's. */
+    modelSelection: Schema.optionalKey(ModelSelection),
   }),
   Schema.Struct({
     type: Schema.Literal("run.interrupt"),

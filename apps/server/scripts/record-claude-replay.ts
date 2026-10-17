@@ -44,6 +44,10 @@ import {
   runTurnInterruptScenario,
 } from "../src/orchestration-v2/testkit/fixtures/turnInterrupt.ts";
 import {
+  CLAUDE_TRAITS_CHANGE_SCENARIO,
+  runTraitsChangeScenario,
+} from "../src/orchestration-v2/testkit/fixtures/traitsChange.ts";
+import {
   readMachineIdentity,
   recordingReplacements,
   type Replacements,
@@ -61,14 +65,15 @@ import { makeTestServerConfig } from "../src/testUtils/testServer.ts";
  * adapter sends). It uses the signed-in `claude` on PATH, in a temporary
  * empty folder, and writes `src/orchestration-v2/testkit/fixtures/<scenario>.claude.ndjson`.
  *
- *   node apps/server/scripts/record-claude-replay.ts [file_create | restart_resume | turn_interrupt | question_answer | question_interrupt]
+ *   node apps/server/scripts/record-claude-replay.ts [file_create | restart_resume | turn_interrupt | question_answer | question_interrupt | traits_change]
  *
  * `restart_resume` builds the services a second time over the same home
  * between its two turns, as a restarted server would. `turn_interrupt`
  * interrupts a long command once it runs, then sends one more message.
  * `question_answer` answers Claude's `AskUserQuestion` through
  * `runtime-request.respond`; `question_interrupt` interrupts the turn
- * waiting on it instead.
+ * waiting on it instead. `traits_change` sends turns that each carry other
+ * reasoning efforts.
  *
  * The header carries `claude --version` and the capture date. The frames are
  * scrubbed by `src/orchestration-v2/testkit/replayScrub.ts`, shared with the
@@ -279,8 +284,32 @@ const recordRestartResume = (options: HarnessOptions) =>
     return { harness, workspace: first.workspace };
   });
 
+/** Turns that each carry other traits. */
+const recordTraitsChange = (options: HarnessOptions) =>
+  Effect.gen(function* () {
+    const harness = yield* makeOrchestrationHarness(options);
+    const { workspace, runs } = yield* runTraitsChangeScenario(
+      harness,
+      CLAUDE_TRAITS_CHANGE_SCENARIO,
+    );
+    yield* Effect.logInfo("The turns ended.").pipe(
+      Effect.annotateLogs({ runs: runs.map((run) => run.status).join(", ") }),
+    );
+    if (runs.some((run) => run.status !== "completed")) {
+      return yield* Effect.die("A traits turn did not complete.");
+    }
+    return { harness, workspace };
+  });
+
 /** Each scenario: how it is recorded, and what the header says about it. */
 const SCENARIOS = {
+  [CLAUDE_TRAITS_CHANGE_SCENARIO.scenario]: {
+    record: recordTraitsChange,
+    metadata: {
+      model: CLAUDE_TRAITS_CHANGE_SCENARIO.model,
+      turns: CLAUDE_TRAITS_CHANGE_SCENARIO.turns,
+    },
+  },
   [FILE_CREATE_SCENARIO.scenario]: {
     record: recordFileCreate,
     metadata: { model: FILE_CREATE_SCENARIO.model, prompt: FILE_CREATE_SCENARIO.prompt },

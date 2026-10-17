@@ -3,6 +3,7 @@ import * as Schema from "effect/Schema";
 import { ServerAuthDescriptor } from "./auth.ts";
 import { NonNegativeInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
 import { ExecutionEnvironmentDescriptor } from "./environment.ts";
+import { ModelCapabilities } from "./model.ts";
 import { ProviderDriverKind, ProviderInstanceId } from "./providerInstance.ts";
 import { ServerSettings } from "./settings.ts";
 
@@ -43,11 +44,16 @@ export const ServerProviderAuth = Schema.Struct({
 });
 export type ServerProviderAuth = typeof ServerProviderAuth.Type;
 
-/** A model the provider runs, as T3 Code's `ServerProviderModel` without custom models or capabilities. */
+/**
+ * A model the provider runs, as T3 Code's `ServerProviderModel` without
+ * custom or legacy models: its options are its `capabilities`, `null` when
+ * it describes none.
+ */
 export const ServerProviderModel = Schema.Struct({
   slug: TrimmedNonEmptyString,
   name: TrimmedNonEmptyString,
   isDefault: Schema.optionalKey(Schema.Boolean),
+  capabilities: Schema.NullOr(ModelCapabilities),
 });
 export type ServerProviderModel = typeof ServerProviderModel.Type;
 
