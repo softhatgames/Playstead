@@ -82,7 +82,7 @@ describe("server", () => {
         const descriptor = (yield* Fiber.join(descriptorRequest)) as Record<string, unknown>;
 
         assert.strictEqual(typeof descriptor.environmentId, "string");
-        assert.strictEqual(descriptor.serverVersion, "0.1.0");
+        assert.strictEqual(descriptor.serverVersion, "0.0.0");
       }).pipe(Effect.scoped),
     );
 
@@ -138,7 +138,7 @@ describe("server", () => {
           (state) => state.phase === "connected" && state.lifecycle?.type === "ready",
         );
         assert.strictEqual(ready.config?.auth.policy, "loopback-browser");
-        assert.strictEqual(ready.lifecycle?.payload.environment.serverVersion, "0.1.0");
+        assert.strictEqual(ready.lifecycle?.payload.environment.serverVersion, "0.0.0");
       }).pipe(Effect.scoped),
     );
 
@@ -205,7 +205,7 @@ describe("server", () => {
             connection,
             (state) => state.phase === "connected",
           );
-          assert.strictEqual(connected.config?.environment.serverVersion, "0.1.0");
+          assert.strictEqual(connected.config?.environment.serverVersion, "0.0.0");
         }).pipe(Effect.scoped),
     );
 

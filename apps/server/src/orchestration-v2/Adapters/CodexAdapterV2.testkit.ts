@@ -31,45 +31,69 @@ export const CODEX_REPLAY_PROTOCOL = "codex.app-server";
 
 export interface CodexReplay {
   readonly clients: CodexAppServerClientFactory["Service"];
-  /** Fails unless the session's app-server was opened, every frame matched and the whole recording was used. */
+  /** Fails unless every recorded app-server was opened, every frame matched and the whole recording was used. */
   readonly assertComplete: Effect.Effect<void, CodexAppServerReplay.CodexAppServerReplayError>;
 }
 
+/** Whether an entry is the client's `initialize`, the first line to each app-server. */
+const isInitialize = (entry: ProviderReplayEntry) =>
+  entry.type === "expect_outbound" &&
+  typeof entry.frame === "object" &&
+  entry.frame !== null &&
+  "method" in entry.frame &&
+  entry.frame.method === "initialize";
+
+/** The recording's app-servers, in order: each starts at an `initialize`. */
+const appServerEntries = (entries: ReadonlyArray<ProviderReplayEntry>) => {
+  const appServers: Array<Array<ProviderReplayEntry>> = [];
+  for (const entry of entries) {
+    if (isInitialize(entry) || appServers.length === 0) appServers.push([]);
+    appServers.at(-1)?.push(entry);
+  }
+  return appServers;
+};
+
 /**
- * One session's app-server from the recording. A second session cannot start
- * one, as if `codex` were missing: its run fails, so a test goes on to
- * `assertComplete`, which says why the first session ended.
+ * The recording's app-servers, one for each session in turn, as a restart
+ * opens a second. A session after the last cannot start one, as if `codex`
+ * were missing: its run fails, so a test goes on to `assertComplete`, which
+ * says why the earlier session ended.
  */
 export const makeCodexReplay = Effect.fn("makeCodexReplay")(function* (
   transcript: ProviderReplayTranscript,
 ) {
-  const driver = yield* CodexAppServerReplay.makeReplayDriver({
-    provider: CODEX_REPLAY_PROVIDER,
-    protocol: CODEX_REPLAY_PROTOCOL,
-    version: transcript.header.version,
-    scenario: transcript.header.scenario,
-    capturedAt: transcript.header.capturedAt,
-    ...(transcript.header.metadata === undefined ? {} : { metadata: transcript.header.metadata }),
-    entries: transcript.entries,
-  });
-  let opened = false;
+  const drivers = yield* Effect.forEach(appServerEntries(transcript.entries), (entries) =>
+    CodexAppServerReplay.makeReplayDriver({
+      provider: CODEX_REPLAY_PROVIDER,
+      protocol: CODEX_REPLAY_PROTOCOL,
+      version: transcript.header.version,
+      scenario: transcript.header.scenario,
+      capturedAt: transcript.header.capturedAt,
+      ...(transcript.header.metadata === undefined ? {} : { metadata: transcript.header.metadata }),
+      entries,
+    }),
+  );
+  let opened = 0;
   const clients = CodexAppServerClientFactory.of({
     open: () =>
       Effect.suspend(() => {
-        if (opened) {
+        const driver = drivers[opened];
+        if (driver === undefined) {
           return Effect.fail(
             new CodexAppServerSpawnError({
               command: "codex app-server",
-              cause: "The Codex recording holds one app-server.",
+              cause: `The Codex recording holds ${drivers.length} app-server(s).`,
             }),
           );
         }
-        opened = true;
+        opened += 1;
         return CodexAppServerReplay.makeReplayClient(driver);
       }),
   });
   const assertComplete = Effect.suspend(() =>
-    opened ? driver.assertComplete : Effect.die("The adapter never opened Codex's app-server."),
+    opened < drivers.length
+      ? Effect.die(`The adapter opened ${opened} of the recording's ${drivers.length} app-servers.`)
+      : Effect.forEach(drivers, (driver) => driver.assertComplete, { discard: true }),
   );
   return { clients, assertComplete } satisfies CodexReplay;
 });

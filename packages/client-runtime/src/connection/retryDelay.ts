@@ -5,7 +5,7 @@ import * as Random from "effect/Random";
 /**
  * How long a client waits before trying the server again after `attempt`
  * failures: jittered within [cap/2, cap], where cap doubles from 2 s up to
- * 5 minutes. The connection and the session check wait alike.
+ * 5 minutes.
  */
 export const retryDelay = (attempt: number) =>
   Effect.gen(function* () {

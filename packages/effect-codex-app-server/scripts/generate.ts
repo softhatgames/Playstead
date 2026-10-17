@@ -283,13 +283,32 @@ const withExperimentalClientRequests = (
     throw new Error("ClientRequest is not a oneOf union");
   }
   const experimentalVariants = experimentalRequests.oneOf;
+  const stableMethods = new Set(
+    methodEntries(stableRequests, "ClientRequest").map((entry) => entry.method),
+  );
+  // Interrupt stops a turn's commands with these, so a Codex that renamed,
+  // removed or stabilised one stops the generator instead of quietly
+  // changing what Interrupt sends.
   const added = EXPERIMENTAL_CLIENT_REQUESTS.map((method) => {
+    if (stableMethods.has(method)) {
+      throw new Error(
+        `${method} is now in Codex's stable schema: remove it from EXPERIMENTAL_CLIENT_REQUESTS, ` +
+          "then regenerate and re-record turn_interrupt.codex.ndjson.",
+      );
+    }
     const variant = experimentalVariants.find((candidate) =>
       methodEntries({ oneOf: [candidate] }, "ClientRequest").some(
         (entry) => entry.method === method,
       ),
     );
-    if (variant === undefined) throw new Error(`Codex's experimental schema has no ${method}`);
+    if (variant === undefined) {
+      throw new Error(
+        `Codex's experimental schema has no ${method}, which Interrupt uses to stop a turn's ` +
+          "commands. See how T3 Code's CodexAdapterV2 stops them now, change " +
+          "EXPERIMENTAL_CLIENT_REQUESTS and Playstead's CodexAdapterV2 to match, then " +
+          "re-record turn_interrupt.codex.ndjson.",
+      );
+    }
     const params = methodEntries({ oneOf: [variant] }, "ClientRequest")[0]!.params;
     copyReferenced(variant);
     if (params !== undefined) {

@@ -3,12 +3,18 @@ import { fetchSessionState, signInWithPairingToken } from "@playstead/client-run
 
 import { runtime } from "../../connection/runtime.ts";
 import { makePairingExchange } from "../../pairingExchange.ts";
+import { makeSessionWait } from "../../sessionWait.ts";
 
 const primaryTarget = () => ({ httpBaseUrl: window.location.origin });
 
-/** Whether this browser already has a session with the server. */
+/** Whether the page's session checks are waiting for the server to come back. */
+export const primarySessionWait = makeSessionWait();
+
+/** Whether this browser already has a session with the server, waiting for it while it is down. */
 export const fetchPrimarySessionState = (): Promise<AuthSessionState> =>
-  runtime.runPromise(fetchSessionState(primaryTarget()));
+  primarySessionWait.track((onWaiting) =>
+    runtime.runPromise(fetchSessionState(primaryTarget(), { onWaiting })),
+  );
 
 /** Signs this browser in with the pairing link it was opened from. */
 export const exchangePairingLink = makePairingExchange({

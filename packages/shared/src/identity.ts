@@ -48,8 +48,8 @@ export const identity = {
   },
   /**
    * Electron's user-data folder. `playstead-v1` follows T3 Code's `t3code-v2`
-   * and avoids v0's `Playstead` folder, which a case-insensitive disk would
-   * treat as the same name as `playstead`.
+   * and avoids a `Playstead` folder, which a case-insensitive disk would treat
+   * as the same name as `playstead`.
    */
   electronUserDataFolder: {
     production: "playstead-v1",

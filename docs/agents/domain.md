@@ -1,6 +1,6 @@
 # Domain Docs
 
-Playstead uses one domain context across its application packages: a root GLOSSARY.md, created lazily, and the ADRs in [docs/adr/](../adr/). v0's ADRs are archived at [softhatgames/playstead-v0](https://github.com/softhatgames/playstead-v0/tree/v0/docs/adr), tag `v0`, and are reviewed with the game features.
+Playstead uses one domain context across its application packages: the root [GLOSSARY.md](../../GLOSSARY.md) and the ADRs in [docs/adr/](../adr/). Coding-agent concepts use T3 Code's terms ([Following T3 Code](../t3-code.md)).
 
 How the engineering skills should consume this repo's domain documentation when exploring the codebase.
 
