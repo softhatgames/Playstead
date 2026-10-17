@@ -20,6 +20,7 @@ import {
   TrimmedNonEmptyString,
   TurnItemId,
 } from "./baseSchemas.ts";
+import { ProviderOptionSelections } from "./model.ts";
 import { OrchestrationProjectShell } from "./orchestrationProject.ts";
 import { ProviderDriverKind, ProviderInstanceId } from "./providerInstance.ts";
 
@@ -44,10 +45,15 @@ export const ORCHESTRATION_V2_WS_METHODS = {
   subscribeThread: "orchestration.subscribeThread",
 } as const;
 
-/** The provider instance and model a thread runs (T3 Code's `ModelSelection`, without options). */
+/**
+ * The provider instance and model a thread runs, and the person's choices
+ * among the model's options (T3 Code's `ModelSelection`). An option left out
+ * is the provider's own default.
+ */
 export const ModelSelection = Schema.Struct({
   instanceId: ProviderInstanceId,
   model: TrimmedNonEmptyString,
+  options: Schema.optionalKey(ProviderOptionSelections),
 });
 export type ModelSelection = typeof ModelSelection.Type;
 
@@ -83,6 +89,17 @@ const ThreadSettledOverride = Schema.NullOr(Schema.Literals(["settled", "active"
 export type ThreadSettledOverride = typeof ThreadSettledOverride.Type;
 
 /**
+ * A title being generated for the thread: the command that asked for it,
+ * and when. A result applies only while this is still the thread's request
+ * (T3 Code's `titleRegeneration`).
+ */
+const OrchestrationV2TitleRegeneration = Schema.Struct({
+  requestId: CommandId,
+  startedAt: IsoDateTime,
+});
+export type OrchestrationV2TitleRegeneration = typeof OrchestrationV2TitleRegeneration.Type;
+
+/**
  * A thread (T3 Code's `OrchestrationV2AppThread`, trimmed). An archived
  * thread has `archivedAt`; a deleted one keeps its row with `deletedAt`,
  * T3 Code's soft delete, and refuses every command. `lastVisitedAt` is the
@@ -93,6 +110,7 @@ export type ThreadSettledOverride = typeof ThreadSettledOverride.Type;
  * settlement away until a message clears the override. A pinned thread has
  * `pinnedAt`. `pinOrderKey` and `activeOrderKey` are the pinned and active
  * lists' a–z order keys, which settling clears.
+ * `titleRegeneration` is set while a title is being generated.
  */
 export const OrchestrationV2AppThread = Schema.Struct({
   id: ThreadId,
@@ -114,6 +132,9 @@ export const OrchestrationV2AppThread = Schema.Struct({
   pinnedAt: NullOrTimeDefaultNull,
   pinOrderKey: NullOrOrderKeyDefaultNull,
   activeOrderKey: NullOrOrderKeyDefaultNull,
+  titleRegeneration: Schema.NullOr(OrchestrationV2TitleRegeneration).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
 });
 export type OrchestrationV2AppThread = typeof OrchestrationV2AppThread.Type;
 
@@ -489,6 +510,8 @@ export const OrchestrationV2ThreadShell = Schema.Struct({
   pinnedAt: Schema.NullOr(IsoDateTime),
   pinOrderKey: Schema.NullOr(TrimmedNonEmptyString),
   activeOrderKey: Schema.NullOr(TrimmedNonEmptyString),
+  /** Set while a title is being generated; the sidebar dims the title. */
+  titleRegeneration: Schema.NullOr(OrchestrationV2TitleRegeneration),
 });
 export type OrchestrationV2ThreadShell = typeof OrchestrationV2ThreadShell.Type;
 
@@ -593,7 +616,9 @@ export type OrchestrationV2ThreadStreamItem = typeof OrchestrationV2ThreadStream
  * that is still active. `runtime-request.respond` answers a provider's
  * question; there are no approval decisions. `thread.archive` and
  * `thread.unarchive` move a thread to and from **Settings → Archive**, and
- * `thread.delete` deletes it. `thread.metadata.update` renames it.
+ * `thread.delete` deletes it. `thread.metadata.update` renames it, or with
+ * `regenerateTitle` has a provider write a new title (false drops a pending
+ * one).
  * `thread.visit` moves its read marker forward when the thread is viewed,
  * and `thread.mark-unread` moves it back before the latest run's completion.
  * `thread.pin` and `thread.unpin` pin and unpin it; `thread.settle` moves it
@@ -666,6 +691,7 @@ export const OrchestrationV2Command = Schema.Union([
     commandId: CommandId,
     threadId: ThreadId,
     title: Schema.optionalKey(TrimmedNonEmptyString),
+    regenerateTitle: Schema.optionalKey(Schema.Boolean),
   }),
   Schema.Struct({
     type: Schema.Literal("thread.pin"),
@@ -693,6 +719,27 @@ export const OrchestrationV2Command = Schema.Union([
   }),
 ]);
 export type OrchestrationV2Command = typeof OrchestrationV2Command.Type;
+
+/**
+ * Commands only the server dispatches (T3 Code's
+ * `OrchestrationV2InternalCommand`). They stay out of `OrchestrationV2Command`,
+ * the `dispatchCommand` payload, so no client can send them.
+ * `thread.title.regeneration.complete` ends a title request, with the
+ * generated title or without one; it applies only while `requestId` is the
+ * thread's current request.
+ */
+const OrchestrationV2InternalCommand = Schema.Union([
+  Schema.Struct({
+    type: Schema.Literal("thread.title.regeneration.complete"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    requestId: CommandId,
+    title: Schema.optionalKey(TrimmedNonEmptyString),
+  }),
+]);
+export type OrchestrationV2InternalCommand = typeof OrchestrationV2InternalCommand.Type;
+
+export type OrchestrationV2ServerCommand = OrchestrationV2Command | OrchestrationV2InternalCommand;
 
 export const OrchestrationV2DispatchCommandResult = Schema.Struct({
   /** The last event the command produced. */

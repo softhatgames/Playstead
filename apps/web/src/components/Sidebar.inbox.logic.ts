@@ -201,7 +201,7 @@ export type MultiSelectThreadMenuId =
 /**
  * The menu for several selected threads. The inbox sidebar's (T3 Code's
  * `handleMultiSelectContextMenu`) offers Unpin when some are pinned, Settle,
- * Regenerate titles once threads can, Mark unread and Delete; **Snooze**
+ * Regenerate titles, Mark unread and Delete; **Snooze**
  * (#38) joins after Settle. The project tree's (T3 Code's
  * `buildMultiSelectThreadContextMenuItems`) offers Mark unread, Archive
  * unless one is working, and Delete.

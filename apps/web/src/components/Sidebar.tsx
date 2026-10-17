@@ -604,7 +604,12 @@ function InboxThreadRow(props: {
       >
         <ThreadStatusIndicator thread={thread} />
         <span className="flex min-w-0 flex-1 flex-col">
-          <span className="truncate" title={thread.title}>
+          {/* Dimmed while a provider writes the title (T3 Code's `opacity-55`). */}
+          <span
+            className={`truncate${thread.titleRegeneration === null ? "" : " opacity-55"}`}
+            title={thread.title}
+            aria-busy={thread.titleRegeneration === null ? undefined : true}
+          >
             {thread.title}
           </span>
           {props.projectName !== null && !settled ? (

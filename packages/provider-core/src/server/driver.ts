@@ -9,6 +9,7 @@ import type * as Scope from "effect/Scope";
 
 import type { ManagedServerProvider } from "./managedProvider.ts";
 import type { ProviderAdapterV2 } from "./ProviderAdapter.ts";
+import type { ProviderTextGeneration } from "./textGeneration.ts";
 
 /**
  * What a driver's check finds, as T3 Code's `ProviderProbeResult` at 2577baf.
@@ -36,7 +37,8 @@ export interface ProviderDriverCreateInput {
 /**
  * One provider instance, built by its driver from its settings. Changing the
  * settings builds a new one, with a new adapter. An instance without an
- * orchestration adapter cannot run threads.
+ * orchestration adapter cannot run threads. Its text generation writes
+ * thread titles with the same CLI (T3 Code's `ProviderInstance.textGeneration`).
  */
 export interface ProviderInstance {
   readonly instanceId: ProviderInstanceId;
@@ -44,6 +46,7 @@ export interface ProviderInstance {
   readonly displayName: string;
   readonly snapshot: ManagedServerProvider;
   readonly orchestrationAdapter?: ProviderAdapterV2;
+  readonly textGeneration: ProviderTextGeneration;
 }
 
 /**

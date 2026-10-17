@@ -37,6 +37,7 @@ const thread = (
   pinnedAt: null,
   pinOrderKey: null,
   activeOrderKey: null,
+  titleRegeneration: null,
   ...overrides,
 });
 

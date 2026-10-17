@@ -12,7 +12,12 @@ import {
   removeFromThreadSelection,
 } from "../threadSelection.ts";
 import { failureToast } from "../toast.ts";
-import { markThreadUnread, unpinThread, useThreadActions } from "./useThreadActions.ts";
+import {
+  markThreadUnread,
+  regenerateThreadTitle,
+  unpinThread,
+  useThreadActions,
+} from "./useThreadActions.ts";
 
 /** Asked before deleting several threads, with T3 Code's words. */
 const bulkThreadDeleteConfirmation = (count: number) =>
@@ -26,7 +31,8 @@ const bulkThreadDeleteConfirmation = (count: number) =>
  * `handleMultiSelectContextMenu` in `Sidebar.tsx` and `LegacySidebar.tsx` at
  * 2577baf). `threads` are the sidebar's rows in order; selected threads not
  * among them are ignored. The inbox sidebar passes `settleThreads`, which
- * moves the view on as a row's Settle does.
+ * moves the view on as a row's Settle does, and offers **Regenerate titles**
+ * for the selected threads whose titles are not being written already.
  */
 export function useBulkThreadMenu(input: {
   readonly variant: "inbox" | "tree";
@@ -43,6 +49,7 @@ export function useBulkThreadMenu(input: {
       if (targets.length === 0) return;
       const pinned = targets.filter((thread) => thread.pinnedAt !== null);
       const settleable = targets.filter((thread) => thread.settledOverride !== "settled");
+      const regeneratable = targets.filter((thread) => thread.titleRegeneration === null);
       void (async () => {
         const api = readLocalApi();
         const chosen = await api.contextMenu
@@ -53,8 +60,10 @@ export function useBulkThreadMenu(input: {
               pinnedCount: pinned.length,
               settleableCount: settleable.length,
               hasRunningThread: targets.some((thread) => !threadRuntimeCanArchive(thread.status)),
-              // Generated titles (#36) bring Regenerate titles here.
-              titleRegeneration: null,
+              titleRegeneration:
+                variant === "inbox"
+                  ? { supportedCount: targets.length, actionableCount: regeneratable.length }
+                  : null,
             }),
             position,
           )
@@ -116,6 +125,17 @@ export function useBulkThreadMenu(input: {
             return;
           }
           case "regenerate-title":
+            // One after another, stopping at the first refusal (T3 Code's loop).
+            for (const thread of regeneratable) {
+              try {
+                await regenerateThreadTitle(thread.id);
+              } catch (error) {
+                failureToast("Failed to regenerate thread titles", error);
+                return;
+              }
+            }
+            clearThreadSelection();
+            return;
           case null:
             return;
         }

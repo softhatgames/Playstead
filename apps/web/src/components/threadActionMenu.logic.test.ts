@@ -11,7 +11,13 @@ import {
   threadRuntimeCanArchive,
 } from "./threadActionMenu.logic.ts";
 
-const idle = { isRunning: false, projectFilter: null, isPinned: false, isSettled: false } as const;
+const idle = {
+  isRunning: false,
+  isRegeneratingTitle: false,
+  projectFilter: null,
+  isPinned: false,
+  isSettled: false,
+} as const;
 
 /** Each item as `[id, label, disabled, destructive, separatorBefore, children]`. */
 const outline = (items: ReturnType<typeof buildThreadActionMenuItems>) =>
@@ -25,11 +31,12 @@ const outline = (items: ReturnType<typeof buildThreadActionMenuItems>) =>
   ]);
 
 describe("buildThreadActionMenuItems", () => {
-  it("offers T3 Code's items in its order: pin, settle, rename, mark unread, copy, archive, then delete", () => {
+  it("offers T3 Code's items in its order: pin, settle, rename, regenerate title, mark unread, copy, archive, then delete", () => {
     assert.deepStrictEqual(outline(buildThreadActionMenuItems(idle)), [
       ["pin", "Pin thread", false, false, false, []],
       ["settle", "Settle thread", false, false, false, []],
       ["rename", "Rename thread", false, false, true, []],
+      ["regenerate-title", "Regenerate title", false, false, false, []],
       ["mark-unread", "Mark unread", false, false, false, []],
       [
         "copy",
@@ -54,7 +61,7 @@ describe("buildThreadActionMenuItems", () => {
           ...idle,
           projectFilter: { label: "space-game", isActive },
         }),
-      ).slice(3, 5);
+      ).slice(4, 6);
     assert.deepStrictEqual(filterItem(false), [
       ["mark-unread", "Mark unread", false, false, false, []],
       ["filter-by-project", "Filter by space-game", false, false, false, []],
@@ -78,6 +85,15 @@ describe("buildThreadActionMenuItems", () => {
         ["unpin", "Unpin thread"],
         ["unsettle", "Un-settle thread"],
       ],
+    );
+  });
+
+  it("shows Regenerating… and disables it while the thread's title is being generated", () => {
+    const items = outline(buildThreadActionMenuItems({ ...idle, isRegeneratingTitle: true }));
+    assert.deepStrictEqual(items[3], ["regenerate-title", "Regenerating…", true, false, false, []]);
+    assert.lengthOf(
+      items.filter(([, , disabled]) => disabled),
+      1,
     );
   });
 

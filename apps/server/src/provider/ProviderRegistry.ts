@@ -7,6 +7,7 @@ import type { ServerProvider, ServerProviders } from "@playstead/contracts/serve
 import type { ServerSettings } from "@playstead/contracts/settings";
 import type { ProviderDriver, ProviderInstance } from "@playstead/provider-core/server/driver";
 import type { ProviderAdapterV2 } from "@playstead/provider-core/server/ProviderAdapter";
+import type { ProviderTextGeneration } from "@playstead/provider-core/server/textGeneration";
 import * as HostProcess from "@playstead/shared/hostProcess";
 import { type ProcessEnvironment, withKnownCliDirs } from "@playstead/shared/shell";
 import * as Context from "effect/Context";
@@ -16,6 +17,7 @@ import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
@@ -50,12 +52,18 @@ export class ProviderRegistry extends Context.Service<
     readonly getAdapter: (
       instanceId: ProviderInstanceId,
     ) => Effect.Effect<Option.Option<ProviderAdapterV2>>;
+    /** The instance's current text generation. */
+    readonly getTextGeneration: (
+      instanceId: ProviderInstanceId,
+    ) => Effect.Effect<Option.Option<ProviderTextGeneration>>;
   }
 >()("@playstead/server/provider/ProviderRegistry") {}
 
 const BUILT_IN_DRIVERS: Record<
   ProviderInstanceId,
-  ProviderDriver<ChildProcessSpawner.ChildProcessSpawner | FileSystem.FileSystem | Crypto.Crypto>
+  ProviderDriver<
+    ChildProcessSpawner.ChildProcessSpawner | FileSystem.FileSystem | Path.Path | Crypto.Crypto
+  >
 > = {
   codex: CodexDriver,
   claudeAgent: ClaudeDriver,
@@ -94,6 +102,7 @@ export const layer = Layer.effect(
     const settingsService = yield* ServerSettingsService.ServerSettingsService;
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     const fileSystem = yield* FileSystem.FileSystem;
+    const pathService = yield* Path.Path;
     const crypto = yield* Crypto.Crypto;
     const platform = yield* HostProcess.Platform;
     const homeDirectory = yield* HostProcess.HomeDirectory;
@@ -127,6 +136,7 @@ export const layer = Layer.effect(
             Scope.provide(scope),
             Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
             Effect.provideService(FileSystem.FileSystem, fileSystem),
+            Effect.provideService(Path.Path, pathService),
             Effect.provideService(Crypto.Crypto, crypto),
           );
         yield* publish(yield* instance.snapshot.getSnapshot);
@@ -182,6 +192,8 @@ export const layer = Layer.effect(
         Effect.sync(() =>
           Option.fromUndefinedOr(live.get(instanceId)?.instance.orchestrationAdapter),
         ),
+      getTextGeneration: (instanceId) =>
+        Effect.sync(() => Option.fromUndefinedOr(live.get(instanceId)?.instance.textGeneration)),
     });
   }),
 );

@@ -18,6 +18,7 @@ import { readSidebarProjectScopeKey, setSidebarProjectScopeKey } from "../uiStat
 import {
   markThreadUnread,
   pinThread,
+  regenerateThreadTitle,
   settleThread,
   type ThreadLifecycleTarget,
   unpinThread,
@@ -38,6 +39,8 @@ import {
  *   moves the view on, through the inbox sidebar when it is shown, and
  *   shows Undo. A refusal, such as a thread still working, is a notice.
  * - **Rename thread** starts the caller's inline rename (`onStartRename`).
+ * - **Regenerate title** has a provider write a new title; while one is
+ *   being written it reads "Regenerating…" and does nothing.
  * - **Mark unread** shows the thread as unread; T3 Code reports no failure,
  *   such as a thread with no completed run.
  * - **Filter by project**, offered when `projectFilter` is on (the inbox
@@ -74,11 +77,13 @@ export function useThreadActionMenu(
           : undefined;
       void (async () => {
         const api = readLocalApi();
+        const isRegeneratingTitle = thread.titleRegeneration !== null;
         const items =
           variant === "tree"
             ? legacyThreadMenuItems
             : buildThreadActionMenuItems({
                 isRunning: !threadRuntimeCanArchive(thread.status),
+                isRegeneratingTitle,
                 isPinned: thread.pinnedAt !== null,
                 isSettled: thread.settledOverride === "settled",
                 projectFilter:
@@ -114,6 +119,12 @@ export function useThreadActionMenu(
             return;
           case "rename":
             onStartRename();
+            return;
+          case "regenerate-title":
+            if (isRegeneratingTitle) return;
+            await regenerateThreadTitle(thread.id).catch((error: unknown) =>
+              failureToast("Failed to regenerate thread title", error),
+            );
             return;
           case "mark-unread":
             await markThreadUnread(thread.id).catch(() => undefined);

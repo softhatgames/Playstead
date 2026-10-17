@@ -1,4 +1,5 @@
 import {
+  type CommandId,
   type MessageId,
   type NodeId,
   type ProviderSessionId,
@@ -12,6 +13,7 @@ import {
   type OrchestrationV2AppThread,
   type OrchestrationV2Command,
   type OrchestrationV2ProviderThread,
+  type OrchestrationV2ServerCommand,
   type OrchestrationV2Run,
   type OrchestrationV2RuntimeRequest,
   type OrchestrationV2ThreadProjection,
@@ -95,7 +97,7 @@ export const interruptResultItem = (input: {
   parentItemId: interruptRequestItemId(input.run.id),
 });
 
-const reject = (command: OrchestrationV2Command, reason: string) =>
+const reject = (command: OrchestrationV2ServerCommand, reason: string) =>
   Result.fail(new ThreadCommandRejection({ commandType: command.type, reason }));
 
 /**
@@ -111,7 +113,8 @@ const reject = (command: OrchestrationV2Command, reason: string) =>
  *   copies. Naming another instance is T3 Code's provider switch, which
  *   Playstead refuses.
  * - `message.dispatch` starts a run at once. T3 Code queues a message sent
- *   while a run is active; Playstead has no queue and refuses it.
+ *   while a run is active; Playstead has no queue and refuses it. The first
+ *   message titles the thread with its seed and asks a provider for a title.
  * - `run.interrupt` stops an active run, as T3 Code's `dispatchRunInterrupt`
  *   does: a run whose provider turn has not started ends interrupted at
  *   once and its start is cancelled; otherwise the provider is asked to
@@ -121,8 +124,9 @@ const reject = (command: OrchestrationV2Command, reason: string) =>
  *   the answers. There are no approval decisions.
  * - `thread.archive`, `thread.unarchive`, `thread.model-selection.set`,
  *   `thread.metadata.update`, `thread.mark-unread`, `thread.pin`,
- *   `thread.unpin`, `thread.settle` and `thread.unsettle` change the thread
- *   itself, through `dispatchThreadMutation`.
+ *   `thread.unpin`, `thread.settle`, `thread.unsettle` and the internal
+ *   `thread.title.regeneration.complete` change the thread itself, through
+ *   `dispatchThreadMutation`.
  * - `thread.visit` moves the read marker forward (`dispatchThreadVisit`).
  * - `thread.delete` deletes the thread (`planThreadDeletion`).
  *
@@ -130,7 +134,7 @@ const reject = (command: OrchestrationV2Command, reason: string) =>
  * refuses them all.
  */
 export function decideThreadCommand(input: {
-  readonly command: OrchestrationV2Command;
+  readonly command: OrchestrationV2ServerCommand;
   readonly state: ThreadCommandState;
   readonly ids: ThreadCommandIds;
   readonly now: string;
@@ -169,6 +173,7 @@ export function decideThreadCommand(input: {
       pinnedAt: null,
       pinOrderKey: null,
       activeOrderKey: null,
+      titleRegeneration: null,
     };
     return Result.succeed({
       events: [{ type: "thread.created", threadId: thread.id, occurredAt: now, payload: thread }],
@@ -192,6 +197,7 @@ export function decideThreadCommand(input: {
     case "thread.unpin":
     case "thread.settle":
     case "thread.unsettle":
+    case "thread.title.regeneration.complete":
       return dispatchThreadMutation(command, projection, now);
     case "thread.visit":
       return Result.succeed(dispatchThreadVisit(command, projection, now));
@@ -266,7 +272,7 @@ export function decideThreadCommand(input: {
 
 /** The commands that change the thread itself, decided by `dispatchThreadMutation`. */
 type ThreadMutationCommand = Extract<
-  OrchestrationV2Command,
+  OrchestrationV2ServerCommand,
   {
     readonly type:
       | "thread.model-selection.set"
@@ -277,9 +283,25 @@ type ThreadMutationCommand = Extract<
       | "thread.pin"
       | "thread.unpin"
       | "thread.settle"
-      | "thread.unsettle";
+      | "thread.unsettle"
+      | "thread.title.regeneration.complete";
   }
 >;
+
+/**
+ * The effect that has a provider write the thread's title (T3 Code's
+ * `pendingThreadTitleGenerationEffect`): one per command, so a command sent
+ * again adds none.
+ */
+const threadTitleGenerationEffect = (
+  commandId: CommandId,
+  kind:
+    | { readonly type: "initial"; readonly messageId: MessageId }
+    | { readonly type: "regenerate" },
+): PendingEffect => ({
+  id: `effect:${commandId}:thread-title.generate`,
+  request: { type: "thread-title.generate", kind },
+});
 
 /**
  * The commands an archived thread refuses (T3 Code's list). Snooze, wake,
@@ -326,10 +348,15 @@ function settleBlocker(projection: OrchestrationV2ThreadProjection): string | nu
  *   refuses.
  * - `thread.archive` is refused for an archived thread. It is not refused
  *   while a run is active (the interface blocks that instead); it cancels
- *   queued runs with their attempts and nodes, and detaches every live
- *   provider session.
+ *   queued runs with their attempts and nodes, detaches every live
+ *   provider session and drops a title being generated.
  * - `thread.unarchive` is refused for a thread that is not archived.
- * - `thread.metadata.update` renames the thread.
+ * - `thread.metadata.update` renames the thread, which drops a title being
+ *   generated. With `regenerateTitle` it asks a provider for a new title
+ *   instead (false only drops the pending one).
+ * - `thread.title.regeneration.complete` ends a title request: while it is
+ *   still the thread's, the generated title (if any) replaces the current
+ *   one; otherwise the thread stays as it is.
  * - `thread.mark-unread` moves the read marker to just before the latest
  *   run completed, so the thread shows as unread; it is refused until a run
  *   has completed. Like a visit, it is not activity: `updatedAt` stays.
@@ -389,15 +416,29 @@ function dispatchThreadMutation(
       case "thread.model-selection.set":
         return { ...thread, modelSelection: command.modelSelection, updatedAt: now };
       case "thread.archive":
-        return { ...thread, archivedAt: now, updatedAt: now };
+        return { ...thread, archivedAt: now, titleRegeneration: null, updatedAt: now };
       case "thread.unarchive":
         return { ...thread, archivedAt: null, updatedAt: now };
       case "thread.metadata.update":
         return {
           ...thread,
           ...(command.title === undefined ? {} : { title: command.title }),
+          ...(command.regenerateTitle === true
+            ? { titleRegeneration: { requestId: command.commandId, startedAt: now } }
+            : command.regenerateTitle === false || command.title !== undefined
+              ? { titleRegeneration: null }
+              : {}),
           updatedAt: now,
         };
+      case "thread.title.regeneration.complete":
+        return thread.titleRegeneration?.requestId === command.requestId
+          ? {
+              ...thread,
+              ...(command.title === undefined ? {} : { title: command.title }),
+              titleRegeneration: null,
+              updatedAt: now,
+            }
+          : thread;
       case "thread.mark-unread":
         return { ...thread, lastVisitedAt: markUnreadVisitedAt };
       case "thread.pin": {
@@ -458,6 +499,7 @@ function dispatchThreadMutation(
       case "thread.unarchive":
         return "thread.unarchived" as const;
       case "thread.metadata.update":
+      case "thread.title.regeneration.complete":
         return "thread.metadata-updated" as const;
       case "thread.mark-unread":
         return "thread.marked-unread" as const;
@@ -476,6 +518,9 @@ function dispatchThreadMutation(
   ];
   const effects: Array<PendingEffect> = [];
 
+  if (command.type === "thread.metadata.update" && command.regenerateTitle === true) {
+    effects.push(threadTitleGenerationEffect(command.commandId, { type: "regenerate" }));
+  }
   if (command.type === "thread.archive") {
     const queued = projection.runs.filter((run) => QUEUED_RUN_STATUSES.has(run.status));
     const queuedIds = new Set(queued.map((run) => run.id));
@@ -745,11 +790,10 @@ function dispatchMessage(
     events.push({ type: "thread.unsettled", threadId, occurredAt: now, payload: thread });
   }
 
-  // The first message titles the thread, as T3 Code's title seed does.
-  const titled =
-    command.titleSeed !== undefined && projection.messages.length === 0
-      ? command.titleSeed
-      : thread.title;
+  // The first message titles the thread with its seed at once, and asks a
+  // provider for a better title beside the turn (T3 Code's first-title trigger).
+  const firstTitle = command.titleSeed !== undefined && projection.messages.length === 0;
+  const titled = firstTitle ? command.titleSeed : thread.title;
 
   const existingProviderThread = projection.providerThreads.find(
     (providerThread) => providerThread.id === thread.activeProviderThreadId,
@@ -768,7 +812,7 @@ function dispatchMessage(
     updatedAt: now,
   };
 
-  if (titled !== thread.title || existingProviderThread === undefined) {
+  if (firstTitle || titled !== thread.title || existingProviderThread === undefined) {
     events.push({
       type: "thread.metadata-updated",
       threadId,
@@ -777,6 +821,9 @@ function dispatchMessage(
         ...thread,
         title: titled,
         activeProviderThreadId: providerThread.id,
+        ...(firstTitle
+          ? { titleRegeneration: { requestId: command.commandId, startedAt: now } }
+          : {}),
         updatedAt: now,
       },
     });
@@ -890,6 +937,16 @@ function dispatchMessage(
 
   return {
     events,
-    effects: [{ id: ids.effectId, request: { type: "provider-turn.start", runId } }],
+    effects: [
+      ...(firstTitle
+        ? [
+            threadTitleGenerationEffect(command.commandId, {
+              type: "initial",
+              messageId: command.messageId,
+            }),
+          ]
+        : []),
+      { id: ids.effectId, request: { type: "provider-turn.start", runId } },
+    ],
   };
 }

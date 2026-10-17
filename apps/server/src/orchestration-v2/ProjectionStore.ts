@@ -136,6 +136,7 @@ const toThreadShell = (
     pinnedAt: thread.pinnedAt,
     pinOrderKey: thread.pinOrderKey,
     activeOrderKey: thread.activeOrderKey,
+    titleRegeneration: thread.titleRegeneration,
   };
 };
 

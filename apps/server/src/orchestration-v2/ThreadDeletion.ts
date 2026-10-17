@@ -20,8 +20,9 @@ const isUnfinished = (status: string) =>
  * cancelled with its unfinished attempts and nodes; each run's own event
  * comes first, as T3 Code writes them, so nothing reads the run active
  * again. A question still pending is cancelled and can no longer be
- * answered. Each live provider session is detached and stopped, and the
- * effects the thread still had waiting are cancelled. There are no
+ * answered. Each live provider session is detached and stopped, the
+ * effects the thread still had waiting are cancelled, and a title being
+ * generated is dropped. There are no
  * terminals, previews, attachments or subagents to clean up.
  */
 export function planThreadDeletion(input: {
@@ -39,6 +40,7 @@ export function planThreadDeletion(input: {
       payload: {
         ...projection.thread,
         deletedAt: projection.thread.deletedAt ?? now,
+        titleRegeneration: null,
         updatedAt: now,
       },
     },
