@@ -122,7 +122,11 @@ export function SidebarThreadSearch({
                     onFocus={() => setActive(index)}
                     onClick={() => select(thread)}
                   >
-                    <span className="w-full truncate font-medium">{thread.title}</span>
+                    <span
+                      className={`w-full truncate font-medium ${thread.titleRegeneration ? "opacity-55" : ""}`}
+                    >
+                      {thread.title}
+                    </span>
                     <span className="w-full truncate text-neutral-500">
                       {projects.find((project) => project.id === thread.projectId)?.title ??
                         "No project"}
