@@ -1,5 +1,6 @@
 import { useEffect, useRef } from "react";
 
+import { isCommandPaletteOpen } from "../commandPaletteBus.ts";
 import { keybindings, resolveShortcutCommand } from "../keybindings.ts";
 import { settleAndAdvance } from "../settleAndAdvance.ts";
 import { failureToast } from "../toast.ts";
@@ -23,7 +24,7 @@ export function useThreadShortcuts(thread: ThreadLifecycleTarget | null): void {
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.defaultPrevented) return;
+      if (event.defaultPrevented || isCommandPaletteOpen()) return;
       const command = resolveShortcutCommand(event, keybindings);
       const current = threadRef.current;
       if (command !== "thread.settle" && command !== "thread.pin") return;

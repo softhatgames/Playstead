@@ -1,3 +1,4 @@
+import * as Settlement from "../ThreadSettlementService.ts";
 import { streamShell } from "../ShellStream.ts";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
@@ -128,7 +129,7 @@ export const makeOrchestrationHarness = Effect.fn("makeOrchestrationHarness")(fu
       Layer.provide(adapters),
       Layer.provide(TextGeneration.layer),
       Layer.provide(ProviderRegistry.layer),
-      Layer.provide(ServerSettings.layer),
+      Layer.provideMerge(ServerSettings.layer),
       Layer.provideMerge(OrchestrationRuntime.layer),
       Layer.provide(WorkspacePaths.layer),
       Layer.provideMerge(SqlitePersistence.layerConfig),
@@ -138,6 +139,8 @@ export const makeOrchestrationHarness = Effect.fn("makeOrchestrationHarness")(fu
   const services = yield* Effect.all({
     search: ThreadSearch,
     orchestrator: Orchestrator.OrchestratorV2,
+    settlement: Settlement.ThreadSettlementService,
+    settings: ServerSettings.ServerSettingsService,
     worker: EffectWorker.OrchestrationEffectWorkerV2,
     projects: ProjectService.ProjectService,
     eventStore: EventStore.EventStoreV2,

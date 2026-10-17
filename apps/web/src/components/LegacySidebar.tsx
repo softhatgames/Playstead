@@ -28,6 +28,7 @@ import { useClientSettings, updateClientSettings } from "../clientSettings.ts";
 import { openCommandPalette } from "../commandPaletteBus.ts";
 import { usePrimaryConnectionState } from "../connection/runtime.ts";
 import { createDraft } from "../drafts.ts";
+import { useThreadNavigation } from "../hooks/useThreadNavigation.ts";
 import { useBulkThreadMenu } from "../hooks/useBulkThreadMenu.ts";
 import { useThreadActionMenu } from "../hooks/useThreadActionMenu.ts";
 import { useThreadActions } from "../hooks/useThreadActions.ts";
@@ -110,6 +111,19 @@ export function LegacySidebar() {
   const activeProjectId = useActiveProjectId();
   const { threadId: activeThreadId } = useParams({ strict: false });
   const navigate = useNavigate();
+  const [expandedLists, setExpandedLists] = useState<ReadonlySet<string>>(new Set());
+  const orderedThreads = sortedProjects.flatMap((project) => {
+    const sorted = sortTreeThreads(
+      threads.filter((thread) => thread.projectId === project.id),
+      settings.sidebarThreadSortOrder,
+    );
+    return !resolveProjectExpanded(projectExpanded, project.id)
+      ? sorted.filter((thread) => thread.id === activeThreadId)
+      : expandedLists.has(project.id)
+        ? sorted
+        : sorted.slice(0, settings.sidebarThreadPreviewCount);
+  });
+  useThreadNavigation(orderedThreads.map((thread) => thread.id));
   const activeRow = useRef<HTMLButtonElement | null>(null);
   const openBulkMenu = useBulkThreadMenu({ variant: "tree", threads });
 
@@ -124,6 +138,13 @@ export function LegacySidebar() {
 
   return (
     <nav aria-label="Projects" className="flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto p-2">
+      <button
+        type="button"
+        onClick={() => openCommandPalette({ open: "root" })}
+        className="mb-1 rounded-md px-2 py-1.5 text-left text-sm text-neutral-500 hover:bg-neutral-100 dark:hover:bg-neutral-900"
+      >
+        Search threads and commands
+      </button>
       <div className="mb-1 flex items-center justify-between pr-1 pl-2">
         <span className="text-xs font-medium text-neutral-500 dark:text-neutral-400">Projects</span>
         <button
@@ -234,6 +255,15 @@ export function LegacySidebar() {
                         </button>
                       </div>
                       <ProjectThreadList
+                        expanded={expandedLists.has(project.id)}
+                        onExpand={() =>
+                          setExpandedLists((current) => {
+                            const next = new Set(current);
+                            if (next.has(project.id)) next.delete(project.id);
+                            else next.add(project.id);
+                            return next;
+                          })
+                        }
                         projectTitle={project.title}
                         projectExpanded={resolveProjectExpanded(projectExpanded, project.id)}
                         threads={sortTreeThreads(
@@ -264,6 +294,8 @@ export function LegacySidebar() {
 
 /** A project's threads, the first `previewCount` until **Show more** (T3 Code's `SidebarProjectThreadList`). */
 function ProjectThreadList(props: {
+  readonly expanded: boolean;
+  readonly onExpand: () => void;
   readonly projectTitle: string;
   readonly projectExpanded: boolean;
   readonly threads: ReadonlyArray<SidebarThread>;
@@ -272,7 +304,7 @@ function ProjectThreadList(props: {
   readonly activeThreadId: string | undefined;
   readonly onBulkMenu: (position: { x: number; y: number }) => void;
 }) {
-  const [expanded, setExpanded] = useState(false);
+  const expanded = props.expanded;
   const { threads, previewCount, activeThreadId } = props;
   if (threads.length === 0)
     return props.projectExpanded ? (
@@ -304,7 +336,7 @@ function ProjectThreadList(props: {
         <li>
           <button
             type="button"
-            onClick={() => setExpanded((value) => !value)}
+            onClick={props.onExpand}
             className="px-2 py-0.5 text-xs text-neutral-500 hover:text-neutral-900 dark:text-neutral-400 dark:hover:text-neutral-100"
           >
             {expanded ? "Show less" : "Show more"}

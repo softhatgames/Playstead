@@ -37,6 +37,7 @@ const applyEvent = (
     case "thread.pin-reordered":
     case "thread.active-reordered":
     case "thread.unpinned":
+    case "thread.auto-settle-set":
     case "thread.settled":
     case "thread.unsettled":
     case "thread.snoozed":

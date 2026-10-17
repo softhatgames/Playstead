@@ -1,5 +1,6 @@
 import { Link, Outlet, createFileRoute, redirect } from "@tanstack/react-router";
 
+import { CommandPalette } from "../components/CommandPalette.tsx";
 import { fetchPrimarySessionState } from "../environments/primary/auth.ts";
 
 /** The pages Playstead has, in T3 Code's order (`SettingsSidebarNav.tsx`). */
@@ -32,6 +33,7 @@ function SettingsLayout() {
           </Link>
         ))}
       </nav>
+      <CommandPalette />
       <main className="min-w-0 flex-1">
         {session.authenticated ? (
           <Outlet />

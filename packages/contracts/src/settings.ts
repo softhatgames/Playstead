@@ -8,7 +8,12 @@ import { ProviderInstanceConfig, type ProviderInstanceId } from "./providerInsta
  * T3 Code keeps them: built-in instances' **Binary path** and the text
  * generation model. Old settings without a selection use the title defaults.
  */
+export const AutoSettleAfterDays = Schema.NullOr(
+  Schema.Number.check(Schema.isBetween({ minimum: 1, maximum: 90 })),
+);
+
 export const ServerSettings = Schema.Struct({
+  sidebarAutoSettleAfterDays: Schema.optionalKey(AutoSettleAfterDays),
   textGenerationModelSelection: Schema.optionalKey(ModelSelection),
   providerInstances: Schema.Struct({
     codex: Schema.optionalKey(ProviderInstanceConfig),

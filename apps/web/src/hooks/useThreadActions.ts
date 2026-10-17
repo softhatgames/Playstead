@@ -32,6 +32,7 @@ export type ThreadActionTarget = Pick<
 export type ThreadLifecycleTarget = ThreadActionTarget &
   Pick<
     OrchestrationV2ThreadShell,
+    | "autoSettleDisabledAt"
     | "pinnedAt"
     | "pinOrderKey"
     | "settledOverride"
@@ -54,6 +55,17 @@ const dispatchThreadCommand = (
 ) =>
   requestPrimary((client) =>
     client["orchestration.dispatchCommand"]({ type, commandId: commandId(), threadId }),
+  );
+
+/** Opts this thread in or out of the server's inactivity policy. */
+export const setThreadAutoSettle = (threadId: ThreadId, enabled: boolean) =>
+  requestPrimary((client) =>
+    client["orchestration.dispatchCommand"]({
+      type: "thread.auto-settle.set",
+      commandId: commandId(),
+      threadId,
+      enabled,
+    }),
   );
 
 /** Gives the thread a title the person chose (T3 Code's `thread.metadata.update {title}`). */

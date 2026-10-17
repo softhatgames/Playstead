@@ -1,7 +1,7 @@
 import { effectiveSnoozed } from "@playstead/client-runtime/state/threadSnoozed";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
-import { CommandId, type ThreadId } from "@playstead/contracts/baseSchemas";
+import { CommandId, MessageId, TurnItemId, ThreadId } from "@playstead/contracts/baseSchemas";
 import {
   OrchestrationDispatchCommandError,
   type OrchestrationV2Command,
@@ -10,10 +10,13 @@ import {
   decodeProviderReplayNdjson,
   materializeReplayWorkspace,
 } from "@playstead/provider-testing/replayTranscript";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as Result from "effect/Result";
+import { decideThreadCommand } from "./ThreadCommands.ts";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 
@@ -74,7 +77,7 @@ const makeHarness = (
       options,
     );
     const harness = yield* makeOrchestrationHarness({ claudeRunner: replay.runner, config });
-    return { harness, replay };
+    return { harness, replay, config };
   });
 
 type Harness = Effect.Success<ReturnType<typeof makeOrchestrationHarness>>;
@@ -106,6 +109,398 @@ const refusal = <A, E>(effect: Effect.Effect<A, E>) =>
 
 describe("Pin and settle a thread", () => {
   it.layer(NodeServices.layer)((it) => {
+    it.effect("startup settlement uses recovered state and leaves empty threads active", () =>
+      Effect.gen(function* () {
+        const { harness, config } = yield* makeHarness(
+          "restart_resume.claude.ndjson",
+          "resumed-game",
+        );
+        const threadId = RESTART_RESUME_IDS.threadId;
+        yield* runFirstTurn(harness);
+        const original = yield* threadOf(harness, threadId);
+        const emptyId = ThreadId.make("thread:empty");
+        yield* harness.orchestrator.dispatch({
+          type: "thread.create",
+          commandId: CommandId.make("empty"),
+          threadId: emptyId,
+          projectId: original.projectId,
+          title: "No messages",
+          modelSelection: original.modelSelection,
+        });
+        yield* TestClock.adjust("4 days");
+        const restarted = yield* makeOrchestrationHarness({ config, recoverOnStartup: true });
+        yield* restarted.settlement.start;
+        assert.strictEqual((yield* threadOf(restarted, threadId)).settledOverride, "settled");
+        assert.isNull((yield* threadOf(restarted, emptyId)).settledOverride);
+      }).pipe(Effect.scoped),
+    );
+
+    for (const trigger of ["run", "session"] as const) {
+      it.effect(`${trigger} events sweep newly eligible threads without waiting a minute`, () =>
+        Effect.gen(function* () {
+          const { harness } = yield* makeHarness("restart_resume.claude.ndjson", "resumed-game");
+          const threadId = RESTART_RESUME_IDS.threadId;
+          yield* runFirstTurn(harness);
+          yield* harness.orchestrator.dispatch({
+            type: "thread.pin",
+            commandId: CommandId.make("hold"),
+            threadId,
+          });
+          yield* TestClock.adjust("4 days");
+          yield* harness.settlement.start;
+          yield* harness.orchestrator.dispatch({
+            type: "thread.unpin",
+            commandId: CommandId.make("release"),
+            threadId,
+          });
+          const sequence = yield* harness.eventStore.latestApplicationSequence;
+          if (trigger === "session") {
+            yield* harness.recovery.reconcile("shutdown");
+          } else {
+            const otherId = ThreadId.make("thread:trigger");
+            const old = yield* threadOf(harness, threadId);
+            yield* harness.orchestrator.dispatch({
+              type: "thread.create",
+              commandId: CommandId.make("other"),
+              threadId: otherId,
+              projectId: old.projectId,
+              title: "New work",
+              modelSelection: old.modelSelection,
+            });
+            yield* harness.orchestrator.dispatch({
+              type: "message.dispatch",
+              commandId: CommandId.make("other-message"),
+              threadId: otherId,
+              messageId: MessageId.make("other-message"),
+              text: "New work",
+            });
+            const run = (yield* projectionOf(harness, otherId)).runs[0]!;
+            yield* harness.orchestrator.dispatch({
+              type: "run.interrupt",
+              commandId: CommandId.make("other-stop"),
+              threadId: otherId,
+              runId: run.id,
+            });
+          }
+          yield* harness.eventStore.streamApplicationEvents({ afterSequence: sequence }).pipe(
+            Stream.filter(
+              (stored) =>
+                stored.aggregateKind === "thread" &&
+                stored.event.threadId === threadId &&
+                stored.event.type === "thread.settled",
+            ),
+            Stream.runHead,
+          );
+          assert.strictEqual((yield* threadOf(harness, threadId)).settledOverride, "settled");
+        }).pipe(Effect.scoped),
+      );
+    }
+
+    it.effect(
+      "the command boundary bounds queued-start grace to two minutes in either clock direction",
+      () =>
+        Effect.gen(function* () {
+          const { harness } = yield* makeHarness("restart_resume.claude.ndjson", "resumed-game");
+          yield* runFirstTurn(harness);
+          const projection = yield* projectionOf(harness, RESTART_RESUME_IDS.threadId);
+          const run = projection.runs[0]!;
+          yield* TestClock.adjust("4 days");
+          const messageAt = DateTime.formatIso(yield* DateTime.now);
+          // A recovered pre-adoption projection can contain a message whose run
+          // never reached starting. Exercise the public pure command boundary.
+          const state = {
+            projectExists: true,
+            instanceHasAdapter: true,
+            projection: {
+              ...projection,
+              messages: projection.messages.map((message) =>
+                message.role === "user" ? { ...message, createdAt: messageAt } : message,
+              ),
+            },
+          };
+          const decide = (now: string) =>
+            decideThreadCommand({
+              command: {
+                type: "thread.auto-settle",
+                commandId: CommandId.make("grace"),
+                threadId: projection.thread.id,
+                snapshotAt: projection.thread.updatedAt,
+                settledAt: projection.thread.updatedAt,
+              },
+              state,
+              now,
+              ids: {
+                runId: run.id,
+                attemptId: run.activeAttemptId!,
+                rootNodeId: run.rootNodeId!,
+                providerThreadId: run.providerThreadId!,
+                userItemId: TurnItemId.make("unused"),
+                effectId: "unused",
+              },
+            });
+          assert.isTrue(Result.isFailure(decide(messageAt)));
+          yield* TestClock.adjust("2 minutes");
+          assert.isTrue(Result.isFailure(decide(DateTime.formatIso(yield* DateTime.now))));
+          yield* TestClock.adjust("1 millis");
+          assert.isTrue(Result.isSuccess(decide(DateTime.formatIso(yield* DateTime.now))));
+          assert.isTrue(
+            Result.isFailure(
+              decide(
+                DateTime.formatIso(
+                  DateTime.subtract(DateTime.makeUnsafe(messageAt), { minutes: 2 }),
+                ),
+              ),
+            ),
+          );
+          assert.isTrue(
+            Result.isSuccess(
+              decide(
+                DateTime.formatIso(
+                  DateTime.subtract(DateTime.makeUnsafe(messageAt), { milliseconds: 120_001 }),
+                ),
+              ),
+            ),
+          );
+        }).pipe(Effect.scoped),
+    );
+
+    it.effect("new activity wins over an earlier settlement snapshot", () =>
+      Effect.gen(function* () {
+        const { harness } = yield* makeHarness("restart_resume.claude.ndjson", "resumed-game");
+        const threadId = RESTART_RESUME_IDS.threadId;
+        yield* runFirstTurn(harness);
+        const before = yield* threadOf(harness, threadId);
+        yield* TestClock.adjust("4 days");
+        yield* harness.orchestrator.dispatch({
+          type: "message.dispatch",
+          commandId: CommandId.make("new-message"),
+          threadId,
+          messageId: MessageId.make("new-message"),
+          text: "New work",
+        });
+        const run = (yield* projectionOf(harness, threadId)).runs.at(-1)!;
+        yield* harness.orchestrator.dispatch({
+          type: "run.interrupt",
+          commandId: CommandId.make("stop-new"),
+          threadId,
+          runId: run.id,
+        });
+        yield* refusal(
+          harness.orchestrator.dispatch({
+            type: "thread.auto-settle",
+            commandId: CommandId.make("late-sweep"),
+            threadId,
+            snapshotAt: before.updatedAt,
+            settledAt: before.updatedAt,
+          }),
+        );
+        assert.isNull((yield* threadOf(harness, threadId)).settledOverride);
+      }).pipe(Effect.scoped),
+    );
+
+    for (const wake of ["timer", "manual"] as const) {
+      it.effect(`${wake} snooze wake gives the thread a fresh inactivity period`, () =>
+        Effect.gen(function* () {
+          const { harness } = yield* makeHarness("restart_resume.claude.ndjson", "resumed-game");
+          const threadId = RESTART_RESUME_IDS.threadId;
+          yield* runFirstTurn(harness);
+          yield* harness.orchestrator.dispatch({
+            type: "thread.snooze",
+            commandId: CommandId.make("snooze"),
+            threadId,
+            snoozedUntil: DateTime.formatIso(DateTime.add(yield* DateTime.now, { days: 1 })),
+          });
+          yield* TestClock.adjust("1 day");
+          if (wake === "manual")
+            yield* harness.orchestrator.dispatch({
+              type: "thread.unsnooze",
+              commandId: CommandId.make("wake"),
+              threadId,
+              reason: "user",
+            });
+          yield* TestClock.adjust("3 days");
+          yield* harness.settlement.start;
+          assert.isNull((yield* threadOf(harness, threadId)).settledOverride);
+          yield* TestClock.adjust("1 minute");
+          yield* harness.settlement.drain;
+          assert.strictEqual((yield* threadOf(harness, threadId)).settledOverride, "settled");
+        }).pipe(Effect.scoped),
+      );
+    }
+
+    it.effect("a snoozed thread stays out of automatic settlement", () =>
+      Effect.gen(function* () {
+        const { harness } = yield* makeHarness("restart_resume.claude.ndjson", "resumed-game");
+        const threadId = RESTART_RESUME_IDS.threadId;
+        yield* runFirstTurn(harness);
+        yield* harness.orchestrator.dispatch({
+          type: "thread.snooze",
+          commandId: CommandId.make("snooze"),
+          threadId,
+          snoozedUntil: DateTime.formatIso(DateTime.add(yield* DateTime.now, { days: 10 })),
+        });
+        yield* TestClock.adjust("4 days");
+        yield* harness.settlement.start;
+        assert.isNull((yield* threadOf(harness, threadId)).settledOverride);
+      }).pipe(Effect.scoped),
+    );
+
+    it.effect(
+      "changing the inactivity setting sweeps immediately, and Never disables startup settlement",
+      () =>
+        Effect.gen(function* () {
+          const { harness } = yield* makeHarness("restart_resume.claude.ndjson", "resumed-game");
+          const threadId = RESTART_RESUME_IDS.threadId;
+          yield* runFirstTurn(harness);
+          yield* TestClock.adjust("4 days");
+          yield* harness.settings.updateAutoSettle(null);
+          yield* harness.settlement.start;
+          assert.isNull((yield* threadOf(harness, threadId)).settledOverride);
+          const sequence = yield* harness.eventStore.latestApplicationSequence;
+          yield* harness.settings.updateAutoSettle(3);
+          yield* harness.eventStore.streamApplicationEvents({ afterSequence: sequence }).pipe(
+            Stream.filter(
+              (stored) =>
+                stored.aggregateKind === "thread" && stored.event.type === "thread.settled",
+            ),
+            Stream.runHead,
+          );
+          assert.strictEqual((yield* threadOf(harness, threadId)).settledOverride, "settled");
+        }).pipe(Effect.scoped),
+    );
+
+    for (const excluded of [
+      "thread.pin",
+      "thread.unsettle",
+      "thread.archive",
+      "thread.delete",
+      "opt-out",
+    ] as const) {
+      it.effect(`the sweep excludes ${excluded} threads`, () =>
+        Effect.gen(function* () {
+          const { harness } = yield* makeHarness("restart_resume.claude.ndjson", "resumed-game");
+          const threadId = RESTART_RESUME_IDS.threadId;
+          yield* runFirstTurn(harness);
+          if (excluded === "opt-out") {
+            yield* harness.orchestrator.dispatch({
+              type: "thread.auto-settle.set",
+              commandId: CommandId.make("exclude"),
+              threadId,
+              enabled: false,
+            });
+          } else if (excluded === "thread.unsettle") {
+            yield* harness.orchestrator.dispatch({
+              type: excluded,
+              commandId: CommandId.make("exclude"),
+              threadId,
+              reason: "user",
+            });
+          } else {
+            yield* harness.orchestrator.dispatch({
+              type: excluded,
+              commandId: CommandId.make("exclude"),
+              threadId,
+            });
+          }
+          yield* TestClock.adjust("4 days");
+          yield* harness.settlement.start;
+          assert.notStrictEqual((yield* threadOf(harness, threadId)).settledOverride, "settled");
+        }).pipe(Effect.scoped),
+      );
+    }
+
+    it.effect("startup sweep leaves active runs and pending questions alone", () =>
+      Effect.gen(function* () {
+        const { harness } = yield* makeHarness("question_answer.claude.ndjson", "empty-game");
+        const { sent } = yield* sendQuestionMessage(harness, CLAUDE_QUESTION_SCENARIO);
+        yield* awaitPendingQuestion(harness, sent.sequence);
+        yield* TestClock.adjust("4 days");
+        yield* harness.settlement.start;
+        assert.isNull((yield* threadOf(harness, QUESTION_IDS.threadId)).settledOverride);
+      }).pipe(Effect.scoped),
+    );
+
+    it.effect(
+      "the minute sweep settles after three inactive days, ignoring visits and title changes",
+      () =>
+        Effect.gen(function* () {
+          const { harness } = yield* makeHarness("restart_resume.claude.ndjson", "resumed-game");
+          const threadId = RESTART_RESUME_IDS.threadId;
+          yield* runFirstTurn(harness);
+          yield* TestClock.adjust("3 days");
+          yield* harness.settlement.start;
+          assert.isNull((yield* threadOf(harness, threadId)).settledOverride);
+          yield* harness.orchestrator.dispatch({
+            type: "thread.visit",
+            commandId: CommandId.make("visit-old"),
+            threadId,
+            visitedAt: DateTime.formatIso(yield* DateTime.now),
+          });
+          yield* harness.orchestrator.dispatch({
+            type: "thread.mark-unread",
+            commandId: CommandId.make("unread-old"),
+            threadId,
+          });
+          yield* harness.orchestrator.dispatch({
+            type: "thread.metadata.update",
+            commandId: CommandId.make("rename"),
+            threadId,
+            title: "Still old work",
+          });
+          yield* TestClock.adjust("1 minute");
+          yield* harness.settlement.drain;
+          assert.strictEqual((yield* threadOf(harness, threadId)).settledOverride, "settled");
+        }).pipe(Effect.scoped),
+    );
+
+    it.effect("automatic settlement honors the per-thread opt-out and stale snapshots", () =>
+      Effect.gen(function* () {
+        const { harness } = yield* makeHarness("restart_resume.claude.ndjson", "resumed-game");
+        const threadId = RESTART_RESUME_IDS.threadId;
+        yield* runFirstTurn(harness);
+        const before = yield* threadOf(harness, threadId);
+        yield* TestClock.adjust("4 days");
+        yield* harness.orchestrator.dispatch({
+          type: "thread.auto-settle.set",
+          commandId: CommandId.make("disable"),
+          threadId,
+          enabled: false,
+        });
+        assert.isNotNull((yield* threadOf(harness, threadId)).autoSettleDisabledAt);
+        yield* refusal(
+          harness.orchestrator.dispatch({
+            type: "thread.auto-settle",
+            commandId: CommandId.make("stale"),
+            threadId,
+            snapshotAt: before.updatedAt,
+            settledAt: before.updatedAt,
+          }),
+        );
+        assert.isNull((yield* threadOf(harness, threadId)).settledOverride);
+        yield* harness.orchestrator.dispatch({
+          type: "thread.auto-settle.set",
+          commandId: CommandId.make("enable"),
+          threadId,
+          enabled: true,
+        });
+        const enabled = yield* threadOf(harness, threadId);
+        yield* harness.orchestrator.dispatch({
+          type: "thread.auto-settle",
+          commandId: CommandId.make("auto"),
+          threadId,
+          snapshotAt: enabled.updatedAt,
+          settledAt: before.updatedAt,
+        });
+        const settled = yield* projectionOf(harness, threadId);
+        assert.strictEqual(settled.thread.settledOverride, "settled");
+        assert.strictEqual(settled.thread.settledAt, before.updatedAt);
+        assert.deepStrictEqual(
+          settled.providerSessions.map((session) => session.status),
+          ["stopped"],
+        );
+      }).pipe(Effect.scoped),
+    );
+
     it.effect(
       "reordering preserves pin state and Active activity time, and refuses raced moves",
       () =>
@@ -310,6 +705,12 @@ describe("Pin and settle a thread", () => {
               "1970-01-01T00:02:00.000Z",
             ),
           );
+          yield* TestClock.adjust("3 days");
+          yield* harness.settlement.start;
+          assert.isNull((yield* threadOf(harness, threadId)).settledOverride);
+          yield* TestClock.adjust("1 minute");
+          yield* harness.settlement.drain;
+          assert.strictEqual((yield* threadOf(harness, threadId)).settledOverride, "settled");
         }).pipe(Effect.scoped),
     );
 

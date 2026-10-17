@@ -1,3 +1,4 @@
+import { AutoSettleSettings } from "./AutoSettleSettings.tsx";
 import { TextGenerationSettings } from "./TextGenerationSettings.tsx";
 import { type ClientSettings, DEFAULT_CLIENT_SETTINGS } from "@playstead/contracts/ipc";
 import type { ReactNode } from "react";
@@ -34,6 +35,7 @@ export function GeneralSettingsPanel() {
           Organization
         </h2>
         <div className="divide-y divide-neutral-200 rounded-lg border border-neutral-200 dark:divide-neutral-800 dark:border-neutral-800">
+          <AutoSettleSettings />
           <SettingsSwitchRow
             title="Working section (beta)"
             description="Fold working and monitoring threads into a Working section. They return to the top of the inbox when they need you."

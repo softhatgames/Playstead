@@ -26,6 +26,7 @@ import { useClientSettings } from "../clientSettings.ts";
 import { openCommandPalette } from "../commandPaletteBus.ts";
 import { usePrimaryConnectionState } from "../connection/runtime.ts";
 import { createDraft } from "../drafts.ts";
+import { useThreadNavigation } from "../hooks/useThreadNavigation.ts";
 import { useBulkThreadMenu } from "../hooks/useBulkThreadMenu.ts";
 import { useThreadActionMenu } from "../hooks/useThreadActionMenu.ts";
 import {
@@ -190,6 +191,7 @@ export function Sidebar() {
     ],
   );
   const orderedIds = useMemo(() => orderedThreads.map((thread) => thread.id), [orderedThreads]);
+  useThreadNavigation(orderedIds);
   const orderedIdsRef = useRef(orderedIds);
   orderedIdsRef.current = orderedIds;
   const settledIdsRef = useRef(new Set<string>());
@@ -303,10 +305,12 @@ export function Sidebar() {
     snoozeThreads,
   });
 
-  const startNewThread = () => {
-    // T3 Code opens **New thread in…** with several projects unless Shift
-    // is held; until the palette has that mode (#42), it starts in the
-    // current project: the thread in view's or the last opened, while the
+  const startNewThread = (event: React.MouseEvent) => {
+    if (groups.length > 1 && !event.shiftKey) {
+      openCommandPalette({ open: "new-thread-in" });
+      return;
+    }
+    // Shift starts in the current project: the thread in view's or last opened, while the
     // scope shows it; otherwise the scope's, or the first project.
     const routeThread = routeThreadId === undefined ? undefined : threadsById.get(routeThreadId);
     const inScope = (projectId: string | undefined) =>
@@ -472,7 +476,7 @@ export function Sidebar() {
 function HeaderButton(props: {
   readonly label: string;
   readonly disabled?: boolean;
-  readonly onClick: () => void;
+  readonly onClick: (event: React.MouseEvent<HTMLButtonElement>) => void;
   readonly children: ReactNode;
 }) {
   return (

@@ -1,3 +1,4 @@
+import * as Settlement from "./orchestration-v2/ThreadSettlementService.ts";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -51,6 +52,7 @@ const make = (options?: StartupOptions) =>
   Effect.gen(function* () {
     const environment = yield* ServerEnvironment.ServerEnvironment;
     const lifecycleEvents = yield* ServerLifecycleEvents.ServerLifecycleEvents;
+    const settlement = yield* Settlement.ThreadSettlementService;
     const recovery = yield* ProviderRuntimeRecovery.ProviderRuntimeRecoveryService;
     const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
 
@@ -109,6 +111,7 @@ const make = (options?: StartupOptions) =>
         );
       }
       yield* startEffectWorker;
+      yield* settlement.start;
       yield* options?.beforeReady ?? Effect.void;
       yield* Deferred.await(httpListening);
       yield* lifecycleEvents.publish({
