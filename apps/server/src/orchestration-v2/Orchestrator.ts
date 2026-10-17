@@ -30,11 +30,9 @@ import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProjectStore from "./ProjectStore.ts";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 import * as EventStore from "./EventStore.ts";
-import {
-  decideNextQueuedRun,
-  decideThreadCommand,
-  type ThreadCommandIds,
-} from "./ThreadCommands.ts";
+import { decideNextQueuedRun } from "./QueueCommands.ts";
+import type { ThreadCommandIds } from "./ThreadCommandDecision.ts";
+import { decideThreadCommand } from "./ThreadCommands.ts";
 
 const TERMINAL_RUN_STATUSES: ReadonlySet<string> = new Set([
   "completed",
