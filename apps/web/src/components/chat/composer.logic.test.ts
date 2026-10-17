@@ -15,6 +15,7 @@ import type { ServerProvider } from "@playstead/contracts/server";
 
 import {
   buildSendCommands,
+  canChooseModel,
   defaultModelSelection,
   deriveComposerAction,
   deriveModelPickerEntries,
@@ -191,6 +192,19 @@ describe("deriveComposerAction", () => {
     assert.deepStrictEqual(
       deriveComposerAction([run("run:2", "running")], [interruptRequest("run:2")]),
       { kind: "interrupting" },
+    );
+  });
+});
+
+describe("canChooseModel", () => {
+  it("lets the model change only while the composer can send", () => {
+    assert.deepStrictEqual(
+      [
+        canChooseModel({ kind: "send" }),
+        canChooseModel({ kind: "interrupt", runId: RunId.make("run:1") }),
+        canChooseModel({ kind: "interrupting" }),
+      ],
+      [true, false, false],
     );
   });
 });

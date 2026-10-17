@@ -3,6 +3,10 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./agentShell": {
+      "types": "./src/agentShell.ts",
+      "import": "./src/agentShell.ts"
+    },
     "./devHome": {
       "types": "./src/devHome.ts",
       "import": "./src/devHome.ts"
@@ -30,6 +34,10 @@
     "./shell": {
       "types": "./src/shell.ts",
       "import": "./src/shell.ts"
+    },
+    "./tempDirectory": {
+      "types": "./src/tempDirectory.ts",
+      "import": "./src/tempDirectory.ts"
     }
   },
   "scripts": {

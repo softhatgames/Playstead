@@ -1,10 +1,10 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { writeFakeClaude, writeFakeCodex } from "@playstead/provider-testing/fakeProviders";
 import * as HostProcess from "@playstead/shared/hostProcess";
+import { makeTempDirectoryScoped } from "@playstead/shared/tempDirectory";
 import { assert, describe, it } from "@effect/vitest";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
-import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
@@ -24,17 +24,6 @@ import * as ProviderRegistry from "./ProviderRegistry.ts";
 
 const isWindows = process.platform === "win32";
 
-/** A temporary folder, removed with retries, since Windows holds files a moment after they close. */
-const makeTempDirectory = (prefix: string) =>
-  Effect.acquireRelease(
-    Effect.flatMap(FileSystem.FileSystem, (fs) => fs.makeTempDirectory({ prefix })),
-    (directory) =>
-      Effect.flatMap(FileSystem.FileSystem, (fs) => fs.remove(directory, { recursive: true })).pipe(
-        Effect.retry({ times: 10 }),
-        Effect.ignore,
-      ),
-  );
-
 /**
  * The registry over a temporary home, with PATH holding only the given
  * folders and Node's, so the fakes' launchers can start `node`.
@@ -42,7 +31,7 @@ const makeTempDirectory = (prefix: string) =>
 const startRegistry = (pathDirectories: ReadonlyArray<string>) =>
   Effect.gen(function* () {
     const path = yield* Path.Path;
-    const home = yield* makeTempDirectory("playstead-providers-");
+    const home = yield* makeTempDirectoryScoped("playstead-providers-");
     const paths = yield* ServerConfig.deriveServerPaths(home, undefined);
     const environment: Record<string, string | undefined> = {
       PATH: [...pathDirectories, path.dirname(process.execPath)].join(isWindows ? ";" : ":"),
@@ -90,7 +79,7 @@ describe("ProviderRegistry", () => {
   it.layer(NodeServices.layer, { excludeTestServices: true })((it) => {
     it.effect("finds Codex and Claude on PATH and reports their versions", () =>
       Effect.gen(function* () {
-        const bin = yield* makeTempDirectory("playstead-bin-");
+        const bin = yield* makeTempDirectoryScoped("playstead-bin-");
         yield* writeFakeCodex({ directory: bin, version: "0.160.0" });
         yield* writeFakeClaude({ directory: bin, version: "2.1.301" });
         const { registry } = yield* startRegistry([bin]);
@@ -116,7 +105,7 @@ describe("ProviderRegistry", () => {
 
     it.effect("reports a provider missing from PATH as not found", () =>
       Effect.gen(function* () {
-        const emptyBin = yield* makeTempDirectory("playstead-bin-");
+        const emptyBin = yield* makeTempDirectoryScoped("playstead-bin-");
         const { registry } = yield* startRegistry([emptyBin]);
 
         const providers = yield* registry.refresh();
@@ -141,7 +130,7 @@ describe("ProviderRegistry", () => {
 
     it.effect("warns when a found provider is older than the supported range", () =>
       Effect.gen(function* () {
-        const bin = yield* makeTempDirectory("playstead-bin-");
+        const bin = yield* makeTempDirectoryScoped("playstead-bin-");
         yield* writeFakeCodex({ directory: bin, version: "0.150.0" });
         yield* writeFakeClaude({ directory: bin, version: "2.1.200" });
         const { registry } = yield* startRegistry([bin]);
@@ -175,7 +164,7 @@ describe("ProviderRegistry", () => {
 
     it.effect("accepts the oldest supported versions without a warning", () =>
       Effect.gen(function* () {
-        const bin = yield* makeTempDirectory("playstead-bin-");
+        const bin = yield* makeTempDirectoryScoped("playstead-bin-");
         yield* writeFakeCodex({ directory: bin, version: "0.156.0" });
         yield* writeFakeClaude({ directory: bin, version: "2.1.280" });
         const { registry } = yield* startRegistry([bin]);
@@ -203,8 +192,8 @@ describe("ProviderRegistry", () => {
 
     it.effect("uses Binary path over PATH, and checks again when it changes", () =>
       Effect.gen(function* () {
-        const pathBin = yield* makeTempDirectory("playstead-bin-");
-        const ownBin = yield* makeTempDirectory("playstead-own-");
+        const pathBin = yield* makeTempDirectoryScoped("playstead-bin-");
+        const ownBin = yield* makeTempDirectoryScoped("playstead-own-");
         yield* writeFakeCodex({ directory: pathBin, version: "0.157.0" });
         const ownCodex = yield* writeFakeCodex({ directory: ownBin, version: "0.161.0" });
         const { registry, settings } = yield* startRegistry([pathBin]);
@@ -232,7 +221,7 @@ describe("ProviderRegistry", () => {
 
     it.effect("reads a signed-in Codex's account and models over its app-server", () =>
       Effect.gen(function* () {
-        const bin = yield* makeTempDirectory("playstead-bin-");
+        const bin = yield* makeTempDirectoryScoped("playstead-bin-");
         yield* writeFakeCodex({
           directory: bin,
           version: "0.163.0",
@@ -270,8 +259,8 @@ describe("ProviderRegistry", () => {
 
     it.effect("opens a Codex session over the app-server of the Codex it found", () =>
       Effect.gen(function* () {
-        const bin = yield* makeTempDirectory("playstead-bin-");
-        const workspace = yield* makeTempDirectory("playstead-workspace-");
+        const bin = yield* makeTempDirectoryScoped("playstead-bin-");
+        const workspace = yield* makeTempDirectoryScoped("playstead-workspace-");
         yield* writeFakeCodex({ directory: bin, version: "0.163.0" });
         const { registry } = yield* startRegistry([bin]);
         const adapter = Option.getOrThrow(yield* registry.getAdapter("codex"));
@@ -299,7 +288,7 @@ describe("ProviderRegistry", () => {
 
     it.effect("labels a Codex signed in with an API key, without an e-mail", () =>
       Effect.gen(function* () {
-        const bin = yield* makeTempDirectory("playstead-bin-");
+        const bin = yield* makeTempDirectoryScoped("playstead-bin-");
         yield* writeFakeCodex({ directory: bin, version: "0.163.0", account: { type: "apiKey" } });
         const { registry } = yield* startRegistry([bin]);
 
@@ -314,7 +303,7 @@ describe("ProviderRegistry", () => {
 
     it.effect("says a signed-out Codex needs `codex login`, with no models", () =>
       Effect.gen(function* () {
-        const bin = yield* makeTempDirectory("playstead-bin-");
+        const bin = yield* makeTempDirectoryScoped("playstead-bin-");
         yield* writeFakeCodex({ directory: bin, version: "0.163.0", account: null });
         const { registry } = yield* startRegistry([bin]);
 
@@ -333,7 +322,7 @@ describe("ProviderRegistry", () => {
 
     it.effect("reports a signed-in Claude with its plan and the models its version runs", () =>
       Effect.gen(function* () {
-        const bin = yield* makeTempDirectory("playstead-bin-");
+        const bin = yield* makeTempDirectoryScoped("playstead-bin-");
         yield* writeFakeClaude({ directory: bin, version: "2.1.301", signedIn: true });
         const { registry } = yield* startRegistry([bin]);
 
@@ -356,7 +345,7 @@ describe("ProviderRegistry", () => {
 
     it.effect("reports a signed-out Claude with the hint to run claude auth login", () =>
       Effect.gen(function* () {
-        const bin = yield* makeTempDirectory("playstead-bin-");
+        const bin = yield* makeTempDirectoryScoped("playstead-bin-");
         yield* writeFakeClaude({ directory: bin, version: "2.1.301", signedIn: false });
         const { registry } = yield* startRegistry([bin]);
 
@@ -374,7 +363,7 @@ describe("ProviderRegistry", () => {
 
     it.effect("offers only the Claude models an older version runs", () =>
       Effect.gen(function* () {
-        const bin = yield* makeTempDirectory("playstead-bin-");
+        const bin = yield* makeTempDirectoryScoped("playstead-bin-");
         yield* writeFakeClaude({ directory: bin, version: "2.1.280", signedIn: true });
         const { registry } = yield* startRegistry([bin]);
 
@@ -391,7 +380,7 @@ describe("ProviderRegistry", () => {
 
     it.effect("finds a provider installed after the server started when refreshed", () =>
       Effect.gen(function* () {
-        const bin = yield* makeTempDirectory("playstead-bin-");
+        const bin = yield* makeTempDirectoryScoped("playstead-bin-");
         const { registry } = yield* startRegistry([bin]);
         assert.deepInclude(providerById(yield* registry.refresh("claudeAgent"), "claudeAgent"), {
           installed: false,

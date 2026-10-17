@@ -7,32 +7,15 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
-import * as Schedule from "effect/Schedule";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
 
+import { makeTempDirectoryScoped } from "@playstead/shared/tempDirectory";
+
 import { awaitBackendReady, makeDesktopBackend } from "./DesktopBackend.ts";
 import { exchangeBootstrapToken } from "./DesktopLocalEnvironmentAuth.ts";
 import { findAvailablePort } from "./ports.ts";
-
-/** Windows keeps a file busy for a moment after it closes. */
-const makeTempHome = Effect.gen(function* () {
-  const fs = yield* FileSystem.FileSystem;
-  return yield* Effect.acquireRelease(
-    fs.makeTempDirectory({ prefix: "playstead-desktop-home-" }),
-    (directory) =>
-      fs.remove(directory, { recursive: true }).pipe(
-        Effect.retry({
-          while: (error) =>
-            error.reason._tag === "Busy" || error.reason._tag === "PermissionDenied",
-          schedule: Schedule.exponential("20 millis"),
-          times: 10,
-        }),
-        Effect.ignore,
-      ),
-  );
-});
 
 /** The server's source, which Node runs as it is, as `dev:server` does. */
 const serverEntry = Effect.gen(function* () {
@@ -41,7 +24,7 @@ const serverEntry = Effect.gen(function* () {
 });
 
 const startBackend = Effect.gen(function* () {
-  const home = yield* makeTempHome;
+  const home = yield* makeTempDirectoryScoped("playstead-desktop-home-");
   const port = yield* findAvailablePort(24773);
   const backend = yield* makeDesktopBackend({
     executablePath: process.execPath,

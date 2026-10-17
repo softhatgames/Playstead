@@ -125,3 +125,11 @@ export function deriveComposerAction(
   );
   return requested ? { kind: "interrupting" } : { kind: "interrupt", runId: active.id };
 }
+
+/**
+ * The model can change only while the composer can send: while a run is
+ * active, **Interrupt** is the composer's one control.
+ */
+export function canChooseModel(action: ComposerAction): boolean {
+  return action.kind === "send";
+}

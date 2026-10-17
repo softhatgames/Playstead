@@ -6,7 +6,7 @@ import type {
 import { type KeyboardEvent, useState } from "react";
 
 import { ArrowUpIcon } from "../icons.tsx";
-import type { ComposerAction, ModelPickerEntry } from "./composer.logic.ts";
+import { canChooseModel, type ComposerAction, type ModelPickerEntry } from "./composer.logic.ts";
 import { ComposerPendingUserInputPanel } from "./ComposerPendingUserInputPanel.tsx";
 import type { PendingUserInput } from "./pendingUserInput.logic.ts";
 import { ProviderModelPicker } from "./ProviderModelPicker.tsx";
@@ -118,6 +118,7 @@ export function ChatComposer(props: {
           <ProviderModelPicker
             entries={props.entries}
             selection={props.selection}
+            disabled={!canChooseModel(action) || sending}
             onSelect={(selection) => void selectModel(selection)}
           />
           {action.kind === "interrupt" ? (

@@ -1,15 +1,12 @@
-// @effect-diagnostics nodeBuiltinImport:off -- The recorder reads this machine's identity to scrub it.
 // @effect-diagnostics preferSchemaOverJson:off -- Recorded frames are plain JSON values.
-import * as NodeFS from "node:fs";
-import * as NodeOS from "node:os";
-
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   encodeProviderReplayNdjson,
   type ProviderReplayEntry,
-  REPLAY_WORKSPACE_PLACEHOLDER,
 } from "@playstead/provider-testing/replayTranscript";
+import { withoutAgentShellVariables } from "@playstead/shared/agentShell";
+import * as Console from "effect/Console";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -27,9 +24,19 @@ import {
   runProviderFileCreateScenario,
 } from "../src/orchestration-v2/testkit/fixtures/fileCreate.ts";
 import {
+  QUESTION_ANSWER_SCENARIO_NAME,
+  QUESTION_INTERRUPT_SCENARIO_NAME,
+} from "../src/orchestration-v2/testkit/fixtures/questionAnswer.ts";
+import {
   CODEX_TURN_INTERRUPT_SCENARIO,
   runTurnInterruptScenario,
 } from "../src/orchestration-v2/testkit/fixtures/turnInterrupt.ts";
+import {
+  readMachineIdentity,
+  recordingReplacements,
+  scrubbed,
+  writeRecording,
+} from "../src/orchestration-v2/testkit/replayScrub.ts";
 
 /**
  * Playstead's Codex app-server recorder (T3 Code's
@@ -40,28 +47,22 @@ import {
  * `codex` on PATH, in a temporary empty folder, and writes
  * `src/orchestration-v2/testkit/fixtures/<scenario>.codex.ndjson`.
  *
- *   node apps/server/scripts/record-codex-replay.ts [file_create | turn_interrupt]
+ *   node apps/server/scripts/record-codex-replay.ts [file_create | turn_interrupt | --help]
  *
  * `turn_interrupt` interrupts a long command once it runs, then sends one
  * more message.
  *
- * There is no question scenario: Codex 0.163.0 refuses `request_user_input`
- * outside plan mode, so `question_answer.codex.ndjson` and
- * `question_interrupt.codex.ndjson` are hand-made (see their headers).
+ * `question_answer` and `question_interrupt` cannot be recorded, and the
+ * recorder says so when asked for them: Codex 0.163.0 refuses
+ * `request_user_input` outside plan mode, and Playstead runs no plan mode, so
+ * `question_answer.codex.ndjson` and `question_interrupt.codex.ndjson` are
+ * hand-made (see their headers).
  *
  * The header carries `codex --version` and the capture date. The frames are
- * scrubbed of the folder (which becomes `<workspace>`), this machine's home,
- * user and host names, Codex's installation and account ids, account
- * e-mails and anything shaped like a token, and the recorder refuses to
- * write a file that still contains any of them.
+ * scrubbed by `src/orchestration-v2/testkit/replayScrub.ts`, shared with the
+ * Claude recorder, which also refuses to write a file that still names this
+ * machine or an account.
  */
-
-/** Variables a coding agent's shell carries that must not reach the recorded Codex. */
-const isAgentShellVariable = (name: string) =>
-  name === "ELECTRON_RUN_AS_NODE" ||
-  name === "CLAUDECODE" ||
-  name.startsWith("CLAUDE_CODE_") ||
-  name.startsWith("T3CODE_");
 
 const codexVersion = Effect.gen(function* () {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
@@ -71,113 +72,109 @@ const codexVersion = Effect.gen(function* () {
   return version;
 });
 
-const EMAIL = /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g;
-const TOKEN = /\b(?:sk-[A-Za-z0-9_-]{16,}|eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+)/g;
-const SECRET_KEYS = /token|secret|password|api[_-]?key|authorization|cookie|email/i;
-/** Ids Codex sends at start-up that name this installation or account. */
-const IDENTITY_KEYS = /^(installationId|chatgptAccountId|accountId|userId|workspaceId)$/;
-const ZERO_UUID = "00000000-0000-4000-8000-000000000000";
+type Harness = Effect.Success<ReturnType<typeof makeOrchestrationHarness>>;
 
-type Replacements = ReadonlyArray<readonly [string, string]>;
-
-const scrubbedText = (value: string, replacements: Replacements) => {
-  let text = value;
-  for (const [from, to] of replacements) text = text.split(from).join(to);
-  return text.replace(EMAIL, "user@example.com").replace(TOKEN, "REDACTED");
-};
-
-const scrubbed = (value: unknown, replacements: Replacements): unknown => {
-  if (typeof value === "string") return scrubbedText(value, replacements);
-  if (Array.isArray(value)) return value.map((item) => scrubbed(item, replacements));
-  if (typeof value === "object" && value !== null) {
-    return Object.fromEntries(
-      Object.entries(value).map(([key, item]) => [
-        key,
-        typeof item === "string" && IDENTITY_KEYS.test(key)
-          ? ZERO_UUID
-          : typeof item === "string" && key === "planType"
-            ? "unknown"
-            : typeof item === "string" && SECRET_KEYS.test(key)
-              ? "REDACTED"
-              : scrubbed(item, replacements),
-      ]),
+/** One file-creating turn. */
+const recordFileCreate = (harness: Harness) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const scenario = CODEX_FILE_CREATE_SCENARIO;
+    const { workspace, run } = yield* runProviderFileCreateScenario(harness, scenario);
+    const written = path.join(workspace, scenario.fileName);
+    yield* Effect.logInfo("The turn ended.").pipe(
+      Effect.annotateLogs({
+        run: run.status,
+        file: (yield* fs.exists(written))
+          ? JSON.stringify(yield* fs.readFileString(written))
+          : "missing",
+      }),
     );
-  }
-  return value;
+    if (run.status !== "completed") return yield* Effect.die(`The run ended ${run.status}.`);
+    return workspace;
+  });
+
+/** A turn interrupted while its command runs, then a turn after it. */
+const recordTurnInterrupt = (harness: Harness) =>
+  Effect.gen(function* () {
+    const { workspace, first, next } = yield* runTurnInterruptScenario(
+      harness,
+      CODEX_TURN_INTERRUPT_SCENARIO,
+    );
+    yield* Effect.logInfo("The turns ended.").pipe(
+      Effect.annotateLogs({ first: first.status, next: next.status }),
+    );
+    if (first.status !== "interrupted" || next.status !== "completed") {
+      return yield* Effect.die(`The runs ended ${first.status} and ${next.status}.`);
+    }
+    return workspace;
+  });
+
+/** Each scenario: how it is recorded, and what the header says about it. */
+const SCENARIOS = {
+  [CODEX_FILE_CREATE_SCENARIO.scenario]: {
+    record: recordFileCreate,
+    metadata: {
+      model: CODEX_FILE_CREATE_SCENARIO.model,
+      prompt: CODEX_FILE_CREATE_SCENARIO.prompt,
+    },
+  },
+  [CODEX_TURN_INTERRUPT_SCENARIO.scenario]: {
+    record: recordTurnInterrupt,
+    metadata: {
+      model: CODEX_TURN_INTERRUPT_SCENARIO.model,
+      prompts: [CODEX_TURN_INTERRUPT_SCENARIO.longPrompt, CODEX_TURN_INTERRUPT_SCENARIO.nextPrompt],
+      interruptAfter: "command_execution running",
+    },
+  },
 };
+
+/** Scenarios with a Codex fixture that this recorder cannot make. */
+const HAND_MADE_SCENARIOS: ReadonlyArray<string> = [
+  QUESTION_ANSWER_SCENARIO_NAME,
+  QUESTION_INTERRUPT_SCENARIO_NAME,
+];
+
+const HAND_MADE_REASON =
+  `${HAND_MADE_SCENARIOS.join(" and ")} are hand-made Codex fixtures, not recordings: ` +
+  "Codex 0.163.0 refuses request_user_input outside plan mode, and Playstead runs no plan mode, " +
+  "so a real Codex never asks. Edit question_answer.codex.ndjson and " +
+  "question_interrupt.codex.ndjson by hand; their headers say how they were made.";
+
+const HELP = [
+  "Records a Codex app-server replay through Playstead's adapter.",
+  "",
+  `  node apps/server/scripts/record-codex-replay.ts [${Object.keys(SCENARIOS).join(" | ")}]`,
+  "",
+  `The default is ${CODEX_FILE_CREATE_SCENARIO.scenario}. ${HAND_MADE_REASON}`,
+].join("\n");
 
 const program = Effect.gen(function* () {
-  const fs = yield* FileSystem.FileSystem;
-  const path = yield* Path.Path;
   const scenarioName = process.argv[2] ?? CODEX_FILE_CREATE_SCENARIO.scenario;
-  if (
-    scenarioName !== CODEX_FILE_CREATE_SCENARIO.scenario &&
-    scenarioName !== CODEX_TURN_INTERRUPT_SCENARIO.scenario
-  ) {
-    return yield* Effect.die(`No scenario is called ${scenarioName}.`);
+  if (scenarioName === "--help" || scenarioName === "-h") return yield* Console.log(HELP);
+  if (HAND_MADE_SCENARIOS.includes(scenarioName)) {
+    return yield* Effect.die(`Cannot record ${scenarioName}. ${HAND_MADE_REASON}`);
+  }
+  const scenario = Object.hasOwn(SCENARIOS, scenarioName)
+    ? SCENARIOS[scenarioName as keyof typeof SCENARIOS]
+    : undefined;
+  if (scenario === undefined) {
+    return yield* Effect.die(
+      `No scenario is called ${scenarioName}. The scenarios are ${Object.keys(SCENARIOS).join(", ")}; ${HAND_MADE_REASON}`,
+    );
   }
   const version = yield* codexVersion;
 
   const recording = yield* makeRecordingClientFactory();
-  const environment = Object.fromEntries(
-    Object.entries(process.env).filter(([name]) => !isAgentShellVariable(name)),
-  );
   const harness = yield* makeOrchestrationHarness({
     codexClients: recording.clients,
     codexBinaryPath: "codex",
-    environment,
+    environment: withoutAgentShellVariables(process.env),
   });
-  const home = harness.home;
-  const workspace =
-    scenarioName === CODEX_TURN_INTERRUPT_SCENARIO.scenario
-      ? yield* Effect.gen(function* () {
-          const { workspace, first, next } = yield* runTurnInterruptScenario(
-            harness,
-            CODEX_TURN_INTERRUPT_SCENARIO,
-          );
-          yield* Effect.logInfo("The turns ended.").pipe(
-            Effect.annotateLogs({ first: first.status, next: next.status }),
-          );
-          if (first.status !== "interrupted" || next.status !== "completed") {
-            return yield* Effect.die(`The runs ended ${first.status} and ${next.status}.`);
-          }
-          return workspace;
-        })
-      : yield* Effect.gen(function* () {
-          const scenario = CODEX_FILE_CREATE_SCENARIO;
-          const { workspace, run } = yield* runProviderFileCreateScenario(harness, scenario);
-          const written = path.join(workspace, scenario.fileName);
-          yield* Effect.logInfo("The turn ended.").pipe(
-            Effect.annotateLogs({
-              run: run.status,
-              file: (yield* fs.exists(written))
-                ? JSON.stringify(yield* fs.readFileString(written))
-                : "missing",
-            }),
-          );
-          if (run.status !== "completed") {
-            return yield* Effect.die(`The run ended ${run.status}.`);
-          }
-          return workspace;
-        });
+  const workspace = yield* scenario.record(harness);
 
-  const machineHome = NodeOS.homedir();
-  const user = NodeOS.userInfo().username;
-  const host = NodeOS.hostname();
-  const shortHost = host.split(".")[0] ?? host;
-  const realWorkspace = NodeFS.realpathSync(workspace);
-  const realHome = NodeFS.realpathSync(home);
-  // Longest first, so the folder goes before the home that contains it.
-  const replacements: Replacements = [
-    [realWorkspace, REPLAY_WORKSPACE_PLACEHOLDER],
-    [workspace, REPLAY_WORKSPACE_PLACEHOLDER],
-    [realHome, "/tmp/playstead-replay-home"],
-    [home, "/tmp/playstead-replay-home"],
-    [machineHome, "/home/replay-user"],
-    [host, "replay-host"],
-    [shortHost, "replay-host"],
-    [`/${user}/`, "/replay-user/"],
-  ];
+  const machine = readMachineIdentity();
+  const replacements = recordingReplacements({ workspace, playsteadHome: harness.home, machine });
   const entries: Array<ProviderReplayEntry> = recording.entries.map((entry) => ({
     ...entry,
     frame: scrubbed(entry.frame, replacements),
@@ -190,47 +187,18 @@ const program = Effect.gen(function* () {
       version,
       capturedAt: DateTime.formatIso(yield* DateTime.now).slice(0, 10),
       scenario: scenarioName,
-      metadata: {
-        ...(scenarioName === CODEX_TURN_INTERRUPT_SCENARIO.scenario
-          ? {
-              model: CODEX_TURN_INTERRUPT_SCENARIO.model,
-              prompts: [
-                CODEX_TURN_INTERRUPT_SCENARIO.longPrompt,
-                CODEX_TURN_INTERRUPT_SCENARIO.nextPrompt,
-              ],
-              interruptAfter: "command_execution running",
-            }
-          : { model: CODEX_FILE_CREATE_SCENARIO.model, prompt: CODEX_FILE_CREATE_SCENARIO.prompt }),
-        recorder: "apps/server/scripts/record-codex-replay.ts",
-      },
+      metadata: { ...scenario.metadata, recorder: "apps/server/scripts/record-codex-replay.ts" },
     },
     entries,
   });
 
-  const leaks = [
-    machineHome,
-    `/${user}/`,
-    host,
-    shortHost,
-    realWorkspace,
+  const out = yield* writeRecording({
+    scenario: scenarioName,
+    provider: "codex",
+    text,
+    machine,
     workspace,
-    NodeOS.tmpdir(),
-    "/var/folders",
-    "/private/",
-  ].filter((value) => value.length >= 3 && text.includes(value));
-  if (leaks.length > 0 || EMAIL.test(text.replace(/user@example\.com/g, ""))) {
-    return yield* Effect.die("The scrubbed recording still names this machine or an account.");
-  }
-  const out = path.join(
-    path.dirname(yield* path.fromFileUrl(new URL(import.meta.url))),
-    "..",
-    "src",
-    "orchestration-v2",
-    "testkit",
-    "fixtures",
-    `${scenarioName}.codex.ndjson`,
-  );
-  yield* fs.writeFileString(out, text);
+  });
   yield* Effect.logInfo("Wrote the recording.").pipe(
     Effect.annotateLogs({ out, entries: entries.length }),
   );

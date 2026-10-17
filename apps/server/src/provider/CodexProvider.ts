@@ -1,4 +1,5 @@
 import type { ServerProviderAuth, ServerProviderModel } from "@playstead/contracts/server";
+import { DEFAULT_BINARY_PATHS } from "@playstead/contracts/settings";
 import * as CodexClient from "@playstead/effect-codex-app-server/client";
 import {
   type CodexAppServerError,
@@ -212,7 +213,7 @@ const probeCodexAppServer = Effect.fn("probeCodexAppServer")(function* (
 
 const notFoundMessage = (binaryPath: string) =>
   `Could not start Codex CLI (\`${binaryPath}\`). Check Settings → Providers → Codex → Binary path on the server.` +
-  (binaryPath === "codex"
+  (binaryPath === DEFAULT_BINARY_PATHS.codex
     ? " Installing ChatGPT or Codex desktop may not add codex to PATH."
     : " Make sure the configured executable exists and can be run.");
 
