@@ -32,6 +32,7 @@ import {
   CornerUpRightIcon,
   ListPlusIcon,
   PlayIcon,
+  WifiOffIcon,
 } from "../icons.tsx";
 import { ComposerPlanFollowUpBanner } from "./ComposerPlanFollowUpBanner.tsx";
 import { ComposerTasksBadge } from "./ComposerTasksBadge.tsx";
@@ -122,6 +123,8 @@ interface QueuedEdit {
  * shows the "Plan ready" banner: an empty composer offers **Implement**
  * and, in its menu, **Implement in a new thread**; text makes the button
  * **Refine**. The running turn's todo list shows as the task progress badge.
+ * While the server is unavailable typing goes on but nothing is sent or
+ * interrupted, and a banner attached to the composer can say why.
  */
 export function ChatComposer(props: {
   readonly entries: ReadonlyArray<ModelPickerEntry>;
@@ -136,6 +139,9 @@ export function ChatComposer(props: {
   /** What Enter does while a run is active (the client setting). */
   readonly followUpBehavior: ActiveTurnComposerAction;
   readonly onSend: (text: string, dispatchMode: ComposerDispatchMode) => Promise<void>;
+  /** The server is not connected, so nothing can reach it. */
+  readonly unavailable: boolean;
+  readonly banner: string | undefined;
   readonly onInterrupt: (
     runId: Extract<ComposerAction, { kind: "interrupt" }>["runId"],
   ) => Promise<void>;
@@ -235,6 +241,7 @@ export function ChatComposer(props: {
       action.kind === "steer" ||
       action.kind === "update-queued") &&
     !sending &&
+    !props.unavailable &&
     props.selection !== undefined;
 
   // A queued message that starts or is removed while open here ends its
@@ -310,6 +317,7 @@ export function ChatComposer(props: {
 
   /** **Implement** sends nothing typed: the plan goes as the message. */
   const implement = async () => {
+    if (props.unavailable) return;
     setSending(true);
     setError(undefined);
     try {
@@ -322,6 +330,7 @@ export function ChatComposer(props: {
   };
 
   const implementInNewThread = async () => {
+    if (props.unavailable) return;
     setImplementMenuOpen(false);
     setSending(true);
     setError(undefined);
@@ -366,6 +375,7 @@ export function ChatComposer(props: {
   };
 
   const resume = async () => {
+    if (props.unavailable) return;
     setSending(true);
     setError(undefined);
     try {
@@ -464,7 +474,7 @@ export function ChatComposer(props: {
         onReorder={props.onReorderQueuedRun}
         onRemove={props.onRemoveQueuedRun}
         hasActiveRun={running}
-        canPromoteToSteer={props.canPromoteToSteer}
+        canPromoteToSteer={props.canPromoteToSteer && !props.unavailable}
         onSteer={props.onSteerQueuedRun}
         steerShortcutLabel={mac ? "⌘+Shift+Enter" : "Ctrl+Shift+Enter"}
       />
@@ -481,6 +491,15 @@ export function ChatComposer(props: {
         <p role="alert" className="mb-2 text-xs text-red-700 dark:text-red-400">
           {error}
         </p>
+      )}
+      {props.banner === undefined ? null : (
+        <div
+          role="status"
+          className="-mb-4 flex items-center gap-2 rounded-t-2xl border border-amber-300/60 bg-amber-50 px-3 pt-2 pb-6 text-xs text-amber-900 dark:border-amber-500/30 dark:bg-amber-950/40 dark:text-amber-200"
+        >
+          <WifiOffIcon className="size-3.5 shrink-0" />
+          <span>{props.banner}</span>
+        </div>
       )}
       <div className="relative rounded-2xl border border-neutral-200 bg-white p-2 shadow-sm dark:border-neutral-800 dark:bg-neutral-900">
         {slashCommands.length === 0 ? null : (
@@ -558,7 +577,10 @@ export function ChatComposer(props: {
             ) : null}
           </div>
           {action.kind === "interrupt" ? (
-            <InterruptButton disabled={interrupting} onClick={() => void interrupt(action.runId)} />
+            <InterruptButton
+              disabled={interrupting || props.unavailable}
+              onClick={() => void interrupt(action.runId)}
+            />
           ) : action.kind === "interrupting" ? (
             <span className="px-2 text-xs text-neutral-500 dark:text-neutral-400">
               Interrupting…
@@ -567,7 +589,7 @@ export function ChatComposer(props: {
             <div className="relative flex items-center">
               <button
                 type="button"
-                disabled={sending || props.selection === undefined}
+                disabled={sending || props.unavailable || props.selection === undefined}
                 onClick={() => void implement()}
                 className="h-8 rounded-l-full bg-neutral-900 px-4 text-xs font-medium text-white disabled:opacity-30 dark:bg-neutral-100 dark:text-neutral-900"
               >
@@ -578,7 +600,7 @@ export function ChatComposer(props: {
                 aria-label="Implementation actions"
                 aria-haspopup="menu"
                 aria-expanded={implementMenuOpen}
-                disabled={sending || props.selection === undefined}
+                disabled={sending || props.unavailable || props.selection === undefined}
                 onClick={() => setImplementMenuOpen((open) => !open)}
                 className="h-8 rounded-r-full border-l border-white/20 bg-neutral-900 px-2 text-white disabled:opacity-30 dark:border-neutral-900/20 dark:bg-neutral-100 dark:text-neutral-900"
               >
@@ -614,7 +636,7 @@ export function ChatComposer(props: {
               type="button"
               aria-label="Resume thread"
               title="Resume thread"
-              disabled={sending}
+              disabled={sending || props.unavailable}
               onClick={() => void resume()}
               className="rounded-full bg-neutral-900 p-1.5 text-white disabled:opacity-30 dark:bg-neutral-100 dark:text-neutral-900"
             >

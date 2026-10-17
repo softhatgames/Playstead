@@ -22,7 +22,7 @@ import {
   type RuntimeMode,
 } from "@playstead/contracts/orchestrationV2";
 import { useNavigate } from "@tanstack/react-router";
-import { useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import { useClientSettings } from "../../clientSettings.ts";
 import { requestPrimary, usePrimaryConnectionState } from "../../connection/runtime.ts";
@@ -192,6 +192,26 @@ const respondToUserInput = (
     }),
   );
 
+/** How long a dropped connection may try again before the thread view says so. */
+const RECONNECT_WARNING_GRACE_MS = 2_000;
+
+/**
+ * Whether the server has been unavailable for longer than the grace, so a
+ * quick reconnect never flashes a warning (T3 Code's
+ * `scheduleEnvironmentReconnectWarning`, `apps/web/src/components/ChatView.logic.ts`
+ * at a9c9c7c).
+ */
+function useReconnectWarning(unavailable: boolean): boolean {
+  const [graceElapsed, setGraceElapsed] = useState(false);
+  useEffect(() => {
+    setGraceElapsed(false);
+    if (!unavailable) return;
+    const timeout = setTimeout(() => setGraceElapsed(true), RECONNECT_WARNING_GRACE_MS);
+    return () => clearTimeout(timeout);
+  }, [unavailable]);
+  return unavailable && graceElapsed;
+}
+
 /**
  * The thread view: the chat column only, after T3 Code's `ChatView.tsx` at
  * 2577baf without its right-hand panel, terminal, diffs, branch toolbar or
@@ -205,6 +225,12 @@ export function ChatView(
 ) {
   const navigate = useNavigate();
   const connection = usePrimaryConnectionState();
+  // While the server is away the thread keeps its content, sending waits for
+  // it, and after the grace a banner on the composer says it is reconnecting
+  // (T3 Code's `environment-unavailable` banner in `ChatView.tsx` at a9c9c7c).
+  const serverUnavailable = connection?.phase !== "connected";
+  const showReconnecting = useReconnectWarning(serverUnavailable);
+  const serverLabel = connection?.config?.environment.label ?? "The server";
   const providers = connection?.config?.providers ?? [];
   const threadId = props.kind === "thread" ? props.threadId : props.draft.threadId;
   const { state, error } = useThreadState(threadId, props.kind === "thread");
@@ -521,6 +547,8 @@ export function ChatView(
         runs={projection?.runs ?? []}
         turnItems={projection?.turnItems ?? []}
         followUpBehavior={followUpBehavior}
+        unavailable={serverUnavailable}
+        banner={showReconnecting ? `${serverLabel} is reconnecting` : undefined}
         onSend={onSend}
         onInterrupt={(runId) => interruptRun(threadId, runId).then(() => undefined)}
         canResume={props.kind === "thread" && (resumableRunId !== null || queue.isHeld)}

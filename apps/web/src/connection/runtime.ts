@@ -1,15 +1,20 @@
 import {
   ConnectionTransientError,
   type ConnectionState,
+  type ConnectionWakeup,
   type LocalConnection,
   type LocalConnectionTarget,
   makeLocalConnection,
   type WsRpcClient,
 } from "@playstead/client-runtime/connection";
+import { followThread, type ThreadState } from "@playstead/client-runtime/state/thread";
+import type { ThreadId } from "@playstead/contracts/baseSchemas";
 import { PRIMARY_LOCAL_ENVIRONMENT_ID } from "@playstead/contracts/ipc";
+import type { OrchestrationThreadNotFoundError } from "@playstead/contracts/orchestrationV2";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as ManagedRuntime from "effect/ManagedRuntime";
+import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as Socket from "effect/socket/Socket";
@@ -56,6 +61,48 @@ const resolvePrimaryTarget = (): LocalConnectionTarget => {
   };
 };
 
+interface NetworkInformationLike extends EventTarget {
+  readonly type?: string;
+}
+
+/**
+ * The page's wakeups, as T3 Code's web platform has them
+ * (`apps/web/src/connection/platform.ts` at a9c9c7c): the page becoming
+ * visible, and the network's type changing. `change` also fires for new
+ * bandwidth estimates on the same network, so only a new type counts.
+ */
+const pageWakeups = Stream.mergeAll(
+  [
+    Stream.fromEventListener(document, "visibilitychange").pipe(
+      Stream.filter(() => document.visibilityState === "visible"),
+      Stream.map((): ConnectionWakeup => "application-active"),
+    ),
+    Stream.callback<ConnectionWakeup>((queue) =>
+      Effect.acquireRelease(
+        Effect.sync(() => {
+          const network = (
+            navigator as Navigator & { readonly connection?: NetworkInformationLike }
+          ).connection;
+          if (network?.type === undefined) return undefined;
+          let previous = network.type;
+          const listener = () => {
+            if (network.type === undefined || network.type === previous) return;
+            previous = network.type;
+            Queue.offerUnsafe(queue, "network-changed");
+          };
+          network.addEventListener("change", listener);
+          return { network, listener };
+        }),
+        (subscription) =>
+          Effect.sync(() =>
+            subscription?.network.removeEventListener("change", subscription.listener),
+          ),
+      ).pipe(Effect.asVoid),
+    ),
+  ],
+  { concurrency: "unbounded" },
+);
+
 /** The page's one connection to its server; the client runtime reconnects. */
 function startPrimaryConnection() {
   if (started) return;
@@ -63,7 +110,9 @@ function startPrimaryConnection() {
   void runtime.runPromise(
     Effect.scoped(
       Effect.gen(function* () {
-        const opened = yield* makeLocalConnection(resolvePrimaryTarget());
+        const opened = yield* makeLocalConnection(resolvePrimaryTarget(), {
+          wakeups: pageWakeups,
+        });
         connection = opened;
         yield* Stream.runForEach(opened.changes, (state) =>
           Effect.sync(() => {
@@ -90,23 +139,20 @@ export function requestPrimary<A, E>(
 }
 
 /**
- * Runs a stream over the page's connection and hands each item to `onItem`
- * until the returned function stops it. It ends, without retrying, when the
- * connection drops; callers open it again once the connection is back.
+ * Follows one thread over the page's connection until the returned function
+ * stops it: the state stays while the server is away, and is replaced once
+ * it is back (`followThread`). It ends only when the server has no such thread.
  */
-export function runPrimaryStream<A, E>(
-  call: (client: WsRpcClient) => Stream.Stream<A, E>,
-  onItem: (item: A) => void,
-  onEnd: (error: E | ConnectionTransientError | undefined) => void,
+export function followPrimaryThread(
+  threadId: ThreadId,
+  onState: (state: ThreadState) => void,
+  onNotFound: (error: OrchestrationThreadNotFoundError) => void,
 ): () => void {
-  if (connection === undefined) {
-    onEnd(new ConnectionTransientError({ detail: "Not connected to the server." }));
-    return () => {};
-  }
+  if (connection === undefined) return () => {};
   const fiber = runtime.runFork(
-    connection.stream(call).pipe(
-      Stream.runForEach((item) => Effect.sync(() => onItem(item))),
-      Effect.match({ onFailure: (error) => onEnd(error), onSuccess: () => onEnd(undefined) }),
+    followThread(connection, threadId).pipe(
+      Stream.runForEach((state) => Effect.sync(() => onState(state))),
+      Effect.catch((error) => Effect.sync(() => onNotFound(error))),
     ),
   );
   return () => {

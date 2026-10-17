@@ -2,7 +2,11 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NodeSocket from "@effect/platform-node/NodeSocket";
 import { assert, describe, it } from "@effect/vitest";
 import type { LocalConnection } from "@playstead/client-runtime/connection";
-import { applyThreadStreamItem, type ThreadState } from "@playstead/client-runtime/state/thread";
+import {
+  applyThreadStreamItem,
+  followThread,
+  type ThreadState,
+} from "@playstead/client-runtime/state/thread";
 import {
   CommandId,
   MessageId,
@@ -19,6 +23,7 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
+import * as SubscriptionRef from "effect/SubscriptionRef";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as HttpClient from "effect/http/HttpClient";
 
@@ -138,6 +143,86 @@ describe("Survive a restart, and the same thread in a browser", () => {
 
         yield* Scope.close(serverScope, Exit.void).pipe(Effect.timeout("5 seconds"));
       }).pipe(Effect.scoped),
+    );
+
+    it.effect(
+      "an open thread keeps its content while the server is down, and follows it again once it is back",
+      () =>
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          // The home outlives the first server, so the second starts over it.
+          const config = yield* makeTestServerConfig();
+          const serverScope = yield* Scope.make();
+          const server = yield* startTestServer({ config }).pipe(Scope.provide(serverScope));
+          const { connection: browser } = yield* connectSignedIn(server);
+          const folder = path.join(server.config.baseDir, "followed-game");
+          yield* fs.makeDirectory(folder);
+          const projectId = ProjectId.make("project:followed-game");
+          const threadId = ThreadIdSchema.make("thread:followed-game");
+          yield* browser.request((rpc) =>
+            rpc["projects.mutate"]({
+              type: "project.create",
+              commandId: CommandId.make("command:followed-game:project"),
+              projectId,
+              title: "followed-game",
+              workspaceRoot: folder,
+            }),
+          );
+          yield* browser.request((rpc) =>
+            rpc["orchestration.dispatchCommand"]({
+              type: "thread.create",
+              commandId: CommandId.make("command:followed-game:thread"),
+              threadId,
+              projectId,
+              title: "Followed thread",
+              runtimeMode: "full-access",
+              modelSelection: { instanceId: "claudeAgent", model: FILE_CREATE_SCENARIO.model },
+            }),
+          );
+          const latest = yield* SubscriptionRef.make<ThreadState | undefined>(undefined);
+          const following = yield* followThread(browser, threadId).pipe(
+            Stream.runForEach((state) => SubscriptionRef.set(latest, state)),
+            Effect.forkScoped,
+          );
+          const awaitLatest = (matches: (state: ThreadState) => boolean) =>
+            SubscriptionRef.changes(latest).pipe(
+              Stream.filter((state): state is ThreadState => state !== undefined && matches(state)),
+              Stream.runHead,
+              Effect.map(Option.getOrThrow),
+              Effect.timeout("10 seconds"),
+            );
+          yield* awaitLatest(() => true);
+
+          yield* Scope.close(serverScope, Exit.void);
+          yield* awaitConnectionState(browser, (state) => state.phase !== "connected");
+          const whileDown = yield* SubscriptionRef.get(latest);
+          assert.strictEqual(whileDown?.projection.thread.title, "Followed thread");
+          assert.isUndefined(following.pollUnsafe());
+
+          yield* startTestServer({
+            config,
+            port: Number(new URL(server.baseUrl).port),
+          });
+          yield* awaitConnectionState(browser, (state) => state.phase === "connected").pipe(
+            Effect.timeout("10 seconds"),
+          );
+          yield* browser.request((rpc) =>
+            rpc["orchestration.dispatchCommand"]({
+              type: "message.dispatch",
+              commandId: CommandId.make("command:followed-game:message"),
+              threadId,
+              messageId: MessageId.make("message:followed-game:1"),
+              text: "Sent after the restart",
+              dispatchMode: { type: "start_immediately" },
+            }),
+          );
+          const afterRestart = yield* awaitLatest((state) =>
+            state.projection.messages.some((message) => message.text === "Sent after the restart"),
+          );
+          assert.strictEqual(afterRestart.projection.thread.title, "Followed thread");
+        }).pipe(Effect.scoped),
+      30_000,
     );
 
     it.effect("a message sent from the desktop window appears in a paired browser", () =>

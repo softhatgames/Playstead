@@ -1,12 +1,16 @@
 # Playstead
 
-**Make something worth playing.**
+**Make the game you wish existed.**
 
-Playstead is a workspace for making games with coding agents, on your own computer. Describe an idea, try it, talk about what happened and decide what deserves more work. The technical work should leave you more time for what makes a game yours: its ideas, its rules and the way it feels to play.
+Turn ideas into playable games with AI coding agents.
 
-You bring the taste and direction. You can shape a game without knowing how to program, or work directly in the code with your own tools and technical choices. Either way, the game and the decisions that define it stay yours.
+That mechanic you keep thinking about. The strange combination of genres. The game nobody has made quite the way you want it.
 
-> **Status: early.** Playstead's first working slice runs: threads with Codex and Claude, in its desktop app or a browser on the same computer. The game development experience described below is designed and not yet built.
+Playstead helps you make games with AI coding agents. It’s being built around a simple loop: describe an idea, play a prototype, and shape what happens next. Make the jump heavier. Give the enemies something to fear. Try three versions and keep your favourite.
+
+You bring the ideas and decide what feels right. The agents help with the code, tools and testing. Guide development in plain language or work directly in the source. Your game, assets and tools stay yours—and usable without Playstead.
+
+> **Early development:** Threads with Codex and Claude work today. Game previews, playable prototypes and the development loop described below are still being built.
 
 ## Find the game through play
 
