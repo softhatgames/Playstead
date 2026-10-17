@@ -14,6 +14,7 @@ import {
   ACTIVE_RUN_STATUSES,
   DEFAULT_RUNTIME_MODE,
   type ModelSelection,
+  type ProviderApprovalDecision,
   type ProviderUserInputAnswers,
   type RuntimeMode,
 } from "@playstead/contracts/orchestrationV2";
@@ -49,6 +50,7 @@ import {
 } from "./composer.logic.ts";
 import { traitsForDispatch } from "./traits.logic.ts";
 import { MessagesTimeline } from "./MessagesTimeline.tsx";
+import { derivePendingApprovals } from "./pendingApproval.logic.ts";
 import { derivePendingUserInputs } from "./pendingUserInput.logic.ts";
 import { deriveTimelineRows } from "./timeline.logic.ts";
 
@@ -126,6 +128,21 @@ const dispatchQueueCommand = (
       commandId: CommandId.make(`command:${newId()}`),
     }),
   ).then(() => undefined);
+/** The person's decision on a provider's approval (T3 Code's `respondToThreadApproval`). */
+const respondToApproval = (
+  threadId: ThreadId,
+  requestId: RuntimeRequestId,
+  decision: ProviderApprovalDecision,
+) =>
+  requestPrimary((client) =>
+    client["orchestration.dispatchCommand"]({
+      type: "runtime-request.respond",
+      commandId: CommandId.make(`command:${newId()}`),
+      threadId,
+      requestId,
+      decision,
+    }),
+  );
 
 /** The person's answers to a provider's question (T3 Code's `runtime-request.respond`). */
 const respondToUserInput = (
@@ -179,6 +196,10 @@ export function ChatView(
   );
   const resumableRunId =
     projection === undefined ? null : resolveResumableRunId({ runs: projection.runs });
+  const pendingApprovals = useMemo(
+    () => derivePendingApprovals(projection?.runtimeRequests ?? [], projection?.turnItems ?? []),
+    [projection?.runtimeRequests, projection?.turnItems],
+  );
   const pendingUserInput = useMemo(
     () =>
       derivePendingUserInputs(projection?.runtimeRequests ?? [], projection?.turnItems ?? [])[0],
@@ -361,6 +382,10 @@ export function ChatView(
         }
         onUpdateQueuedRun={(runId, text) =>
           dispatchQueueCommand({ type: "queued-run.edit", threadId, runId, text })
+        }
+        pendingApprovals={pendingApprovals}
+        onRespondToApproval={(requestId, decision) =>
+          respondToApproval(threadId, requestId, decision).then(() => undefined)
         }
         pendingUserInput={pendingUserInput}
         onRespondToUserInput={(requestId, answers) =>

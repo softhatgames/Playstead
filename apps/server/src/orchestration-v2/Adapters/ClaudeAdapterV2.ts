@@ -2,7 +2,9 @@ import {
   type CanUseTool,
   type Options as ClaudeQueryOptions,
   type EffortLevel,
+  type PermissionMode,
   type PermissionResult,
+  type PermissionUpdate,
   type Query,
   query,
   type SDKAssistantMessage,
@@ -23,6 +25,8 @@ import type {
   OrchestrationV2ProviderFailure,
   OrchestrationV2TurnItem,
   OrchestrationV2UserInputQuestion,
+  ProviderApprovalDecision,
+  ProviderRequestKind,
   ProviderUserInputAnswers,
   RuntimeMode,
 } from "@playstead/contracts/orchestrationV2";
@@ -68,8 +72,10 @@ import { resolveClaudeSdkExecutablePath } from "../../provider/Drivers/ClaudeExe
  *   mode (Supervised `default`, Auto-accept edits `acceptEdits`, Auto
  *   `auto`, Full access `bypassPermissions`). It cannot change mode in
  *   session, so a turn in another mode reopens it, resuming the same Claude
- *   session, as T3 Code does; T3 Code's `setPermissionMode` only restores
- *   a mode Claude Code changed itself, which needs plan mode.
+ *   session, as T3 Code does. `setPermissionMode` only puts back, before
+ *   the next prompt, the mode Claude Code left on its own: approving an
+ *   edit for the session moves it to `acceptEdits` (its suggestion), so in
+ *   Supervised that allowance lasts until the turn ends, as in T3 Code.
  * - Assistant text streams from the SDK's partial messages. T3 Code asks for
  *   them too but shows text only when each whole message arrives.
  * - A file write is a `file_change` item carrying the file's name and the
@@ -98,12 +104,18 @@ import { resolveClaudeSdkExecutablePath } from "../../provider/Drivers/ClaudeExe
  *   under `bypassPermissions` (Claude 2.1.301, SDK 0.3.276; the SDK's
  *   warning that `canUseTool` is never called is wrong for this tool). The
  *   answers go back as the tool's `answers`; an interrupt releases the
- *   question unanswered. Any other tool Claude Code asks about is allowed
- *   in Auto and Full access, and refused in Supervised and Auto-accept
- *   edits, where T3 Code asks the person: approvals are absent.
+ *   question unanswered.
+ * - Any other tool Claude Code asks about is allowed in Auto and Full
+ *   access. In Supervised and Auto-accept edits it reaches the person as an
+ *   approval request, of the kind the tool's classification gives, with
+ *   Claude Code's own prompt (T3 Code's `canUseToolEffect`), and the
+ *   decision goes back as T3 Code's `permissionResultFromDecision` builds
+ *   it, except that `acceptAlways` approves for the session, as Codex
+ *   does, where T3 Code's falls through to deny. An interrupt cancels the
+ *   approval, which T3 Code's adapter leaves waiting.
  *
- * Absent, as in the slice as a whole: approvals, showing thinking, MCP,
- * subagents, attachments and usage.
+ * Absent, as in the slice as a whole: showing thinking, MCP, subagents,
+ * attachments and usage.
  */
 
 export type ClaudeAgentSdkQueryOptions = ClaudeQueryOptions;
@@ -134,6 +146,10 @@ export interface ClaudeAgentSdkQuerySession {
   /** Changes Claude Code's settings, such as effort and fast mode, for the next turns. */
   readonly applyFlagSettings: (
     settings: ClaudeFlagSettings,
+  ) => Effect.Effect<void, ClaudeAgentSdkQueryRunnerError>;
+  /** Puts Claude Code back in a permission mode it left on its own. */
+  readonly setPermissionMode: (
+    mode: PermissionMode,
   ) => Effect.Effect<void, ClaudeAgentSdkQueryRunnerError>;
   /** Asks Claude Code to stop the turn it is running. */
   readonly interrupt: Effect.Effect<void, ClaudeAgentSdkQueryRunnerError>;
@@ -204,6 +220,11 @@ export const layerQueryRunner: Layer.Layer<ClaudeAgentSdkQueryRunner, never, Cry
                 Effect.tryPromise({
                   try: () => queryRuntime.applyFlagSettings(settings),
                   catch: runnerError("applyFlagSettings"),
+                }),
+              setPermissionMode: (mode) =>
+                Effect.tryPromise({
+                  try: () => queryRuntime.setPermissionMode(mode),
+                  catch: runnerError("setPermissionMode"),
                 }),
               interrupt: Effect.tryPromise({
                 try: () => queryRuntime.interrupt(),
@@ -401,26 +422,134 @@ const claudeSdkUserInputAnswers = (answers: ProviderUserInputAnswers): Record<st
     ]),
   );
 
-/** A question Claude waits on; `undefined` releases it unanswered. */
-interface PendingQuestion {
-  readonly turn: ActiveTurn;
-  readonly answers: Deferred.Deferred<ProviderUserInputAnswers | undefined>;
-}
+/**
+ * A request Claude waits on: a question, whose `undefined` releases it
+ * unanswered, or an approval.
+ */
+type PendingRequest =
+  | {
+      readonly type: "user_input";
+      readonly turn: ActiveTurn;
+      readonly answers: Deferred.Deferred<ProviderUserInputAnswers | undefined>;
+    }
+  | {
+      readonly type: "approval";
+      readonly turn: ActiveTurn;
+      readonly decision: Deferred.Deferred<ProviderApprovalDecision>;
+    };
 
 type ClaudeToolItemType = "file_change" | "command_execution" | "dynamic_tool";
 
-/** T3 Code's `CLAUDE_KNOWN_TOOL_CLASSIFICATIONS`: writes and edits are file changes, Bash runs commands, and every other tool is a dynamic tool. */
-const classifyClaudeTool = (toolName: string): ClaudeToolItemType => {
-  switch (toolName.toLowerCase()) {
-    case "write":
-    case "edit":
-    case "multiedit":
-    case "notebookedit":
-      return "file_change";
-    case "bash":
-      return "command_execution";
-    default:
-      return "dynamic_tool";
+/**
+ * T3 Code's `CLAUDE_KNOWN_TOOL_CLASSIFICATIONS` at 2577baf: each tool's
+ * item, and the kind of approval it asks for. Web tools are dynamic tools
+ * here: the web search item is absent.
+ */
+const CLAUDE_KNOWN_TOOL_CLASSIFICATIONS: Record<
+  string,
+  { readonly itemType: ClaudeToolItemType; readonly requestKind: ProviderRequestKind }
+> = {
+  agent: { itemType: "dynamic_tool", requestKind: "command" },
+  bash: { itemType: "command_execution", requestKind: "command" },
+  edit: { itemType: "file_change", requestKind: "file-change" },
+  glob: { itemType: "dynamic_tool", requestKind: "file-read" },
+  grep: { itemType: "dynamic_tool", requestKind: "file-read" },
+  ls: { itemType: "dynamic_tool", requestKind: "file-read" },
+  monitor: { itemType: "dynamic_tool", requestKind: "command" },
+  multiedit: { itemType: "file_change", requestKind: "file-change" },
+  notebookedit: { itemType: "file_change", requestKind: "file-change" },
+  read: { itemType: "dynamic_tool", requestKind: "file-read" },
+  sendmessage: { itemType: "dynamic_tool", requestKind: "command" },
+  task: { itemType: "dynamic_tool", requestKind: "command" },
+  taskstop: { itemType: "dynamic_tool", requestKind: "command" },
+  todowrite: { itemType: "dynamic_tool", requestKind: "command" },
+  toolsearch: { itemType: "dynamic_tool", requestKind: "command" },
+  webfetch: { itemType: "dynamic_tool", requestKind: "command" },
+  websearch: { itemType: "dynamic_tool", requestKind: "command" },
+  write: { itemType: "file_change", requestKind: "file-change" },
+};
+
+/** T3 Code's `classifyClaudeNativeTool`: an unknown tool is a dynamic tool that asks as a command. */
+const classifyClaudeTool = (toolName: string) =>
+  CLAUDE_KNOWN_TOOL_CLASSIFICATIONS[toolName.toLowerCase().replaceAll(/[\s_-]/g, "")] ?? {
+    itemType: "dynamic_tool" as const,
+    requestKind: "command" as const,
+  };
+
+/** What the approval says when Claude Code gives no prompt (T3 Code's `summarizeClaudeToolRequest`). */
+const summarizeClaudeToolRequest = (toolName: string, input: Record<string, unknown>) => {
+  const command = stringField(input, "command", "cmd", "script")?.trim();
+  if (command !== undefined) return `${toolName}: ${command.slice(0, 400)}`;
+  const path = stringField(input, "file_path", "path", "filename", "fileName")?.trim();
+  if (path !== undefined) return `${toolName}: ${path.slice(0, 400)}`;
+  const serialized = JSON.stringify(input) ?? "";
+  return serialized.length <= 400
+    ? `${toolName}: ${serialized}`
+    : `${toolName}: ${serialized.slice(0, 397)}...`;
+};
+
+/**
+ * The person's decision as Claude Code takes it (T3 Code's
+ * `permissionResultFromDecision` and `toSessionPermissionUpdates`). Approving
+ * for the session also applies Claude Code's suggested rules for the
+ * session, or allows the tool for the session when it suggests none;
+ * `acceptAlways` does the same, where T3 Code's denies. Declining tells
+ * Claude, which goes on; cancelling also stops the turn.
+ */
+const permissionResultFromDecision = (input: {
+  readonly toolName: string;
+  readonly decision: ProviderApprovalDecision;
+  readonly toolInput: Record<string, unknown>;
+  readonly toolUseID: string;
+  readonly suggestions?: ReadonlyArray<PermissionUpdate>;
+}): PermissionResult => {
+  switch (input.decision) {
+    case "accept":
+      return {
+        behavior: "allow",
+        updatedInput: input.toolInput,
+        toolUseID: input.toolUseID,
+        decisionClassification: "user_temporary",
+      };
+    case "acceptForSession":
+    case "acceptAlways": {
+      const suggested = (input.suggestions ?? []).map((suggestion): PermissionUpdate => ({
+        ...suggestion,
+        destination: "session",
+      }));
+      return {
+        behavior: "allow",
+        updatedInput: input.toolInput,
+        toolUseID: input.toolUseID,
+        decisionClassification: "user_permanent",
+        updatedPermissions:
+          suggested.length > 0
+            ? suggested
+            : [
+                {
+                  type: "addRules",
+                  rules: [{ toolName: input.toolName }],
+                  behavior: "allow",
+                  destination: "session",
+                },
+              ],
+      };
+    }
+    case "decline":
+      return {
+        behavior: "deny",
+        message: "User declined tool execution.",
+        toolUseID: input.toolUseID,
+        decisionClassification: "user_reject",
+      };
+    case "cancel":
+      return {
+        behavior: "deny",
+        message: "User cancelled tool execution.",
+        toolUseID: input.toolUseID,
+        decisionClassification: "user_reject",
+        interrupt: true,
+      };
   }
 };
 
@@ -495,26 +624,118 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (input
       const nativeSessionId = open.initialNativeThreadId ?? (yield* runner.allocateSessionId);
       const events = yield* PubSub.unbounded<ProviderAdapterV2Event>();
       const activeTurn = yield* Ref.make<ActiveTurn | undefined>(undefined);
-      const pendingQuestions = new Map<RuntimeRequestId, PendingQuestion>();
+      const pendingRequests = new Map<RuntimeRequestId, PendingRequest>();
       const runPromise = Effect.runPromiseWith(yield* Effect.context<never>());
       const publish = (event: ProviderAdapterV2Event) => PubSub.publish(events, event);
 
-      /** Releases the turn's questions unanswered, so Claude can stop. */
-      const releaseQuestions = (turn: ActiveTurn) =>
+      /** Releases the turn's questions unanswered and cancels its approvals, so Claude can stop. */
+      const releaseRequests = (turn: ActiveTurn) =>
         Effect.forEach(
-          [...pendingQuestions.values()].filter((pending) => pending.turn === turn),
-          (pending) => Deferred.succeed(pending.answers, undefined),
+          [...pendingRequests.values()].filter((pending) => pending.turn === turn),
+          (pending) =>
+            pending.type === "user_input"
+              ? Deferred.succeed(pending.answers, undefined)
+              : Deferred.succeed(pending.decision, "cancel"),
           { discard: true },
         );
 
       /**
-       * T3 Code's `canUseToolEffect`, without approvals: `AskUserQuestion`
-       * becomes a user-input request (its node, its item, then the request,
-       * as T3 Code's `buildApprovalRequestArtifacts` builds them) and waits
-       * for the answers; any other tool is allowed as it is, unless the
-       * mode needs the person's approval (`requiresClaudeApproval`). The question
+       * An approval of a tool Claude Code asks about: its kind from the
+       * tool, and Claude Code's prompt, else a summary of the call.
+       */
+      const askForApproval = Effect.fnUntraced(function* (
+        turn: ActiveTurn,
+        toolName: string,
+        toolInput: Record<string, unknown>,
+        callbackOptions: Parameters<CanUseTool>[2],
+        aborted: Effect.Effect<ProviderApprovalDecision>,
+      ) {
+        const toolUseId = callbackOptions.toolUseID;
+        const requestId = RuntimeRequestId.make(`runtime-request:claude:${toolUseId}`);
+        const nodeId = NodeId.make(`node:claude:${toolUseId}:approval`);
+        const requestKind = classifyClaudeTool(toolName).requestKind;
+        const prompt =
+          callbackOptions.title ??
+          callbackOptions.description ??
+          callbackOptions.decisionReason ??
+          summarizeClaudeToolRequest(toolName, toolInput);
+        const now = yield* nowIso;
+        const decision = yield* Deferred.make<ProviderApprovalDecision>();
+        pendingRequests.set(requestId, { type: "approval", turn, decision });
+        yield* publish({
+          type: "node.updated",
+          node: {
+            id: nodeId,
+            threadId: turn.input.threadId,
+            runId: turn.input.runId,
+            parentNodeId: NodeId.make(`node:claude:${toolUseId}`),
+            rootNodeId: turn.input.rootNodeId,
+            kind: "approval_request",
+            status: "waiting",
+            providerThreadId: turn.input.providerThread.id,
+            providerTurnId: turn.input.providerTurnId,
+            startedAt: now,
+            completedAt: null,
+          },
+        });
+        yield* publish({
+          type: "turn_item.updated",
+          turnItem: {
+            id: TurnItemId.make(`item:claude:${toolUseId}:approval`),
+            threadId: turn.input.threadId,
+            runId: turn.input.runId,
+            nodeId,
+            providerThreadId: turn.input.providerThread.id,
+            providerTurnId: turn.input.providerTurnId,
+            ordinal: 0,
+            status: "waiting",
+            title: null,
+            startedAt: now,
+            completedAt: null,
+            updatedAt: now,
+            type: "approval_request",
+            requestId,
+            requestKind,
+            prompt,
+          },
+        });
+        yield* publish({
+          type: "runtime_request.updated",
+          runtimeRequest: {
+            id: requestId,
+            nodeId,
+            providerTurnId: turn.input.providerTurnId,
+            kind: requestKind,
+            status: "pending",
+            responseCapability: { type: "live", providerSessionId: open.providerSessionId },
+            createdAt: now,
+            resolvedAt: null,
+          },
+        });
+        const decided = yield* Effect.raceFirst(Deferred.await(decision), aborted).pipe(
+          Effect.ensuring(Effect.sync(() => pendingRequests.delete(requestId))),
+        );
+        return permissionResultFromDecision({
+          toolName,
+          decision: decided,
+          toolInput,
+          toolUseID: toolUseId,
+          ...(callbackOptions.suggestions === undefined
+            ? {}
+            : { suggestions: callbackOptions.suggestions }),
+        });
+      });
+
+      /**
+       * T3 Code's `canUseToolEffect`: `AskUserQuestion` becomes a user-input
+       * request and waits for the answers; any other tool is allowed as it
+       * is, unless the mode needs the person's approval
+       * (`requiresClaudeApproval`), when it becomes an approval request and
+       * waits for the decision. Each request publishes its node, its item,
+       * then the request (T3 Code's `buildApprovalRequestArtifacts`). It
        * belongs to the turn running now: a callback is not a frame Claude
-       * Code stamps with the prompt.
+       * Code stamps with the prompt. An interrupt aborts the callback's
+       * signal, which releases a question and cancels an approval.
        */
       const canUseToolEffect = Effect.fnUntraced(function* (
         toolName: Parameters<CanUseTool>[0],
@@ -529,28 +750,35 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (input
             toolUseID: callbackOptions.toolUseID,
           } satisfies PermissionResult;
         }
+        const aborted = <A>(value: A) =>
+          Effect.callback<A>((resume) => {
+            const abort = () => resume(Effect.succeed(value));
+            callbackOptions.signal.addEventListener("abort", abort, { once: true });
+            if (callbackOptions.signal.aborted) abort();
+            return Effect.sync(() => callbackOptions.signal.removeEventListener("abort", abort));
+          });
         if (toolName !== "AskUserQuestion") {
-          if (requiresClaudeApproval(open.runtimePolicy.runtimeMode)) {
-            // T3 Code asks the person here; until approvals exist the tool
-            // is refused, so these modes never run what they would ask about.
+          if (!requiresClaudeApproval(open.runtimePolicy.runtimeMode)) {
             return {
-              behavior: "deny",
-              message: "Approvals are not available yet, so this tool was not run.",
+              behavior: "allow",
+              updatedInput: toolInput,
               toolUseID: callbackOptions.toolUseID,
             } satisfies PermissionResult;
           }
-          return {
-            behavior: "allow",
-            updatedInput: toolInput,
-            toolUseID: callbackOptions.toolUseID,
-          } satisfies PermissionResult;
+          return yield* askForApproval(
+            turn,
+            toolName,
+            toolInput,
+            callbackOptions,
+            aborted("cancel"),
+          );
         }
         const toolUseId = callbackOptions.toolUseID;
         const requestId = RuntimeRequestId.make(`runtime-request:claude:${toolUseId}`);
         const nodeId = NodeId.make(`node:claude:${toolUseId}:question`);
         const now = yield* nowIso;
         const answers = yield* Deferred.make<ProviderUserInputAnswers | undefined>();
-        pendingQuestions.set(requestId, { turn, answers });
+        pendingRequests.set(requestId, { type: "user_input", turn, answers });
         yield* publish({
           type: "node.updated",
           node: {
@@ -600,15 +828,8 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (input
             resolvedAt: null,
           },
         });
-        // An interrupt aborts the signal, and releases the question too.
-        const aborted = Effect.callback<undefined>((resume) => {
-          const abort = () => resume(Effect.succeed(undefined));
-          callbackOptions.signal.addEventListener("abort", abort, { once: true });
-          if (callbackOptions.signal.aborted) abort();
-          return Effect.sync(() => callbackOptions.signal.removeEventListener("abort", abort));
-        });
-        const given = yield* Effect.raceFirst(Deferred.await(answers), aborted).pipe(
-          Effect.ensuring(Effect.sync(() => pendingQuestions.delete(requestId))),
+        const given = yield* Effect.raceFirst(Deferred.await(answers), aborted(undefined)).pipe(
+          Effect.ensuring(Effect.sync(() => pendingRequests.delete(requestId))),
         );
         return given === undefined
           ? ({
@@ -638,6 +859,15 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (input
           runPromise(canUseToolEffect(toolName, toolInput, callbackOptions)),
       });
       const session = yield* runner.open({ options, threadId: open.threadId });
+      /**
+       * The permission mode Claude Code says it is in (T3 Code's
+       * `permissionMode` beside `openedPermissionMode`), from its `init` and
+       * `status` messages. Claude Code changes it itself when the person
+       * approves an edit for the session (its suggestion is `setMode
+       * acceptEdits`).
+       */
+      const openedPermissionMode: PermissionMode = options.permissionMode ?? "default";
+      let permissionMode = openedPermissionMode;
       const live = yield* Ref.make(true);
       /** The selection the query runs now. */
       const liveSelection = yield* Ref.make(openedSelection);
@@ -784,7 +1014,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (input
             ),
             status: "running" as const,
           };
-          const itemType = classifyClaudeTool(block.name);
+          const itemType = classifyClaudeTool(block.name).itemType;
           const fileName = stringField(block.input, "file_path", "path", "filename", "fileName");
           const newStr = stringField(block.input, "content", "new_string");
           const item: OrchestrationV2TurnItem =
@@ -885,7 +1115,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (input
             );
           }
           yield* Ref.set(activeTurn, undefined);
-          yield* releaseQuestions(turn);
+          yield* releaseRequests(turn);
           yield* Deferred.succeed(turn.ended, undefined);
           yield* publish(
             failure === null
@@ -963,6 +1193,17 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (input
       // The query's messages for as long as the session lives. When they end,
       // the session is gone, and a turn still running fails.
       yield* session.messages.pipe(
+        Stream.tap((message) =>
+          Effect.sync(() => {
+            if (
+              message.type === "system" &&
+              (message.subtype === "init" || message.subtype === "status") &&
+              message.permissionMode !== undefined
+            ) {
+              permissionMode = message.permissionMode;
+            }
+          }),
+        ),
         Stream.runForEach(handleMessage),
         Effect.catch((error) =>
           Effect.logWarning("Claude's messages ended with an error.").pipe(
@@ -1029,6 +1270,14 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (input
                 );
               yield* Ref.set(liveSelection, next);
             }
+            // T3 Code's `openQuery`: Claude Code may have left the thread's
+            // mode on its own, so it goes back before the next prompt.
+            if (permissionMode !== openedPermissionMode) {
+              yield* session
+                .setPermissionMode(openedPermissionMode)
+                .pipe(Effect.mapError(adapterError("start-turn")));
+              permissionMode = openedPermissionMode;
+            }
             const promptUuid = promptUuidFor(turnInput.providerTurnId);
             yield* Ref.set(activeTurn, {
               input: turnInput,
@@ -1052,8 +1301,8 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (input
             if (turn === undefined || turn.input.providerTurnId !== providerTurnId) return;
             turn.interrupting = true;
             const stopped = yield* session.interrupt.pipe(
-              // Claude Code aborts a question's callback itself; release it anyway.
-              Effect.andThen(releaseQuestions(turn)),
+              // Claude Code aborts a request's callback itself; release it anyway.
+              Effect.andThen(releaseRequests(turn)),
               Effect.andThen(Deferred.await(turn.ended)),
               Effect.timeoutOption(INTERRUPT_TERMINAL_TIMEOUT),
               Effect.mapError(adapterError("interrupt-turn")),
@@ -1072,16 +1321,22 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (input
               yield* Effect.logWarning("Claude did not end an interrupted turn in time.");
             }
           }),
-        respondToRuntimeRequest: ({ requestId, answers }) =>
+        respondToRuntimeRequest: ({ requestId, decision, answers }) =>
           Effect.suspend(() => {
-            const pending = pendingQuestions.get(requestId);
-            return pending === undefined
-              ? Effect.fail(
-                  adapterError("respond-to-runtime-request")(
-                    `Claude is not waiting on runtime request ${requestId}.`,
-                  ),
-                )
-              : Deferred.succeed(pending.answers, answers).pipe(Effect.asVoid);
+            const pending = pendingRequests.get(requestId);
+            const refuse = (detail: string) =>
+              Effect.fail(adapterError("respond-to-runtime-request")(detail));
+            if (pending === undefined) {
+              return refuse(`Claude is not waiting on runtime request ${requestId}.`);
+            }
+            if (pending.type === "user_input") {
+              return answers === undefined
+                ? refuse(`Claude's question ${requestId} needs answers.`)
+                : Deferred.succeed(pending.answers, answers).pipe(Effect.asVoid);
+            }
+            return decision === undefined
+              ? refuse(`Claude's approval ${requestId} needs a decision.`)
+              : Deferred.succeed(pending.decision, decision).pipe(Effect.asVoid);
           }),
       };
       return runtime;

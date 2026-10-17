@@ -44,6 +44,18 @@ import {
   runSecondTurn,
 } from "../src/orchestration-v2/testkit/fixtures/restartResume.ts";
 import {
+  describeSessionApprovalRun,
+  runSessionApprovalScenario,
+  SESSION_APPROVAL_SCENARIOS,
+  type SessionApprovalScenario,
+} from "../src/orchestration-v2/testkit/fixtures/sessionApprovals.ts";
+import {
+  CLAUDE_SUPERVISED_SCENARIO,
+  runSupervisedScenario,
+  SUPERVISED_ANSWERS,
+  type SupervisedScenarioName,
+} from "../src/orchestration-v2/testkit/fixtures/supervisedApproval.ts";
+import {
   CLAUDE_TURN_INTERRUPT_SCENARIO,
   runTurnInterruptScenario,
 } from "../src/orchestration-v2/testkit/fixtures/turnInterrupt.ts";
@@ -74,7 +86,7 @@ import { makeTestServerConfig } from "../src/testUtils/testServer.ts";
  * adapter sends). It uses the signed-in `claude` on PATH, in a temporary
  * empty folder, and writes `src/orchestration-v2/testkit/fixtures/<scenario>.claude.ndjson`.
  *
- *   node apps/server/scripts/record-claude-replay.ts [file_create | restart_resume | turn_interrupt | question_answer | question_interrupt | auto_mode | traits_change | queued_turn]
+ *   node apps/server/scripts/record-claude-replay.ts [file_create | restart_resume | turn_interrupt | question_answer | question_interrupt | auto_mode | traits_change | approval_accept | approval_decline | approval_cancel | approval_interrupt | auto_accept_edits | session_command | session_edits | queued_turn]
  *
  * `auto_mode` writes a file in Auto, then changes the thread to Full access,
  * which reopens the query with `resume`, and sends one more message.
@@ -84,8 +96,14 @@ import { makeTestServerConfig } from "../src/testUtils/testServer.ts";
  * `question_answer` answers Claude's `AskUserQuestion` through
  * `runtime-request.respond`; `question_interrupt` interrupts the turn
  * waiting on it instead. `traits_change` sends turns that each carry other
- * reasoning efforts. `queued_turn` queues messages behind a turn, removes
- * one, and holds the queue with Stop before resuming it.
+ * reasoning efforts. The `approval_*` scenarios ask Claude, in
+ * Supervised, to write a file, and approve, decline or cancel each approval
+ * through `runtime-request.respond`, or interrupt the turn waiting on one.
+ * `auto_accept_edits`, `session_command` and `session_edits` send turns in
+ * Auto-accept edits and Supervised and answer each turn's approvals with its
+ * decision, **Always allow this session** among them. `queued_turn` queues
+ * messages behind a turn, removes one, and holds the queue with Stop before
+ * resuming it.
  *
  * The header carries `claude --version` and the capture date. The frames are
  * scrubbed by `src/orchestration-v2/testkit/replayScrub.ts`, shared with the
@@ -347,8 +365,75 @@ const recordAutoMode = (options: HarnessOptions) =>
     return { harness, workspace };
   });
 
+/** A file write in Supervised, and the person's answer to each approval it asks for. */
+const recordSupervised = (options: HarnessOptions, name: SupervisedScenarioName) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const harness = yield* makeOrchestrationHarness(options);
+    const answer = SUPERVISED_ANSWERS[name];
+    const { workspace, approvals, run } = yield* runSupervisedScenario(
+      harness,
+      CLAUDE_SUPERVISED_SCENARIO,
+      answer,
+    );
+    const written = path.join(workspace, CLAUDE_SUPERVISED_SCENARIO.fileName);
+    yield* Effect.logInfo("The turn ended.").pipe(
+      Effect.annotateLogs({
+        run: run.status,
+        approvals: JSON.stringify(approvals.map((approval) => approval.kind)),
+        file: (yield* fs.exists(written)) ? "written" : "missing",
+      }),
+    );
+    const expected = answer === "accept" || answer === "decline" ? "completed" : "interrupted";
+    if (run.status !== expected || approvals.length === 0) {
+      return yield* Effect.die(`The run ended ${run.status} after ${approvals.length} approvals.`);
+    }
+    // Only an approved change may happen.
+    if ((yield* fs.exists(written)) !== (answer === "accept")) {
+      return yield* Effect.die(`The file is ${answer === "accept" ? "missing" : "written"}.`);
+    }
+    return { harness, workspace };
+  });
+
+/** Turns whose approvals are each answered with the turn's decision. */
+const recordSessionApprovals = (options: HarnessOptions, scenario: SessionApprovalScenario) =>
+  Effect.gen(function* () {
+    const harness = yield* makeOrchestrationHarness(options);
+    const { workspace, turns } = yield* runSessionApprovalScenario(harness, scenario);
+    yield* Effect.logInfo("The turns ended.").pipe(
+      Effect.annotateLogs(yield* describeSessionApprovalRun(workspace, scenario, turns)),
+    );
+    if (turns.some((turn) => turn.run.status !== "completed")) {
+      return yield* Effect.die("A turn did not complete.");
+    }
+    return { harness, workspace };
+  });
+
+const sessionApprovalEntry = (scenario: SessionApprovalScenario) => ({
+  record: (options: HarnessOptions) => recordSessionApprovals(options, scenario),
+  metadata: { model: scenario.model, turns: scenario.turns },
+});
+
+const supervisedEntry = (name: SupervisedScenarioName) => ({
+  record: (options: HarnessOptions) => recordSupervised(options, name),
+  metadata: {
+    model: CLAUDE_SUPERVISED_SCENARIO.model,
+    prompt: CLAUDE_SUPERVISED_SCENARIO.prompt,
+    runtimeMode: "approval-required",
+    answer: SUPERVISED_ANSWERS[name],
+  },
+});
+
 /** Each scenario: how it is recorded, and what the header says about it. */
 const SCENARIOS = {
+  approval_accept: supervisedEntry("approval_accept"),
+  approval_decline: supervisedEntry("approval_decline"),
+  approval_cancel: supervisedEntry("approval_cancel"),
+  approval_interrupt: supervisedEntry("approval_interrupt"),
+  auto_accept_edits: sessionApprovalEntry(SESSION_APPROVAL_SCENARIOS.claude.auto_accept_edits),
+  session_command: sessionApprovalEntry(SESSION_APPROVAL_SCENARIOS.claude.session_command),
+  session_edits: sessionApprovalEntry(SESSION_APPROVAL_SCENARIOS.claude.session_edits),
   [CLAUDE_QUEUED_TURN_SCENARIO.scenario]: {
     record: recordQueuedTurn,
     metadata: {

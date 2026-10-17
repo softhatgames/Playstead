@@ -31,9 +31,9 @@ import { ProviderDriverKind, ProviderInstanceId } from "./providerInstance.ts";
  * produce, and the thread and shell streams. Times are ISO strings, as the
  * project contract keeps them, so one schema serves the database and the wire.
  *
- * A thread runs in its runtime mode. Runtime requests are only the
- * provider's questions to the person; approvals are absent. Absent too:
- * subagents, plans, checkpoints and context handoffs.
+ * A thread runs in its runtime mode. Runtime requests are the provider's
+ * questions to the person and its requests for approval. Absent: subagents,
+ * plans, checkpoints and context handoffs.
  */
 
 export const ORCHESTRATION_V2_WS_METHODS = {
@@ -166,7 +166,13 @@ export const OrchestrationV2ExecutionNode = Schema.Struct({
   runId: Schema.NullOr(RunId),
   parentNodeId: Schema.NullOr(NodeId),
   rootNodeId: NodeId,
-  kind: Schema.Literals(["root_turn", "assistant_message", "tool_call", "user_input_request"]),
+  kind: Schema.Literals([
+    "root_turn",
+    "assistant_message",
+    "tool_call",
+    "approval_request",
+    "user_input_request",
+  ]),
   status: Schema.Literals(["pending", "running", "waiting", ...TerminalWorkStatuses]),
   providerThreadId: Schema.NullOr(ProviderThreadId),
   providerTurnId: Schema.NullOr(ProviderTurnId),
@@ -269,16 +275,56 @@ export const ProviderUserInputAnswers = Schema.Record(
 export type ProviderUserInputAnswers = typeof ProviderUserInputAnswers.Type;
 
 /**
+ * What a provider asks the person to approve (T3 Code's `ProviderRequestKind`
+ * in `packages/contracts/src/providerPolicy.ts` at 2577baf): running a
+ * command, reading files, changing files, an app's access, or a permission.
+ */
+export const ProviderRequestKind = Schema.Literals([
+  "command",
+  "file-read",
+  "file-change",
+  "mcp-elicitation",
+  "permission",
+]);
+export type ProviderRequestKind = typeof ProviderRequestKind.Type;
+
+/**
+ * The person's answer to an approval (T3 Code's `ProviderApprovalDecision`):
+ * approve once, approve for the session (`acceptAlways` is the same for
+ * Codex and Claude), decline and let the agent go on, or cancel, which
+ * also stops the turn.
+ */
+export const ProviderApprovalDecision = Schema.Literals([
+  "accept",
+  "acceptForSession",
+  "acceptAlways",
+  "decline",
+  "cancel",
+]);
+export type ProviderApprovalDecision = typeof ProviderApprovalDecision.Type;
+
+/** A decision as a provider labels it, in place of the default ones (T3 Code's `ProviderApprovalOption`). */
+export const ProviderApprovalOption = Schema.Struct({
+  decision: ProviderApprovalDecision,
+  label: TrimmedNonEmptyString,
+  warning: Schema.optionalKey(TrimmedNonEmptyString),
+});
+export type ProviderApprovalOption = typeof ProviderApprovalOption.Type;
+
+/**
  * Something a provider waits on the person for (T3 Code's
- * `OrchestrationV2RuntimeRequest`, trimmed to questions). It is pending until
- * answered (`resolved`). A turn that ends first cancels it, and a server
- * that stops while it is pending leaves it `expired`, no longer answerable.
+ * `OrchestrationV2RuntimeRequest`, without dynamic tool calls, sign-in
+ * refreshes or answers by message): an approval of one of the request
+ * kinds, answered with a `decision`, or questions (`user_input`), answered
+ * with `answers`. It is pending until answered (`resolved`). A turn that
+ * ends first cancels it, and a server that stops while it is pending leaves
+ * it `expired`, no longer answerable.
  */
 export const OrchestrationV2RuntimeRequest = Schema.Struct({
   id: RuntimeRequestId,
   nodeId: NodeId,
   providerTurnId: Schema.NullOr(ProviderTurnId),
-  kind: Schema.Literal("user_input"),
+  kind: Schema.Union([ProviderRequestKind, Schema.Literal("user_input")]),
   status: Schema.Literals(["pending", "resolved", "expired", "cancelled"]),
   responseCapability: Schema.Union([
     Schema.Struct({ type: Schema.Literal("live"), providerSessionId: ProviderSessionId }),
@@ -286,6 +332,7 @@ export const OrchestrationV2RuntimeRequest = Schema.Struct({
   ]),
   createdAt: IsoDateTime,
   resolvedAt: Schema.NullOr(IsoDateTime),
+  decision: Schema.optionalKey(ProviderApprovalDecision),
   answers: Schema.optionalKey(ProviderUserInputAnswers),
 });
 export type OrchestrationV2RuntimeRequest = typeof OrchestrationV2RuntimeRequest.Type;
@@ -313,9 +360,10 @@ const TurnItemBaseFields = {
  * written content in `newStr`, which T3 Code's Claude adapter leaves out. An
  * interrupt is a request, written when the person asks, and a result,
  * written when the run has stopped; the result names its request in
- * `parentItemId`. A `user_input_request` shows a runtime request's
- * questions, and their answers once given (T3 Code's `questionAnswer`,
- * trimmed).
+ * `parentItemId`. An `approval_request` shows what a runtime request asks
+ * to be approved: its kind and the provider's prompt. A `user_input_request`
+ * shows a runtime request's questions, and their answers once given (T3
+ * Code's `questionAnswer`, trimmed).
  */
 export const OrchestrationV2TurnItem = Schema.Union([
   Schema.Struct({
@@ -359,6 +407,15 @@ export const OrchestrationV2TurnItem = Schema.Union([
     ...TurnItemBaseFields,
     type: Schema.Literal("error"),
     failure: OrchestrationV2ProviderFailure,
+  }),
+  Schema.Struct({
+    ...TurnItemBaseFields,
+    type: Schema.Literal("approval_request"),
+    requestId: RuntimeRequestId,
+    requestKind: ProviderRequestKind,
+    prompt: Schema.optionalKey(Schema.String),
+    appName: Schema.optionalKey(Schema.String),
+    options: Schema.optionalKey(Schema.Array(ProviderApprovalOption)),
   }),
   Schema.Struct({
     ...TurnItemBaseFields,
@@ -527,7 +584,8 @@ export type MessageDispatchMode = typeof MessageDispatchMode.Type;
  * it; queued runs can be reordered, edited and cancelled, and once held
  * wait for `queue.resume`. `run.interrupt` stops a run that is still
  * active, and **Stop** holds the queue with it. `runtime-request.respond`
- * answers a provider's question; there are no approval decisions.
+ * answers a provider's request: an approval with a `decision`, questions
+ * with `answers`.
  */
 export const OrchestrationV2Command = Schema.Union([
   Schema.Struct({
@@ -610,7 +668,8 @@ export const OrchestrationV2Command = Schema.Union([
     commandId: CommandId,
     threadId: ThreadId,
     requestId: RuntimeRequestId,
-    answers: ProviderUserInputAnswers,
+    decision: Schema.optionalKey(ProviderApprovalDecision),
+    answers: Schema.optionalKey(ProviderUserInputAnswers),
   }),
 ]);
 export type OrchestrationV2Command = typeof OrchestrationV2Command.Type;

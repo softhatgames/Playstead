@@ -16,6 +16,7 @@ import type {
   OrchestrationV2ProviderThread,
   OrchestrationV2RuntimeRequest,
   OrchestrationV2TurnItem,
+  ProviderApprovalDecision,
   ProviderInteractionMode,
   ProviderUserInputAnswers,
   RuntimeMode,
@@ -33,7 +34,7 @@ import type * as Stream from "effect/Stream";
  * only sessions, turns and the events below.
  *
  * Trimmed to starting and interrupting turns and answering the provider's
- * questions. Steering, rollback, fork and approvals are absent.
+ * approvals and questions. Steering, rollback and fork are absent.
  */
 
 /** A turn runs in its thread's runtime mode, with the default interaction mode, in its project's folder. */
@@ -77,7 +78,7 @@ export interface ProviderAdapterV2TurnInput {
 export type ProviderAdapterV2Event =
   | { readonly type: "node.updated"; readonly node: OrchestrationV2ExecutionNode }
   | { readonly type: "turn_item.updated"; readonly turnItem: OrchestrationV2TurnItem }
-  /** A question the provider waits on; its node and item come first. */
+  /** An approval or a question the provider waits on; its node and item come first. */
   | {
       readonly type: "runtime_request.updated";
       readonly runtimeRequest: OrchestrationV2RuntimeRequest;
@@ -143,21 +144,24 @@ export interface ProviderAdapterV2SessionRuntime {
    * still ends with its `turn.terminal`, normally `interrupted`; when the
    * provider sends none within `INTERRUPT_TERMINAL_TIMEOUT`, the adapter ends
    * the turn interrupted itself, so the session can run the next one. Does
-   * nothing when the turn has already ended. A question the turn waits on
-   * is released without an answer, so the provider can stop; T3 Code's
-   * adapters leave it waiting.
+   * nothing when the turn has already ended. An approval or a question the
+   * turn waits on is released without an answer, so the provider can stop;
+   * T3 Code's adapters leave it waiting.
    */
   readonly interruptTurn: (input: {
     readonly providerThread: OrchestrationV2ProviderThread;
     readonly providerTurnId: ProviderTurnId;
   }) => Effect.Effect<void, ProviderAdapterV2Error>;
   /**
-   * Gives the provider the person's answers to a question it asked (T3
-   * Code's `respondToRuntimeRequest`). Fails when no such question waits.
+   * Gives the provider the person's answer to a request it made (T3 Code's
+   * `respondToRuntimeRequest`): a decision for an approval, answers for a
+   * question. Fails when no such request waits, or the answer is the wrong
+   * kind for it.
    */
   readonly respondToRuntimeRequest: (input: {
     readonly requestId: RuntimeRequestId;
-    readonly answers: ProviderUserInputAnswers;
+    readonly decision?: ProviderApprovalDecision;
+    readonly answers?: ProviderUserInputAnswers;
   }) => Effect.Effect<void, ProviderAdapterV2Error>;
 }
 

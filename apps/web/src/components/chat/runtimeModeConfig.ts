@@ -37,9 +37,10 @@ export const runtimeModeConfig: Record<
   },
 };
 
-/**
- * The modes the picker offers, in T3 Code's order. Supervised and
- * Auto-accept edits need approvals, which are absent, so they are not
- * offered yet.
- */
-export const runtimeModeOptions: ReadonlyArray<RuntimeMode> = ["auto", "full-access"];
+/** The modes the picker offers, in T3 Code's order. */
+export const runtimeModeOptions: ReadonlyArray<RuntimeMode> = [
+  "approval-required",
+  "auto-accept-edits",
+  "auto",
+  "full-access",
+];

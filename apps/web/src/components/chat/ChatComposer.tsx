@@ -11,6 +11,7 @@ import {
   type ModelSelection,
   type OrchestrationV2Run,
   type OrchestrationV2TurnItem,
+  type ProviderApprovalDecision,
   type ProviderUserInputAnswers,
   type RuntimeMode,
 } from "@playstead/contracts/orchestrationV2";
@@ -35,7 +36,9 @@ import {
 } from "./composer.logic.ts";
 import { QueuedRunsControl, type QueuedRunsControlHandle } from "./QueuedRunsControl.tsx";
 import { recoverQueuedMessageEdit } from "./queuedMessageEdit.ts";
+import { ComposerPendingApprovalPanel } from "./ComposerPendingApprovalPanel.tsx";
 import { ComposerPendingUserInputPanel } from "./ComposerPendingUserInputPanel.tsx";
+import type { PendingApproval } from "./pendingApproval.logic.ts";
 import type { PendingUserInput } from "./pendingUserInput.logic.ts";
 import { ProviderModelPicker } from "./ProviderModelPicker.tsx";
 import { RuntimeModePicker } from "./RuntimeModePicker.tsx";
@@ -86,9 +89,9 @@ interface QueuedEdit {
  * `alt+arrowup` at the start of the composer, opens one for editing in the
  * composer, which keeps what was typed and gives it back afterwards. After
  * a stop, or while the queue is held, an empty composer offers **Resume**.
- * A question the provider waits on shows above it, in the pending
- * user-input panel, the oldest first (T3 Code's `ChatComposer` renders it
- * there too).
+ * An approval the provider waits on shows above it, in the approval panel,
+ * the oldest first; else a question, in the pending user-input panel (T3
+ * Code's `ChatComposer` renders them there too, the approval first).
  * Beside the model picker are the reasoning and traits picker for the
  * selected model, which can rewrite the prompt for Ultrathink, and the mode
  * picker, which `mod+shift+a` opens; a mode chosen there goes with the next
@@ -117,6 +120,12 @@ export function ChatComposer(props: {
   readonly onReorderQueuedRun: (runId: RunId, beforeRunId: RunId | null) => Promise<void>;
   readonly onRemoveQueuedRun: (runId: RunId) => Promise<void>;
   readonly onUpdateQueuedRun: (runId: RunId, text: string) => Promise<void>;
+  /** The approvals waiting, oldest first; the panel shows the first. */
+  readonly pendingApprovals: ReadonlyArray<PendingApproval>;
+  readonly onRespondToApproval: (
+    requestId: RuntimeRequestId,
+    decision: ProviderApprovalDecision,
+  ) => Promise<void>;
   readonly pendingUserInput: PendingUserInput | undefined;
   readonly onRespondToUserInput: (
     requestId: RuntimeRequestId,
@@ -298,7 +307,14 @@ export function ChatComposer(props: {
 
   return (
     <div className="mx-auto w-full max-w-3xl px-6 pb-6">
-      {props.pendingUserInput === undefined ? null : (
+      {props.pendingApprovals[0] !== undefined ? (
+        <ComposerPendingApprovalPanel
+          key={props.pendingApprovals[0].requestId}
+          approval={props.pendingApprovals[0]}
+          pendingCount={props.pendingApprovals.length}
+          onRespond={props.onRespondToApproval}
+        />
+      ) : props.pendingUserInput === undefined ? null : (
         <ComposerPendingUserInputPanel
           key={props.pendingUserInput.requestId}
           pending={props.pendingUserInput}

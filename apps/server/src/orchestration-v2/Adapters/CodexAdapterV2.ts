@@ -9,6 +9,8 @@ import type {
   OrchestrationV2ExecutionNode,
   OrchestrationV2ProviderFailure,
   OrchestrationV2TurnItem,
+  ProviderApprovalDecision,
+  ProviderRequestKind,
   ProviderUserInputAnswers,
   RuntimeMode,
 } from "@playstead/contracts/orchestrationV2";
@@ -79,10 +81,23 @@ import { codexClientInfo, spawnCodexAppServer } from "../../provider/CodexProvid
  *   recording. An interrupt stops waiting without answering: Codex drops
  *   the request itself when the turn ends.
  *
+ * - Codex's command, file-change and permissions approvals, and the legacy
+ *   `execCommandApproval` and `applyPatchApproval`, reach the person as
+ *   approval requests, as T3 Code's handlers route them, and the decision
+ *   goes back as T3 Code maps it: `acceptAlways` approves for the session,
+ *   and a permissions request is granted for the turn or the session, or
+ *   not at all. An interrupt stops waiting without answering, as for a
+ *   question.
+ * - Approving a command or a file change for the session allows that kind
+ *   of request for the rest of the session while the runtime mode stays
+ *   the same, as T3 Code's `sessionApprovals` does: the adapter answers
+ *   Codex's later requests of that kind itself, without asking. A turn in
+ *   another mode starts with nothing allowed.
+ *
  * Absent: resuming a thread after a restart; and, as in the slice as a
- * whole, MCP, plans, showing reasoning, collaboration modes, subagents, goals,
- * approvals and usage. A server request nobody handles gets "method not
- * found" from the client, so an unexpected approval fails loudly.
+ * whole, MCP, plans, showing reasoning, collaboration modes, subagents, goals and
+ * usage. A server request nobody handles gets "method not found" from the
+ * client, so an unexpected one fails loudly.
  */
 
 const CODEX = "codex" as const;
@@ -235,6 +250,71 @@ const toCodexUserInputAnswers = (
     ),
   );
 
+/** The decision as a legacy approval takes it (T3 Code's `approvalDecisionToLegacyReviewDecision`). */
+const legacyReviewDecision = (decision: ProviderApprovalDecision): CodexSchema.ReviewDecision => {
+  switch (decision) {
+    case "accept":
+      return "approved";
+    case "acceptForSession":
+    case "acceptAlways":
+      return "approved_for_session";
+    case "decline":
+      return { denied: { rejection: "User declined the request." } };
+    case "cancel":
+      return "abort";
+  }
+};
+
+/** `acceptAlways` is Codex's approval for the session (T3 Code's handlers). */
+const codexApprovalDecision = (decision: ProviderApprovalDecision) =>
+  decision === "acceptAlways" ? "acceptForSession" : decision;
+
+/** What a permissions request asks for (T3 Code's `providerRequestKindFromPermissions`). */
+const requestKindFromPermissions = (
+  permissions: CodexSchema.PermissionsRequestApprovalParams["permissions"],
+): ProviderRequestKind =>
+  (permissions.fileSystem?.write?.length ?? 0) > 0
+    ? "file-change"
+    : (permissions.fileSystem?.read?.length ?? 0) > 0
+      ? "file-read"
+      : "command";
+
+/** T3 Code's `permissionsResponseFromDecision`: granted for the turn or the session, or nothing. */
+const permissionsResponse = (
+  decision: ProviderApprovalDecision,
+  permissions: CodexSchema.PermissionsRequestApprovalParams["permissions"],
+): CodexSchema.PermissionsRequestApprovalResponse =>
+  decision === "accept" || decision === "acceptForSession"
+    ? { permissions, scope: decision === "acceptForSession" ? "session" : "turn" }
+    : { permissions: {}, scope: "turn" };
+
+/**
+ * A file change's prompt (T3 Code's `codexFileChangeApprovalPrompt`): Codex's
+ * reason, else the changed files in order (at most 20), else the folder it
+ * asks to write under.
+ */
+const fileChangeApprovalPrompt = (input: {
+  readonly reason?: string | null;
+  readonly grantRoot?: string | null;
+  readonly fileChanges?: CodexSchema.ApplyPatchApprovalParams["fileChanges"];
+}): string | undefined => {
+  const reason = input.reason?.trim();
+  if (reason !== undefined && reason.length > 0) return reason;
+  const entries = Object.entries(input.fileChanges ?? {}).toSorted(([left], [right]) =>
+    left.localeCompare(right),
+  );
+  if (entries.length > 0) {
+    const described = entries.slice(0, 20).map(([path, change]) => {
+      const movePath = change.type === "update" ? change.move_path : undefined;
+      return movePath ? `${change.type} ${path} -> ${movePath}` : `${change.type} ${path}`;
+    });
+    const remaining = entries.length - described.length;
+    return remaining > 0 ? `${described.join("\n")}\n+${remaining} more` : described.join("\n");
+  }
+  const root = input.grantRoot?.trim();
+  return root === undefined || root.length === 0 ? undefined : root;
+};
+
 const nonEmpty = (value: string | undefined, fallback: string) =>
   value !== undefined && value.trim().length > 0 ? value.trim() : fallback;
 
@@ -294,18 +374,27 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (input: 
 
       const publish = (event: ProviderAdapterV2Event) => PubSub.publish(events, event);
 
-      /** Questions Codex waits on; `undefined` stops waiting without an answer. */
-      const pendingQuestions = new Map<
+      /** Requests Codex waits on; `undefined` stops waiting without an answer. */
+      const pendingRequests = new Map<
         RuntimeRequestId,
-        {
-          readonly turn: ActiveTurn;
-          readonly answers: Deferred.Deferred<ProviderUserInputAnswers | undefined>;
-        }
+        | {
+            readonly type: "user_input";
+            readonly turn: ActiveTurn;
+            readonly answers: Deferred.Deferred<ProviderUserInputAnswers | undefined>;
+          }
+        | {
+            readonly type: "approval";
+            readonly turn: ActiveTurn;
+            readonly decision: Deferred.Deferred<ProviderApprovalDecision | undefined>;
+          }
       >();
-      const releaseQuestions = (turn: ActiveTurn) =>
+      const releaseRequests = (turn: ActiveTurn) =>
         Effect.forEach(
-          [...pendingQuestions.values()].filter((pending) => pending.turn === turn),
-          (pending) => Deferred.succeed(pending.answers, undefined),
+          [...pendingRequests.values()].filter((pending) => pending.turn === turn),
+          (pending) =>
+            pending.type === "user_input"
+              ? Deferred.succeed(pending.answers, undefined)
+              : Deferred.succeed(pending.decision, undefined),
           { discard: true },
         );
 
@@ -510,7 +599,7 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (input: 
             );
           }
           yield* Ref.set(activeTurn, undefined);
-          yield* releaseQuestions(turn);
+          yield* releaseRequests(turn);
           yield* Deferred.succeed(turn.ended, undefined);
           yield* publish(
             status === "failed"
@@ -603,7 +692,7 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (input: 
           const nodeId = base.nodeId;
           const requestId = RuntimeRequestId.make(`runtime-request:codex:${params.itemId}`);
           const answers = yield* Deferred.make<ProviderUserInputAnswers | undefined>();
-          pendingQuestions.set(requestId, { turn, answers });
+          pendingRequests.set(requestId, { type: "user_input", turn, answers });
           yield* publish({
             type: "node.updated",
             node: {
@@ -652,7 +741,7 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (input: 
             },
           });
           const given = yield* Deferred.await(answers).pipe(
-            Effect.ensuring(Effect.sync(() => pendingQuestions.delete(requestId))),
+            Effect.ensuring(Effect.sync(() => pendingRequests.delete(requestId))),
           );
           // Released: no answer goes back, and Codex drops the request itself.
           if (given === undefined) return yield* Effect.interrupt;
@@ -662,6 +751,219 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (input: 
               new Set(params.questions.map((question) => question.id)),
             ),
           };
+        }),
+      );
+
+      /**
+       * T3 Code's `buildApprovalRequestArtifacts` and its wait: the
+       * approval's node, its item, then the request, and the person's
+       * decision once given. `undefined` when the turn released it.
+       */
+      const askForApproval = (input: {
+        readonly turn: ActiveTurn;
+        readonly nativeItemId: string;
+        readonly nativeRequestId: string;
+        readonly requestKind: ProviderRequestKind;
+        readonly prompt: string | null | undefined;
+      }) =>
+        Effect.gen(function* () {
+          const { turn } = input;
+          const now = yield* nowIso;
+          const requestId = RuntimeRequestId.make(`runtime-request:codex:${input.nativeRequestId}`);
+          const nodeId = NodeId.make(`node:codex:${input.nativeRequestId}:approval`);
+          const decision = yield* Deferred.make<ProviderApprovalDecision | undefined>();
+          pendingRequests.set(requestId, { type: "approval", turn, decision });
+          yield* publish({
+            type: "node.updated",
+            node: {
+              id: nodeId,
+              threadId: turn.input.threadId,
+              runId: turn.input.runId,
+              parentNodeId: NodeId.make(`node:codex:${input.nativeItemId}`),
+              rootNodeId: turn.input.rootNodeId,
+              kind: "approval_request",
+              status: "waiting",
+              providerThreadId: turn.input.providerThread.id,
+              providerTurnId: turn.input.providerTurnId,
+              startedAt: now,
+              completedAt: null,
+            },
+          });
+          yield* publish({
+            type: "turn_item.updated",
+            turnItem: {
+              ...itemBase(turn, input.nativeRequestId, now),
+              id: TurnItemId.make(`item:codex:${input.nativeRequestId}:approval`),
+              nodeId,
+              status: "waiting",
+              type: "approval_request",
+              requestId,
+              requestKind: input.requestKind,
+              ...(input.prompt === null || input.prompt === undefined
+                ? {}
+                : { prompt: input.prompt }),
+            },
+          });
+          yield* publish({
+            type: "runtime_request.updated",
+            runtimeRequest: {
+              id: requestId,
+              nodeId,
+              providerTurnId: turn.input.providerTurnId,
+              kind: input.requestKind,
+              status: "pending",
+              responseCapability: { type: "live", providerSessionId: open.providerSessionId },
+              createdAt: now,
+              resolvedAt: null,
+            },
+          });
+          const decided = yield* Deferred.await(decision).pipe(
+            Effect.ensuring(Effect.sync(() => pendingRequests.delete(requestId))),
+          );
+          // Released: no answer goes back, and Codex drops the request itself.
+          if (decided === undefined) return yield* Effect.interrupt;
+          return decided;
+        });
+
+      /**
+       * The kinds of request the person allowed for the rest of the session
+       * (T3 Code's `sessionApprovals`), and the runtime mode they were
+       * allowed in. Codex's own `acceptForSession` only skips the exact
+       * command or patch it answered, so every new command would ask again.
+       * The session has one Codex thread, so T3 Code's key by thread is the
+       * session here.
+       */
+      let sessionApprovals:
+        | { readonly runtimeMode: RuntimeMode; readonly kinds: Set<ProviderRequestKind> }
+        | undefined;
+      /** T3 Code's `endSessionApprovalsOnModeChange`: a turn in another mode starts with none. */
+      const endSessionApprovalsOnModeChange = (turn: ProviderAdapterV2TurnInput) => {
+        if (sessionApprovals?.runtimeMode !== turn.runtimePolicy.runtimeMode) {
+          sessionApprovals = undefined;
+        }
+      };
+      /**
+       * T3 Code's `sessionAllowance`: the allowed kinds for a request's turn,
+       * read when the request arrives and added to when the person answers,
+       * so a late answer from a turn whose mode has since ended is dropped.
+       */
+      const sessionAllowance = (turn: ActiveTurn): Set<ProviderRequestKind> => {
+        const runtimeMode = turn.input.runtimePolicy.runtimeMode;
+        if (sessionApprovals?.runtimeMode === runtimeMode) return sessionApprovals.kinds;
+        if (sessionApprovals !== undefined) return new Set();
+        sessionApprovals = { runtimeMode, kinds: new Set() };
+        return sessionApprovals.kinds;
+      };
+      /**
+       * Asks for an approval the session has not allowed yet: `undefined`
+       * when it has, else the decision, remembering a session approval.
+       */
+      const askUnlessAllowed = (input: Parameters<typeof askForApproval>[0]) =>
+        Effect.gen(function* () {
+          const allowance = sessionAllowance(input.turn);
+          if (allowance.has(input.requestKind)) return undefined;
+          const decision = yield* askForApproval(input);
+          if (decision === "acceptForSession" || decision === "acceptAlways") {
+            allowance.add(input.requestKind);
+          }
+          return decision;
+        });
+
+      const noTurn = (method: string, detail: string) =>
+        CodexAppServerRequestError.internal(method, `No turn is running for ${detail}.`);
+
+      /** The running turn of this session's Codex thread, for a legacy approval. */
+      const turnForThread = (conversationId: string) =>
+        Effect.gen(function* () {
+          const turn = yield* Ref.get(activeTurn);
+          return turn !== undefined && (yield* Ref.get(nativeThreadId)) === conversationId
+            ? turn
+            : undefined;
+        });
+
+      yield* client.handleServerRequest("item/commandExecution/requestApproval", (params) =>
+        Effect.gen(function* () {
+          const method = "item/commandExecution/requestApproval";
+          const turn = yield* turnFor(params.turnId);
+          if (turn === undefined) {
+            return yield* noTurn(method, `the command approval of turn ${params.turnId}`);
+          }
+          const decision = yield* askUnlessAllowed({
+            turn,
+            nativeItemId: params.itemId,
+            nativeRequestId: params.approvalId ?? params.itemId,
+            requestKind: "command",
+            prompt: params.reason ?? params.command,
+          });
+          return { decision: codexApprovalDecision(decision ?? "acceptForSession") };
+        }),
+      );
+      yield* client.handleServerRequest("item/fileChange/requestApproval", (params) =>
+        Effect.gen(function* () {
+          const method = "item/fileChange/requestApproval";
+          const turn = yield* turnFor(params.turnId);
+          if (turn === undefined) {
+            return yield* noTurn(method, `the file change approval of turn ${params.turnId}`);
+          }
+          const decision = yield* askUnlessAllowed({
+            turn,
+            nativeItemId: params.itemId,
+            nativeRequestId: params.itemId,
+            requestKind: "file-change",
+            prompt: fileChangeApprovalPrompt(params),
+          });
+          return { decision: codexApprovalDecision(decision ?? "acceptForSession") };
+        }),
+      );
+      yield* client.handleServerRequest("item/permissions/requestApproval", (params) =>
+        Effect.gen(function* () {
+          const method = "item/permissions/requestApproval";
+          const turn = yield* turnFor(params.turnId);
+          if (turn === undefined) {
+            return yield* noTurn(method, `the permissions approval of turn ${params.turnId}`);
+          }
+          const decision = yield* askForApproval({
+            turn,
+            nativeItemId: params.itemId,
+            nativeRequestId: params.itemId,
+            requestKind: requestKindFromPermissions(params.permissions),
+            prompt: params.reason,
+          });
+          return permissionsResponse(decision, params.permissions);
+        }),
+      );
+      yield* client.handleServerRequest("execCommandApproval", (params) =>
+        Effect.gen(function* () {
+          const method = "execCommandApproval";
+          const turn = yield* turnForThread(params.conversationId);
+          if (turn === undefined) {
+            return yield* noTurn(method, `the command approval of ${params.conversationId}`);
+          }
+          const decision = yield* askUnlessAllowed({
+            turn,
+            nativeItemId: params.callId,
+            nativeRequestId: params.approvalId ?? params.callId,
+            requestKind: "command",
+            prompt: params.reason ?? params.command.join(" "),
+          });
+          return { decision: legacyReviewDecision(decision ?? "acceptForSession") };
+        }),
+      );
+      yield* client.handleServerRequest("applyPatchApproval", (params) =>
+        Effect.gen(function* () {
+          const method = "applyPatchApproval";
+          const turn = yield* turnForThread(params.conversationId);
+          if (turn === undefined) {
+            return yield* noTurn(method, `the patch approval of ${params.conversationId}`);
+          }
+          const decision = yield* askUnlessAllowed({
+            turn,
+            nativeItemId: params.callId,
+            nativeRequestId: params.callId,
+            requestKind: "file-change",
+            prompt: fileChangeApprovalPrompt(params),
+          });
+          return { decision: legacyReviewDecision(decision ?? "acceptForSession") };
         }),
       );
 
@@ -732,6 +1034,7 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (input: 
             if (threadId === undefined) {
               return yield* adapterError("start-turn")("Codex has no thread for this turn.");
             }
+            endSessionApprovalsOnModeChange(turnInput);
             const turn: ActiveTurn = {
               input: turnInput,
               nativeTurnId: undefined,
@@ -778,7 +1081,7 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (input: 
             }).pipe(
               Effect.timeoutOption(INTERRUPT_TERMINAL_TIMEOUT),
               Effect.mapError(adapterError("interrupt-turn")),
-              Effect.ensuring(releaseQuestions(turn)),
+              Effect.ensuring(releaseRequests(turn)),
               Effect.ensuring(
                 // Codex never answered: the turn ends here, so the next can start.
                 Effect.suspend(() =>
@@ -794,16 +1097,23 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (input: 
               yield* Effect.logWarning("Codex did not end an interrupted turn in time.");
             }
           }),
-        respondToRuntimeRequest: ({ requestId, answers }) =>
+        // T3 Code's `respondToRuntimeRequest`: answers for a question, a decision for an approval.
+        respondToRuntimeRequest: ({ requestId, decision, answers }) =>
           Effect.suspend(() => {
-            const pending = pendingQuestions.get(requestId);
-            return pending === undefined
-              ? Effect.fail(
-                  adapterError("respond-to-runtime-request")(
-                    `Codex is not waiting on runtime request ${requestId}.`,
-                  ),
-                )
-              : Deferred.succeed(pending.answers, answers).pipe(Effect.asVoid);
+            const pending = pendingRequests.get(requestId);
+            const refuse = (detail: string) =>
+              Effect.fail(adapterError("respond-to-runtime-request")(detail));
+            if (pending === undefined) {
+              return refuse(`Codex is not waiting on runtime request ${requestId}.`);
+            }
+            if (pending.type === "user_input") {
+              return answers === undefined
+                ? refuse(`Codex's question ${requestId} needs answers.`)
+                : Deferred.succeed(pending.answers, answers).pipe(Effect.asVoid);
+            }
+            return decision === undefined
+              ? refuse(`Codex's approval ${requestId} needs a decision.`)
+              : Deferred.succeed(pending.decision, decision).pipe(Effect.asVoid);
           }),
       };
       return runtime;

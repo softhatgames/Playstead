@@ -16,6 +16,8 @@ import {
   type OrchestrationV2RuntimeRequest,
   type OrchestrationV2ThreadProjection,
   type OrchestrationV2TurnItem,
+  type ProviderApprovalDecision,
+  type ProviderUserInputAnswers,
 } from "@playstead/contracts/orchestrationV2";
 import { modelSelectionsEqual } from "@playstead/shared/model";
 import { latestExecutedRun } from "@playstead/shared/orchestrationRuns";
@@ -128,9 +130,9 @@ const reject = (command: OrchestrationV2Command, reason: string) =>
  *   once and its start is cancelled; otherwise the provider is asked to
  *   stop, and the run ends when its turn does. With `holdQueue` (**Stop**)
  *   the queued runs are held too.
- * - `runtime-request.respond` answers a question still pending and
- *   answerable, once every question has an answer; the provider is given
- *   the answers. There are no approval decisions.
+ * - `runtime-request.respond` answers a request still pending and
+ *   answerable: an approval with a decision, questions once each has an
+ *   answer; the provider is given them.
  */
 export function decideThreadCommand(input: {
   readonly command: OrchestrationV2Command;
@@ -388,24 +390,47 @@ export function decideThreadCommand(input: {
       }
       const item = projection.turnItems.find(
         (candidate) =>
-          candidate.type === "user_input_request" && candidate.requestId === request.id,
+          (candidate.type === "approval_request" || candidate.type === "user_input_request") &&
+          candidate.requestId === request.id,
       );
-      if (item?.type !== "user_input_request" || item.runId === null) {
-        return reject(command, `The question for runtime request ${request.id} was not found.`);
+      if (request.kind === "user_input") {
+        if (item?.type !== "user_input_request" || item.runId === null) {
+          return reject(command, `The question for runtime request ${request.id} was not found.`);
+        }
+        const answers = command.answers;
+        if (answers === undefined) return reject(command, "Answer each question before sending.");
+        const unanswered = item.questions.some((question) => {
+          const answer = answers[question.id];
+          return typeof answer === "string"
+            ? answer.trim().length === 0
+            : answer === undefined || answer.length === 0;
+        });
+        if (unanswered) return reject(command, "Answer each question before sending.");
+        return Result.succeed(
+          dispatchRuntimeRequestRespond(
+            projection,
+            request,
+            item,
+            { answers },
+            request.responseCapability.providerSessionId,
+            item.runId,
+            ids,
+            now,
+          ),
+        );
       }
-      const unanswered = item.questions.some((question) => {
-        const answer = command.answers[question.id];
-        return typeof answer === "string"
-          ? answer.trim().length === 0
-          : answer === undefined || answer.length === 0;
-      });
-      if (unanswered) return reject(command, "Answer each question before sending.");
+      if (item?.type !== "approval_request" || item.runId === null) {
+        return reject(command, `The approval for runtime request ${request.id} was not found.`);
+      }
+      if (command.decision === undefined) {
+        return reject(command, `Runtime request ${request.id} needs an approval decision.`);
+      }
       return Result.succeed(
         dispatchRuntimeRequestRespond(
-          command,
           projection,
           request,
           item,
+          { decision: command.decision },
           request.responseCapability.providerSessionId,
           item.runId,
           ids,
@@ -417,28 +442,40 @@ export function decideThreadCommand(input: {
 }
 
 /**
- * The person answered a question (T3 Code's `dispatchRuntimeRequestRespond`,
- * live answers only): the request is resolved with the answers, its node
- * and item complete, and the provider is given the answers.
+ * The person answered a request (T3 Code's `dispatchRuntimeRequestRespond`,
+ * live answers only): the request is resolved with the decision or the
+ * answers, its node and item end, and the provider is given them. A
+ * declined or cancelled approval ends its node and item cancelled; anything
+ * else completes them.
  */
 function dispatchRuntimeRequestRespond(
-  command: Extract<OrchestrationV2Command, { type: "runtime-request.respond" }>,
   projection: OrchestrationV2ThreadProjection,
   request: OrchestrationV2RuntimeRequest,
-  item: Extract<OrchestrationV2TurnItem, { type: "user_input_request" }>,
+  item: Extract<OrchestrationV2TurnItem, { type: "approval_request" | "user_input_request" }>,
+  answer:
+    | { readonly decision: ProviderApprovalDecision }
+    | { readonly answers: ProviderUserInputAnswers },
   providerSessionId: ProviderSessionId,
   runId: RunId,
   ids: ThreadCommandIds,
   now: string,
 ): ThreadCommandDecision {
-  const base = { threadId: command.threadId, runId, occurredAt: now };
+  const base = { threadId: projection.thread.id, runId, occurredAt: now };
   const node = projection.nodes.find((candidate) => candidate.id === request.nodeId);
+  const status =
+    "decision" in answer && (answer.decision === "decline" || answer.decision === "cancel")
+      ? ("cancelled" as const)
+      : ("completed" as const);
+  const answeredItem: OrchestrationV2TurnItem =
+    item.type === "user_input_request" && "answers" in answer
+      ? { ...item, answers: answer.answers, status, completedAt: now, updatedAt: now }
+      : { ...item, status, completedAt: now, updatedAt: now };
   return {
     events: [
       {
         ...base,
         type: "runtime-request.updated",
-        payload: { ...request, status: "resolved", resolvedAt: now, answers: command.answers },
+        payload: { ...request, status: "resolved", resolvedAt: now, ...answer },
       },
       ...(node === undefined
         ? []
@@ -446,20 +483,10 @@ function dispatchRuntimeRequestRespond(
             {
               ...base,
               type: "node.updated",
-              payload: { ...node, status: "completed", completedAt: now },
+              payload: { ...node, status, completedAt: now },
             } as const,
           ]),
-      {
-        ...base,
-        type: "turn-item.updated",
-        payload: {
-          ...item,
-          answers: command.answers,
-          status: "completed",
-          completedAt: now,
-          updatedAt: now,
-        },
-      },
+      { ...base, type: "turn-item.updated", payload: answeredItem },
     ],
     effects: [
       {
@@ -469,7 +496,7 @@ function dispatchRuntimeRequestRespond(
           runId,
           providerSessionId,
           requestId: request.id,
-          answers: command.answers,
+          ...answer,
         },
       },
     ],
