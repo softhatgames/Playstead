@@ -21,6 +21,63 @@ describe("project RPC methods", () => {
     Layer.mergeAll(NodeServices.layer, FetchHttpClient.layer, NodeSocket.layerWebSocketConstructor),
     { excludeTestServices: true },
   )((it) => {
+    it.effect(
+      "renames and removes a project in the live shell, then re-adds its untouched folder",
+      () =>
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const server = yield* startTestServer();
+          const { connection } = yield* connectSignedIn(server);
+          const folder = path.join(server.config.baseDir, "game");
+          yield* fs.makeDirectory(folder);
+          yield* fs.writeFileString(path.join(folder, "game.txt"), "untouched");
+          const projectId = ProjectId.make("project:wire-remove");
+          yield* connection.request((client) =>
+            client["projects.mutate"]({
+              type: "project.create",
+              commandId: CommandId.make("create"),
+              projectId,
+              title: "Game",
+              workspaceRoot: folder,
+            }),
+          );
+          yield* awaitConnectionState(connection, (state) => state.shell?.projects.length === 1);
+          yield* connection.request((client) =>
+            client["projects.mutate"]({
+              type: "project.update",
+              commandId: CommandId.make("rename"),
+              projectId,
+              title: "Renamed game",
+            }),
+          );
+          const renamed = yield* awaitConnectionState(
+            connection,
+            (state) => state.shell?.projects[0]?.title === "Renamed game",
+          );
+          assert.strictEqual(renamed.shell?.projects[0]?.workspaceRoot, folder);
+          yield* connection.request((client) =>
+            client["projects.mutate"]({
+              type: "project.delete",
+              commandId: CommandId.make("remove"),
+              projectId,
+            }),
+          );
+          yield* awaitConnectionState(connection, (state) => state.shell?.projects.length === 0);
+          const added = yield* connection.request((client) =>
+            client["projects.mutate"]({
+              type: "project.create",
+              commandId: CommandId.make("readd"),
+              projectId: ProjectId.make("project:readded"),
+              title: "Game again",
+              workspaceRoot: folder,
+            }),
+          );
+          assert.notStrictEqual(added.id, projectId);
+          assert.strictEqual(yield* fs.readFileString(path.join(folder, "game.txt")), "untouched");
+        }).pipe(Effect.scoped),
+    );
+
     it.effect("adds a browsed folder as a project that every client's shell shows", () =>
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;

@@ -1,8 +1,11 @@
-import { type CommandId, EventId, ProjectId } from "@playstead/contracts/baseSchemas";
+import { CommandId, EventId, ProjectId } from "@playstead/contracts/baseSchemas";
 import type { OrchestrationProjectShell } from "@playstead/contracts/orchestrationProject";
 import {
   type Project,
+  type ProjectDeletePayload,
+  type ProjectUpdatePayload,
   ProjectConflictError,
+  ProjectNotEmptyError,
   type ProjectCreatePayload,
 } from "@playstead/contracts/project";
 import * as KeyedLock from "@playstead/shared/keyedLock";
@@ -15,6 +18,9 @@ import * as Option from "effect/Option";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 
+import * as CommandReceiptStore from "../orchestration-v2/CommandReceiptStore.ts";
+import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
+import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as EventSink from "../orchestration-v2/EventSink.ts";
 import {
   decodeProjectCommandRejection,
@@ -37,6 +43,8 @@ export class ProjectOperationError extends Schema.TaggedError<ProjectOperationEr
       "normalize-workspace",
       "read-project",
       "list-projects",
+      "delete-thread",
+      "list-threads",
       "dispatch-project-command",
     ]),
     projectId: Schema.optionalKey(ProjectId),
@@ -49,7 +57,10 @@ export class ProjectOperationError extends Schema.TaggedError<ProjectOperationEr
   }
 }
 
-export type ProjectServiceError = ProjectConflictError | ProjectOperationError;
+export type ProjectServiceError =
+  | ProjectConflictError
+  | ProjectNotEmptyError
+  | ProjectOperationError;
 
 /**
  * Projects: adding a folder, and reading them back (T3 Code's
@@ -61,6 +72,8 @@ export type ProjectServiceError = ProjectConflictError | ProjectOperationError;
 export class ProjectService extends Context.Service<
   ProjectService,
   {
+    readonly update: (input: ProjectUpdatePayload) => Effect.Effect<Project, ProjectServiceError>;
+    readonly delete: (input: ProjectDeletePayload) => Effect.Effect<Project, ProjectServiceError>;
     readonly create: (input: ProjectCreateInput) => Effect.Effect<Project, ProjectServiceError>;
     readonly getShell: (
       projectId: ProjectId,
@@ -74,6 +87,9 @@ export class ProjectService extends Context.Service<
 
 const make = Effect.gen(function* () {
   const projects = yield* ProjectStore.ProjectStoreV2;
+  const receipts = yield* CommandReceiptStore.CommandReceiptStoreV2;
+  const projections = yield* ProjectionStore.ProjectionStoreV2;
+  const orchestrator = yield* Orchestrator.OrchestratorV2;
   const eventSink = yield* EventSink.EventSinkV2;
   const workspacePaths = yield* WorkspacePaths.WorkspacePaths;
   const crypto = yield* Crypto.Crypto;
@@ -81,14 +97,17 @@ const make = Effect.gen(function* () {
   const workspaceLocks = yield* KeyedLock.make<string>();
 
   const commit = Effect.fn("ProjectService.commit")(function* (command: ProjectCommand) {
-    const { projectId, workspaceRoot } = command;
+    const { projectId } = command;
+    const workspaceRoot = command.type === "project.create" ? command.workspaceRoot : projectId;
     const dispatchError = (cause: unknown) =>
       new ProjectOperationError({ operation: "dispatch-project-command", projectId, cause });
 
     const planAndCommit = Effect.gen(function* () {
       const project = Option.getOrUndefined(yield* projects.get(projectId));
       const workspaceOwner = Option.getOrUndefined(
-        yield* projects.findByWorkspaceRoot(workspaceRoot),
+        yield* command.type === "project.create"
+          ? projects.findByWorkspaceRoot(workspaceRoot)
+          : Effect.succeedNone,
       );
       const now = yield* DateTime.now;
       const eventId = EventId.make(`event:${yield* crypto.randomUUIDv4()}`);
@@ -188,8 +207,141 @@ const make = Effect.gen(function* () {
     } satisfies Project;
   });
 
+  const deleteProject = Effect.fn("ProjectService.delete")(function* (input: ProjectDeletePayload) {
+    const previous = yield* Effect.all({
+      project: receipts.getProjectByCommandId(input.commandId),
+      thread: receipts.getByCommandId(input.commandId),
+    }).pipe(
+      Effect.mapError(
+        (cause) =>
+          new ProjectOperationError({
+            operation: "dispatch-project-command",
+            projectId: input.projectId,
+            cause,
+          }),
+      ),
+    );
+    if (
+      Option.isSome(previous.thread) ||
+      (Option.isSome(previous.project) &&
+        (previous.project.value.projectId !== input.projectId ||
+          previous.project.value.commandType !== "project.delete"))
+    ) {
+      return yield* new ProjectOperationError({
+        operation: "dispatch-project-command",
+        projectId: input.projectId,
+        cause: "Command ID already belongs to another command.",
+      });
+    }
+    const existing = yield* projects.get(input.projectId).pipe(
+      Effect.mapError(
+        (cause) =>
+          new ProjectOperationError({
+            operation: "read-project",
+            projectId: input.projectId,
+            cause,
+          }),
+      ),
+    );
+    if (Option.isSome(existing) && existing.value.deletedAt === null) {
+      const children = yield* Effect.all([
+        projections.listThreadShells("active"),
+        projections.listThreadShells("archive"),
+      ]).pipe(
+        Effect.map((lists) =>
+          lists.flat().filter((thread) => thread.projectId === input.projectId),
+        ),
+        Effect.mapError(
+          (cause) =>
+            new ProjectOperationError({
+              operation: "list-threads",
+              projectId: input.projectId,
+              cause,
+            }),
+        ),
+      );
+      if (children.length > 0 && input.force !== true)
+        return yield* new ProjectNotEmptyError({ projectId: input.projectId });
+      for (const thread of children) {
+        yield* orchestrator
+          .dispatch({
+            type: "thread.delete",
+            commandId: CommandId.make(`${input.commandId}:thread:${thread.id}`),
+            threadId: thread.id,
+          })
+          .pipe(
+            Effect.mapError(
+              (cause) =>
+                new ProjectOperationError({
+                  operation: "delete-thread",
+                  projectId: input.projectId,
+                  cause,
+                }),
+            ),
+          );
+      }
+    }
+    yield* commit({
+      type: "project.delete",
+      commandId: input.commandId,
+      projectId: input.projectId,
+    });
+    const row = yield* projects.get(input.projectId).pipe(
+      Effect.mapError(
+        (cause) =>
+          new ProjectOperationError({
+            operation: "read-project",
+            projectId: input.projectId,
+            cause,
+          }),
+      ),
+    );
+    if (Option.isNone(row))
+      return yield* new ProjectOperationError({
+        operation: "read-project",
+        projectId: input.projectId,
+        cause: "Project not found.",
+      });
+    return {
+      id: row.value.projectId,
+      title: row.value.title,
+      workspaceRoot: row.value.workspaceRoot,
+      createdAt: row.value.createdAt,
+      updatedAt: row.value.updatedAt,
+    };
+  });
+
+  const update = Effect.fn("ProjectService.update")(function* (input: ProjectUpdatePayload) {
+    yield* commit({ type: "project.update", ...input });
+    const row = yield* projects.get(input.projectId).pipe(
+      Effect.mapError(
+        (cause) =>
+          new ProjectOperationError({
+            operation: "read-project",
+            projectId: input.projectId,
+            cause,
+          }),
+      ),
+    );
+    if (Option.isNone(row))
+      return yield* new ProjectOperationError({
+        operation: "read-project",
+        projectId: input.projectId,
+        cause: "Project not found.",
+      });
+    return {
+      id: row.value.projectId,
+      title: row.value.title,
+      workspaceRoot: row.value.workspaceRoot,
+      createdAt: row.value.createdAt,
+      updatedAt: row.value.updatedAt,
+    };
+  });
+
   return ProjectService.of({
     create,
+    update,
+    delete: deleteProject,
     getShell: (projectId) =>
       projects
         .getShell(projectId)
@@ -204,4 +356,4 @@ const make = Effect.gen(function* () {
   });
 });
 
-export const layer = Layer.effect(ProjectService, make);
+export const layer = Layer.effect(ProjectService, make).pipe(Layer.provide(Orchestrator.layer));

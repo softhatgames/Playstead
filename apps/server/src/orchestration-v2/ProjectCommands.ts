@@ -15,7 +15,19 @@ export interface ProjectCreateCommand {
   readonly workspaceRoot: string;
 }
 
-export type ProjectCommand = ProjectCreateCommand;
+export type ProjectCommand =
+  | ProjectCreateCommand
+  | {
+      readonly type: "project.update";
+      readonly commandId: CommandId;
+      readonly projectId: ProjectId;
+      readonly title: string;
+    }
+  | {
+      readonly type: "project.delete";
+      readonly commandId: CommandId;
+      readonly projectId: ProjectId;
+    };
 
 class ProjectCommandInvariantError extends Schema.TaggedError<ProjectCommandInvariantError>()(
   "ProjectCommandInvariantError",
@@ -69,6 +81,40 @@ export function planProjectCommand(input: {
   const { command, state } = input;
   const occurredAt = DateTime.formatIso(input.now);
   switch (command.type) {
+    case "project.update":
+    case "project.delete": {
+      if (state.project === undefined || state.project.deletedAt !== null) {
+        return Result.fail(
+          new ProjectCommandInvariantError({
+            commandType: command.type,
+            detail: "Project not found.",
+          }),
+        );
+      }
+      if (command.type === "project.update")
+        return Result.succeed({
+          eventId: input.eventId,
+          aggregateKind: "project",
+          aggregateId: command.projectId,
+          occurredAt,
+          commandId: command.commandId,
+          causationEventId: null,
+          correlationId: command.commandId,
+          type: "project.updated",
+          payload: { projectId: command.projectId, title: command.title, updatedAt: occurredAt },
+        });
+      return Result.succeed({
+        eventId: input.eventId,
+        aggregateKind: "project",
+        aggregateId: command.projectId,
+        occurredAt,
+        commandId: command.commandId,
+        causationEventId: null,
+        correlationId: command.commandId,
+        type: "project.deleted",
+        payload: { projectId: command.projectId, deletedAt: occurredAt },
+      });
+    }
     case "project.create": {
       if (state.project !== undefined) {
         return Result.fail(

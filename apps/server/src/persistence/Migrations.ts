@@ -10,11 +10,14 @@ import Migration0004 from "./Migrations/004_RuntimeRequests.ts";
  * Every migration, in order. A new one is a new file `NNN_Name.ts` and an entry
  * here; a released migration is never edited.
  */
+import Migration0005 from "./Migrations/005_ProjectDeletion.ts";
+
 const migrationEntries = [
   [1, "Initial", Migration0001],
   [2, "Projects", Migration0002],
   [3, "Orchestration", Migration0003],
   [4, "RuntimeRequests", Migration0004],
+  [5, "ProjectDeletion", Migration0005],
 ] as const;
 
 const run = Migrator.make({});

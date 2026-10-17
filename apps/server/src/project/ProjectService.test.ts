@@ -13,6 +13,7 @@ import * as OrchestrationRuntime from "../orchestration-v2/runtimeLayer.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import { makeTestServerConfig } from "../testUtils/testServer.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
+import * as ProviderAdapterRegistry from "../orchestration-v2/ProviderAdapterRegistry.ts";
 import * as ProjectService from "./ProjectService.ts";
 
 /**
@@ -24,6 +25,7 @@ const startProjects = Effect.gen(function* () {
   const config = yield* makeTestServerConfig();
   const context = yield* Layer.build(
     ProjectService.layer.pipe(
+      Layer.provide(ProviderAdapterRegistry.layerFromAdapters([])),
       Layer.provide(OrchestrationRuntime.layer),
       Layer.provide(WorkspacePaths.layer),
       Layer.provide(SqlitePersistence.layerConfig),
@@ -48,6 +50,33 @@ const createInput = (
 
 describe("ProjectService", () => {
   it.layer(NodeServices.layer)((it) => {
+    it.effect(
+      "removes an empty project without touching files and permits adding its folder again",
+      () =>
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const { projects, home } = yield* startProjects;
+          const folder = path.join(home, "removed-game");
+          yield* fs.makeDirectory(folder);
+          const file = path.join(folder, "game.txt");
+          yield* fs.writeFileString(file, "keep my game");
+          const first = yield* projects.create(createInput("original", folder));
+          const deletion = { commandId: CommandId.make("command:remove"), projectId: first.id };
+          yield* projects.delete(deletion);
+          yield* projects.delete(deletion);
+          assert.deepStrictEqual(yield* projects.listShells, []);
+          assert.strictEqual((yield* projects.getShell(first.id))._tag, "None");
+          assert.strictEqual(yield* fs.readFileString(file), "keep my game");
+          const added = yield* projects.create(createInput("added-again", folder));
+          assert.notStrictEqual(added.id, first.id);
+          assert.deepStrictEqual(
+            (yield* projects.listShells).map((p) => p.id),
+            [added.id],
+          );
+        }).pipe(Effect.scoped),
+    );
+
     it.effect("makes an empty folder a project and lists it", () =>
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;

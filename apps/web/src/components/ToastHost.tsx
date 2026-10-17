@@ -34,6 +34,15 @@ export function ToastHost() {
                 {toast.description}
               </div>
             )}
+            {toast.action === undefined ? null : (
+              <button
+                type="button"
+                onClick={toast.action.onClick}
+                className="mt-2 rounded px-2 py-1 font-medium text-red-600 hover:bg-red-500/10 dark:text-red-400"
+              >
+                {toast.action.label}
+              </button>
+            )}
           </div>
           <button
             type="button"

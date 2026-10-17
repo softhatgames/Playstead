@@ -34,7 +34,11 @@ export class EventStoreReadEventsError extends Schema.TaggedError<EventStoreRead
 }
 
 /** A project event before the log gives it its sequence. */
-export type UnsequencedProjectEvent = Omit<ApplicationProjectEvent, "sequence">;
+export type UnsequencedProjectEvent = ApplicationProjectEvent extends infer E
+  ? E extends ApplicationProjectEvent
+    ? Omit<E, "sequence">
+    : never
+  : never;
 
 /** A thread event to append, and the command that caused it, if any. */
 export interface ThreadEventToAppend {

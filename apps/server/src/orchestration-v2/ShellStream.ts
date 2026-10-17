@@ -110,9 +110,12 @@ export const streamShell = Effect.gen(function* () {
     event: ApplicationStoredEvent,
   ): Effect.Effect<Option.Option<OrchestrationV2ShellStreamItem>, unknown> => {
     if (event.aggregateKind === "project") {
-      return Effect.map(
-        projects.getShell(event.aggregateId),
-        Option.map((project) => ({ kind: "project.updated", sequence: event.sequence, project })),
+      return Effect.map(projects.getShell(event.aggregateId), (project) =>
+        Option.some(
+          Option.isSome(project)
+            ? { kind: "project.updated", sequence: event.sequence, project: project.value }
+            : { kind: "project.removed", sequence: event.sequence, projectId: event.aggregateId },
+        ),
       );
     }
     if (!SHELL_THREAD_EVENT_TYPES.has(event.event.type)) return Effect.succeedNone;

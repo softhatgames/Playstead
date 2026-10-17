@@ -61,3 +61,9 @@ export function discardDraft(draftId: string): void {
 export function useDraft(draftId: string): ThreadDraft | undefined {
   return useSyncExternalStore(subscribe, () => drafts.get(draftId));
 }
+
+/** Removing a project also drops unsent drafts for that entry. */
+export function discardProjectDrafts(projectId: ProjectId): void {
+  for (const [id, draft] of drafts) if (draft.projectId === projectId) drafts.delete(id);
+  notify();
+}

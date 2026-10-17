@@ -23,6 +23,7 @@ export const ProjectRow = Schema.Struct({
   workspaceRoot: Schema.String,
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
+  deletedAt: Schema.NullOr(IsoDateTime),
 });
 export type ProjectRow = typeof ProjectRow.Type;
 
@@ -69,7 +70,11 @@ const make = Effect.gen(function* () {
 
   const select = (
     operation: string,
-    where: { readonly projectId?: ProjectId; readonly workspaceRoot?: string },
+    where: {
+      readonly projectId?: ProjectId;
+      readonly workspaceRoot?: string;
+      readonly includeDeleted?: boolean;
+    },
   ) =>
     sql`
       SELECT
@@ -77,9 +82,11 @@ const make = Effect.gen(function* () {
         title,
         workspace_root AS "workspaceRoot",
         created_at AS "createdAt",
-        updated_at AS "updatedAt"
+        updated_at AS "updatedAt",
+        deleted_at AS "deletedAt"
       FROM projection_projects
       WHERE ${sql.and([
+        ...(where.includeDeleted ? [] : [sql`deleted_at IS NULL`]),
         ...(where.projectId === undefined ? [] : [sql`project_id = ${where.projectId}`]),
         ...(where.workspaceRoot === undefined
           ? []
@@ -93,10 +100,21 @@ const make = Effect.gen(function* () {
 
   const first = (rows: ReadonlyArray<ProjectRow>) => Option.fromUndefinedOr(rows[0]);
 
-  const get = (projectId: ProjectId) => Effect.map(select("get", { projectId }), first);
+  const get = (projectId: ProjectId) =>
+    Effect.map(select("get", { projectId, includeDeleted: true }), first);
 
   const apply = (event: ApplicationProjectEvent) => {
     switch (event.type) {
+      case "project.updated":
+        return sql`UPDATE projection_projects SET title = ${event.payload.title}, updated_at = ${event.payload.updatedAt} WHERE project_id = ${event.payload.projectId}`.pipe(
+          Effect.asVoid,
+          Effect.mapError((cause) => new ProjectStoreV2Error({ operation: "apply", cause })),
+        );
+      case "project.deleted":
+        return sql`UPDATE projection_projects SET deleted_at = ${event.payload.deletedAt}, updated_at = ${event.payload.deletedAt} WHERE project_id = ${event.payload.projectId}`.pipe(
+          Effect.asVoid,
+          Effect.mapError((cause) => new ProjectStoreV2Error({ operation: "apply", cause })),
+        );
       case "project.created": {
         const { payload } = event;
         return sql`
@@ -127,7 +145,8 @@ const make = Effect.gen(function* () {
     get,
     findByWorkspaceRoot: (workspaceRoot) =>
       Effect.map(select("findByWorkspaceRoot", { workspaceRoot }), first),
-    getShell: (projectId) => Effect.map(get(projectId), Option.map(toShell)),
+    getShell: (projectId) =>
+      Effect.map(select("getShell", { projectId }), (rows) => Option.map(first(rows), toShell)),
     listShells: Effect.map(select("listShells", {}), (rows) => rows.map(toShell)),
   });
 });

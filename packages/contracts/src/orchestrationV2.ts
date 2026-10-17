@@ -544,6 +544,11 @@ export const OrchestrationV2ShellStreamItem = Schema.Union([
     snapshot: OrchestrationV2ShellSnapshot,
   }),
   Schema.Struct({
+    kind: Schema.Literal("project.removed"),
+    sequence: NonNegativeInt,
+    projectId: ProjectId,
+  }),
+  Schema.Struct({
     kind: Schema.Literal("project.updated"),
     sequence: NonNegativeInt,
     project: OrchestrationProjectShell,

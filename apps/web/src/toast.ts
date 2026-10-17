@@ -10,6 +10,7 @@ export interface Toast {
   readonly type: "error" | "warning" | "success";
   readonly title: string;
   readonly description?: string;
+  readonly action?: { readonly label: string; readonly onClick: () => void };
 }
 
 const TOAST_DURATION_MS = 5_000;
@@ -34,10 +35,11 @@ export function dismissToast(id: number): void {
   publish(toasts.filter((toast) => toast.id !== id));
 }
 
-function addToast(toast: Omit<Toast, "id">): void {
+function addToast(toast: Omit<Toast, "id">): number {
   const id = nextId++;
   publish([...toasts, { ...toast, id }]);
-  setTimeout(() => dismissToast(id), TOAST_DURATION_MS);
+  if (toast.action === undefined) setTimeout(() => dismissToast(id), TOAST_DURATION_MS);
+  return id;
 }
 
 /** Something the person asked for that was not done, such as an empty title. */
@@ -57,4 +59,25 @@ export function failureToast(title: string, error: unknown): void {
 /** Confirms a local action such as copying a thread reference. */
 export function successToast(title: string, description?: string): void {
   addToast({ type: "success", title, ...(description === undefined ? {} : { description }) });
+}
+
+/** A warning with an explicit next step, kept until answered or dismissed. */
+export function actionWarningToast(
+  title: string,
+  description: string,
+  label: string,
+  action: () => void,
+): void {
+  const id = addToast({
+    type: "warning",
+    title,
+    description,
+    action: {
+      label,
+      onClick: () => {
+        dismissToast(id);
+        action();
+      },
+    },
+  });
 }

@@ -41,6 +41,7 @@ import {
   toggleSidebarShelfExpanded,
 } from "../uiState.ts";
 import {
+  SettingsIcon,
   ClockIcon,
   CheckIcon,
   ChevronRightIcon,
@@ -349,6 +350,17 @@ export function Sidebar() {
             {groups.length > 0 ? (
               <>
                 <ProjectScopeMenu groups={groups} scopedGroup={scopedGroup} />
+                {scopedGroup?.projectIds[0] === undefined ? null : (
+                  <Link
+                    to="/settings/projects/$projectId"
+                    params={{ projectId: scopedGroup.projectIds[0] }}
+                    aria-label="Project settings"
+                    title="Project settings"
+                    className="rounded p-1 text-neutral-500 hover:bg-neutral-100 dark:hover:bg-neutral-800"
+                  >
+                    <SettingsIcon className="size-4" />
+                  </Link>
+                )}
                 <HeaderButton
                   label="Add project"
                   onClick={() => openCommandPalette({ open: "add-project" })}

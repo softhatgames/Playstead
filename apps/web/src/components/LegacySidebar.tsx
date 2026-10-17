@@ -1,3 +1,4 @@
+import { ProjectMenuButton } from "./sidebar/ProjectMenuButton.tsx";
 import type { ProjectId } from "@playstead/contracts/baseSchemas";
 import type { OrchestrationV2ThreadShell } from "@playstead/contracts/orchestrationV2";
 import { isMacPlatform } from "@playstead/shared/keybindings";
@@ -67,7 +68,7 @@ const sortTreeThreads = (
  * double-click, archives from its hover button (asking inline when **Confirm
  * before archiving** is on), and opens the tree's own menu on right-click.
  * Mod-click and shift-click select several threads for the bulk menu.
- * Project sorting and dragging come with #40, and the project menu with #44.
+ * Project menus rename the entry or remove it after confirmation.
  */
 export function LegacySidebar() {
   const state = usePrimaryConnectionState();
@@ -129,47 +130,57 @@ export function LegacySidebar() {
           const active = project.id === activeProjectId;
           return (
             <li key={project.id}>
-              <div className="group flex items-center">
-                <button
-                  ref={active ? activeRow : undefined}
-                  type="button"
-                  title={project.workspaceRoot}
-                  aria-current={active ? "true" : undefined}
-                  aria-expanded={resolveProjectExpanded(projectExpanded, project.id)}
-                  onClick={() => {
-                    openProject(project.id);
-                    setProjectExpanded(
-                      project.id,
-                      !resolveProjectExpanded(projectExpanded, project.id),
-                    );
-                  }}
-                  className={`flex min-w-0 flex-1 items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm ${
-                    active
-                      ? "bg-neutral-200 font-medium dark:bg-neutral-800"
-                      : "hover:bg-neutral-100 dark:hover:bg-neutral-900"
-                  }`}
-                >
-                  {resolveProjectExpanded(projectExpanded, project.id) ? (
-                    <FolderIcon className="size-3.5 shrink-0 text-neutral-500 dark:text-neutral-400" />
-                  ) : (
-                    <ThreadStatusDot
-                      status={resolveProjectStatusIndicator(
-                        threads.filter((thread) => thread.projectId === project.id),
-                      )}
-                    />
-                  )}
-                  <span className="truncate">{project.title}</span>
-                </button>
-                <button
-                  type="button"
-                  aria-label={`New thread in ${project.title}`}
-                  title="New thread"
-                  onClick={() => startThread(project.id)}
-                  className="rounded p-1 text-neutral-500 hover:bg-neutral-200 hover:text-neutral-900 dark:text-neutral-400 dark:hover:bg-neutral-800 dark:hover:text-neutral-100"
-                >
-                  <SquarePenIcon className="size-3.5" />
-                </button>
-              </div>
+              <ProjectMenuButton project={project}>
+                {(openMenu, renameInput) => (
+                  <div className="group flex items-center">
+                    {renameInput ?? (
+                      <button
+                        onContextMenu={(event) => {
+                          event.preventDefault();
+                          openMenu({ x: event.clientX, y: event.clientY });
+                        }}
+                        ref={active ? activeRow : undefined}
+                        type="button"
+                        title={project.workspaceRoot}
+                        aria-current={active ? "true" : undefined}
+                        aria-expanded={resolveProjectExpanded(projectExpanded, project.id)}
+                        onClick={() => {
+                          openProject(project.id);
+                          setProjectExpanded(
+                            project.id,
+                            !resolveProjectExpanded(projectExpanded, project.id),
+                          );
+                        }}
+                        className={`flex min-w-0 flex-1 items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm ${
+                          active
+                            ? "bg-neutral-200 font-medium dark:bg-neutral-800"
+                            : "hover:bg-neutral-100 dark:hover:bg-neutral-900"
+                        }`}
+                      >
+                        {resolveProjectExpanded(projectExpanded, project.id) ? (
+                          <FolderIcon className="size-3.5 shrink-0 text-neutral-500 dark:text-neutral-400" />
+                        ) : (
+                          <ThreadStatusDot
+                            status={resolveProjectStatusIndicator(
+                              threads.filter((thread) => thread.projectId === project.id),
+                            )}
+                          />
+                        )}
+                        <span className="truncate">{project.title}</span>
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      aria-label={`New thread in ${project.title}`}
+                      title="New thread"
+                      onClick={() => startThread(project.id)}
+                      className="rounded p-1 text-neutral-500 hover:bg-neutral-200 hover:text-neutral-900 dark:text-neutral-400 dark:hover:bg-neutral-800 dark:hover:text-neutral-100"
+                    >
+                      <SquarePenIcon className="size-3.5" />
+                    </button>
+                  </div>
+                )}
+              </ProjectMenuButton>
               <ProjectThreadList
                 expanded={expandedLists.has(project.id)}
                 onExpand={() =>

@@ -4,7 +4,7 @@ import { CommandId, IsoDateTime, ProjectId, TrimmedNonEmptyString } from "./base
 
 /**
  * Projects, trimmed from T3 Code's `packages/contracts/src/project.ts` at
- * 2577baf to adding a folder: no update, delete, scripts, icons, default
+ * 2577baf to folder management: no scripts, icons, default
  * model or repository identity.
  */
 
@@ -25,6 +25,20 @@ export const ProjectCreatePayload = Schema.Struct({
 });
 export type ProjectCreatePayload = typeof ProjectCreatePayload.Type;
 
+export const ProjectDeletePayload = Schema.Struct({
+  commandId: CommandId,
+  projectId: ProjectId,
+  force: Schema.optionalKey(Schema.Boolean),
+});
+export type ProjectDeletePayload = typeof ProjectDeletePayload.Type;
+
+export const ProjectUpdatePayload = Schema.Struct({
+  commandId: CommandId,
+  projectId: ProjectId,
+  title: TrimmedNonEmptyString,
+});
+export type ProjectUpdatePayload = typeof ProjectUpdatePayload.Type;
+
 export const ProjectMutation = Schema.Union([
   Schema.Struct({
     type: Schema.Literal("project.create"),
@@ -32,6 +46,8 @@ export const ProjectMutation = Schema.Union([
     projectId: ProjectId,
     ...ProjectCreatePayload.fields,
   }),
+  Schema.Struct({ type: Schema.Literal("project.update"), ...ProjectUpdatePayload.fields }),
+  Schema.Struct({ type: Schema.Literal("project.delete"), ...ProjectDeletePayload.fields }),
 ]);
 export type ProjectMutation = typeof ProjectMutation.Type;
 
@@ -59,5 +75,14 @@ export class ProjectConflictError extends Schema.TaggedError<ProjectConflictErro
 ) {
   override get message(): string {
     return `Workspace ${this.workspaceRoot} already belongs to project ${this.conflictingProjectId}.`;
+  }
+}
+
+export class ProjectNotEmptyError extends Schema.TaggedError<ProjectNotEmptyError>()(
+  "ProjectNotEmptyError",
+  { projectId: ProjectId },
+) {
+  override get message(): string {
+    return "Project is not empty. Delete all threads in this project before removing it.";
   }
 }

@@ -106,7 +106,12 @@ const layerWsRpc = WsRpcGroup.toLayer(
       // the folder. Anything else is T3 Code's one mutation error, carrying the
       // folder check's reason when that is what failed.
       [WS_METHODS.projectsMutate]: (mutation) =>
-        projects.create(mutation).pipe(
+        (mutation.type === "project.create"
+          ? projects.create(mutation)
+          : mutation.type === "project.update"
+            ? projects.update(mutation)
+            : projects.delete(mutation)
+        ).pipe(
           Effect.catchTag("ProjectOperationError", (cause) =>
             Effect.fail(
               new ProjectMutationError({

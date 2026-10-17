@@ -17,6 +17,7 @@ import { Route as SettingsProvidersRouteImport } from './routes/settings.provide
 import { Route as SettingsGeneralRouteImport } from './routes/settings.general'
 import { Route as SettingsArchivedRouteImport } from './routes/settings.archived'
 import { Route as DraftDraftIdRouteImport } from './routes/draft.$draftId'
+import { Route as SettingsProjectsProjectIdRouteImport } from './routes/settings.projects.$projectId'
 
 const SettingsRoute = SettingsRouteImport.update({
   id: '/settings',
@@ -58,6 +59,12 @@ const DraftDraftIdRoute = DraftDraftIdRouteImport.update({
   path: '/draft/$draftId',
   getParentRoute: () => rootRouteImport,
 } as any)
+const SettingsProjectsProjectIdRoute =
+  SettingsProjectsProjectIdRouteImport.update({
+    id: '/projects/$projectId',
+    path: '/projects/$projectId',
+    getParentRoute: () => SettingsRoute,
+  } as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
@@ -68,6 +75,7 @@ export interface FileRoutesByFullPath {
   '/settings/general': typeof SettingsGeneralRoute
   '/settings/providers': typeof SettingsProvidersRoute
   '/threads/$threadId': typeof ThreadsThreadIdRoute
+  '/settings/projects/$projectId': typeof SettingsProjectsProjectIdRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -78,6 +86,7 @@ export interface FileRoutesByTo {
   '/settings/general': typeof SettingsGeneralRoute
   '/settings/providers': typeof SettingsProvidersRoute
   '/threads/$threadId': typeof ThreadsThreadIdRoute
+  '/settings/projects/$projectId': typeof SettingsProjectsProjectIdRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -89,6 +98,7 @@ export interface FileRoutesById {
   '/settings/general': typeof SettingsGeneralRoute
   '/settings/providers': typeof SettingsProvidersRoute
   '/threads/$threadId': typeof ThreadsThreadIdRoute
+  '/settings/projects/$projectId': typeof SettingsProjectsProjectIdRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -101,6 +111,7 @@ export interface FileRouteTypes {
     | '/settings/general'
     | '/settings/providers'
     | '/threads/$threadId'
+    | '/settings/projects/$projectId'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -111,6 +122,7 @@ export interface FileRouteTypes {
     | '/settings/general'
     | '/settings/providers'
     | '/threads/$threadId'
+    | '/settings/projects/$projectId'
   id:
     | '__root__'
     | '/'
@@ -121,6 +133,7 @@ export interface FileRouteTypes {
     | '/settings/general'
     | '/settings/providers'
     | '/threads/$threadId'
+    | '/settings/projects/$projectId'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -189,6 +202,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof DraftDraftIdRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/settings/projects/$projectId': {
+      id: '/settings/projects/$projectId'
+      path: '/projects/$projectId'
+      fullPath: '/settings/projects/$projectId'
+      preLoaderRoute: typeof SettingsProjectsProjectIdRouteImport
+      parentRoute: typeof SettingsRoute
+    }
   }
 }
 
@@ -196,12 +216,14 @@ interface SettingsRouteChildren {
   SettingsArchivedRoute: typeof SettingsArchivedRoute
   SettingsGeneralRoute: typeof SettingsGeneralRoute
   SettingsProvidersRoute: typeof SettingsProvidersRoute
+  SettingsProjectsProjectIdRoute: typeof SettingsProjectsProjectIdRoute
 }
 
 const SettingsRouteChildren: SettingsRouteChildren = {
   SettingsArchivedRoute: SettingsArchivedRoute,
   SettingsGeneralRoute: SettingsGeneralRoute,
   SettingsProvidersRoute: SettingsProvidersRoute,
+  SettingsProjectsProjectIdRoute: SettingsProjectsProjectIdRoute,
 }
 
 const SettingsRouteWithChildren = SettingsRoute._addFileChildren(

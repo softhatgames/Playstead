@@ -20,7 +20,13 @@ import {
   OrchestrationV2SubscribeThreadInput,
   OrchestrationV2ThreadStreamItem,
 } from "./orchestrationV2.ts";
-import { Project, ProjectConflictError, ProjectMutation, ProjectMutationError } from "./project.ts";
+import {
+  Project,
+  ProjectConflictError,
+  ProjectNotEmptyError,
+  ProjectMutation,
+  ProjectMutationError,
+} from "./project.ts";
 import { ProviderInstanceId, ProviderInstanceMutation } from "./providerInstance.ts";
 import {
   ServerConfig,
@@ -85,7 +91,7 @@ const WsSubscribeServerLifecycleRpc = Rpc.make(WS_METHODS.subscribeServerLifecyc
 const WsProjectsMutateRpc = Rpc.make(WS_METHODS.projectsMutate, {
   payload: ProjectMutation,
   success: Project,
-  error: Schema.Union([ProjectMutationError, ProjectConflictError]),
+  error: Schema.Union([ProjectMutationError, ProjectConflictError, ProjectNotEmptyError]),
 });
 
 /** The folders under a partly typed path, for Add project's autocompletion. */

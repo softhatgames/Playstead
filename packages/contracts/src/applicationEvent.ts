@@ -12,8 +12,7 @@ import type { OrchestrationV2StoredEvent } from "./orchestrationV2.ts";
 
 /**
  * Project events, as T3 Code's `packages/contracts/src/applicationEvent.ts`
- * at 2577baf stores them beside the agent events in one sequence. Only
- * `project.created` exists: projects are not updated or deleted yet.
+ * at 2577baf stores them beside the agent events in one sequence.
  */
 
 const ApplicationProjectCreatedPayload = Schema.Struct({
@@ -39,7 +38,25 @@ const ApplicationProjectCreatedEvent = Schema.Struct({
 });
 export type ApplicationProjectCreatedEvent = typeof ApplicationProjectCreatedEvent.Type;
 
-export const ApplicationProjectEvent = Schema.Union([ApplicationProjectCreatedEvent]);
+const ApplicationProjectDeletedEvent = Schema.Struct({
+  ...ApplicationProjectCreatedEvent.fields,
+  type: Schema.Literal("project.deleted"),
+  payload: Schema.Struct({ projectId: ProjectId, deletedAt: IsoDateTime }),
+});
+const ApplicationProjectUpdatedEvent = Schema.Struct({
+  ...ApplicationProjectCreatedEvent.fields,
+  type: Schema.Literal("project.updated"),
+  payload: Schema.Struct({
+    projectId: ProjectId,
+    title: TrimmedNonEmptyString,
+    updatedAt: IsoDateTime,
+  }),
+});
+export const ApplicationProjectEvent = Schema.Union([
+  ApplicationProjectCreatedEvent,
+  ApplicationProjectDeletedEvent,
+  ApplicationProjectUpdatedEvent,
+]);
 export type ApplicationProjectEvent = typeof ApplicationProjectEvent.Type;
 
 /** Every stored application event: project events and thread events, in one sequence. */

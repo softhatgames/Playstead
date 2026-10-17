@@ -22,6 +22,12 @@ export const applyShellStreamItem = (
   if (item.kind === "snapshot") return item.snapshot;
   if (shell === undefined || item.sequence <= shell.snapshotSequence) return shell;
   switch (item.kind) {
+    case "project.removed":
+      return {
+        ...shell,
+        snapshotSequence: item.sequence,
+        projects: shell.projects.filter((project) => project.id !== item.projectId),
+      };
     case "project.updated":
       return {
         ...shell,

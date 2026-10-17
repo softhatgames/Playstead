@@ -119,7 +119,7 @@ const make = Effect.gen(function* () {
         command.type === "thread.create"
           ? {
               projection,
-              projectExists: Option.isSome(yield* projects.get(command.projectId)),
+              projectExists: Option.isSome(yield* projects.getShell(command.projectId)),
               instanceHasAdapter: Option.isSome(
                 yield* adapters.get(command.modelSelection.instanceId),
               ),

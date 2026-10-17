@@ -261,6 +261,7 @@ describe("server", () => {
             { migration_id: 2, name: "Projects" },
             { migration_id: 3, name: "Orchestration" },
             { migration_id: 4, name: "RuntimeRequests" },
+            { migration_id: 5, name: "ProjectDeletion" },
           ],
         );
       }).pipe(Effect.scoped),
