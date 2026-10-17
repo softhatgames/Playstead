@@ -1,23 +1,11 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
-import { CommandId, type ThreadId } from "@playstead/contracts/baseSchemas";
-import {
-  OrchestrationDispatchCommandError,
-  type OrchestrationV2Command,
-} from "@playstead/contracts/orchestrationV2";
-import {
-  decodeProviderReplayNdjson,
-  materializeReplayWorkspace,
-} from "@playstead/provider-testing/replayTranscript";
+import { CommandId } from "@playstead/contracts/baseSchemas";
+import type { OrchestrationV2Command } from "@playstead/contracts/orchestrationV2";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
-import * as FileSystem from "effect/FileSystem";
-import * as Option from "effect/Option";
-import * as Path from "effect/Path";
 import * as TestClock from "effect/testing/TestClock";
 
-import { makeTestServerConfig } from "../testUtils/testServer.ts";
-import { makeClaudeReplay } from "./Adapters/ClaudeAdapterV2.testkit.ts";
 import { makeOrchestrationHarness } from "./testkit/OrchestratorHarness.ts";
 import {
   FILE_CREATE_IDS,
@@ -25,6 +13,8 @@ import {
   runFileCreateScenario,
   sendFileCreateMessage,
 } from "./testkit/fixtures/fileCreate.ts";
+import { refusal, threadOf } from "./testkit/ThreadCommands.ts";
+import { replayClaude } from "./testkit/ProviderReplay.ts";
 
 /**
  * Seam 1 for renaming a thread and its read state (T3 Code's
@@ -34,45 +24,10 @@ import {
  * transport replaying the file-create recording for a completed run.
  */
 
-const readRecording = (name: string) =>
-  Effect.gen(function* () {
-    const fs = yield* FileSystem.FileSystem;
-    const path = yield* Path.Path;
-    const file = path.join(
-      path.dirname(yield* path.fromFileUrl(new URL(import.meta.url))),
-      "testkit",
-      "fixtures",
-      name,
-    );
-    return yield* decodeProviderReplayNdjson(yield* fs.readFileString(file));
-  });
-
-const makeHarness = Effect.gen(function* () {
-  const path = yield* Path.Path;
-  const config = yield* makeTestServerConfig();
-  const recorded = yield* readRecording("file_create.claude.ndjson");
-  const replay = yield* makeClaudeReplay(
-    yield* materializeReplayWorkspace(recorded, path.join(config.baseDir, "empty-game")),
-  );
-  return yield* makeOrchestrationHarness({ claudeRunner: replay.runner, config });
-});
-
-type Harness = Effect.Success<typeof makeHarness>;
-
-const threadOf = (harness: Harness, threadId: ThreadId) =>
-  Effect.map(
-    harness.orchestrator.getThreadProjection(threadId),
-    (projection) => Option.getOrThrow(projection).thread,
-  );
+type Harness = Effect.Success<ReturnType<typeof makeOrchestrationHarness>>;
 
 const command = (harness: Harness, sent: OrchestrationV2Command) =>
   harness.orchestrator.dispatch(sent);
-
-const refusal = <A, E>(effect: Effect.Effect<A, E>) =>
-  Effect.map(Effect.flip(effect), (error) => {
-    assert.instanceOf(error, OrchestrationDispatchCommandError);
-    return (error as OrchestrationDispatchCommandError).message;
-  });
 
 const threadId = FILE_CREATE_IDS.threadId;
 
@@ -84,7 +39,7 @@ describe("Rename a thread and mark it unread", () => {
   it.layer(NodeServices.layer)((it) => {
     it.effect("renaming a thread changes its title", () =>
       Effect.gen(function* () {
-        const harness = yield* makeHarness;
+        const { harness } = yield* replayClaude("file_create.claude.ndjson");
         const { run } = yield* runFileCreateScenario(harness);
         assert.strictEqual(run.status, "completed");
         assert.strictEqual(
@@ -107,7 +62,7 @@ describe("Rename a thread and mark it unread", () => {
       "marking a thread unread is refused until a run completes, then puts the read marker just before the completion",
       () =>
         Effect.gen(function* () {
-          const harness = yield* makeHarness;
+          const { harness } = yield* replayClaude("file_create.claude.ndjson");
           const { sent } = yield* sendFileCreateMessage(harness);
           assert.strictEqual(
             yield* refusal(
@@ -151,7 +106,7 @@ describe("Rename a thread and mark it unread", () => {
       "a run's work is activity, while a visit is not and only moves the read marker forward",
       () =>
         Effect.gen(function* () {
-          const harness = yield* makeHarness;
+          const { harness } = yield* replayClaude("file_create.claude.ndjson");
           const { sent } = yield* sendFileCreateMessage(harness);
           const sentAt = (yield* threadOf(harness, threadId)).updatedAt;
           yield* TestClock.adjust("1 minute");
@@ -183,7 +138,7 @@ describe("Rename a thread and mark it unread", () => {
 
     it.effect("a deleted thread refuses a rename, a visit and marking it unread", () =>
       Effect.gen(function* () {
-        const harness = yield* makeHarness;
+        const { harness } = yield* replayClaude("file_create.claude.ndjson");
         const { run } = yield* runFileCreateScenario(harness);
         yield* command(harness, {
           type: "thread.delete",

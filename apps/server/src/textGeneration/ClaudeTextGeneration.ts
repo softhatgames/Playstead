@@ -113,11 +113,18 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
       const stdout = yield* Effect.gen(function* () {
         const workingDirectory =
           operation === "generateThreadTitle"
-            ? yield* fs.makeTempDirectoryScoped({ prefix: "playstead-claude-title-" }).pipe(
-                Effect.mapError((cause) =>
-                  normalizeCliError("claude", operation, cause, "Failed to create title directory"),
-                ),
-              )
+            ? yield* fs
+                .makeTempDirectoryScoped({ prefix: "playstead-claude-title-" })
+                .pipe(
+                  Effect.mapError((cause) =>
+                    normalizeCliError(
+                      "claude",
+                      operation,
+                      cause,
+                      "Failed to create title directory",
+                    ),
+                  ),
+                )
             : cwd;
         const managedMcpConfig = yield* fs
           .exists(managedMcpConfigPath(input.platform))

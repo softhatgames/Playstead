@@ -32,6 +32,7 @@ import {
   runTodoListScenario,
   TODO_LIST_IDS,
 } from "./testkit/fixtures/todoList.ts";
+import { projectionOf } from "./testkit/ThreadCommands.ts";
 
 /**
  * Runs the plan-then-Implement scenario over a replay and checks what the
@@ -132,11 +133,6 @@ const harnessWithThread = (interactionMode?: ProviderInteractionMode) =>
 
 type Harness = Effect.Success<ReturnType<typeof harnessWithThread>>;
 
-const threadOf = (harness: Harness, threadId = THREAD_ID) =>
-  Effect.map(harness.orchestrator.getThreadProjection(threadId), (projection) =>
-    Option.getOrThrow(projection),
-  );
-
 const PLAN_ID = PlanId.make("plan:plan-mode:1");
 const PLAN_MARKDOWN = "# Write hello.txt\n\n1. Create hello.txt.";
 
@@ -188,7 +184,7 @@ describe("Plan mode", () => {
       Effect.gen(function* () {
         const harness = yield* harnessWithThread();
 
-        const projection = yield* threadOf(harness);
+        const projection = yield* projectionOf(harness, THREAD_ID);
 
         assert.strictEqual(projection.thread.interactionMode, "default");
       }),
@@ -198,7 +194,7 @@ describe("Plan mode", () => {
       Effect.gen(function* () {
         const harness = yield* harnessWithThread("plan");
 
-        const projection = yield* threadOf(harness);
+        const projection = yield* projectionOf(harness, THREAD_ID);
 
         assert.strictEqual(projection.thread.interactionMode, "plan");
       }),
@@ -214,14 +210,14 @@ describe("Plan mode", () => {
           threadId: THREAD_ID,
           interactionMode: "plan",
         });
-        const planning = yield* threadOf(harness);
+        const planning = yield* projectionOf(harness, THREAD_ID);
         yield* harness.orchestrator.dispatch({
           type: "thread.interaction-mode.set",
           commandId: CommandId.make("command:plan-mode:default"),
           threadId: THREAD_ID,
           interactionMode: "default",
         });
-        const building = yield* threadOf(harness);
+        const building = yield* projectionOf(harness, THREAD_ID);
 
         assert.strictEqual(planning.thread.interactionMode, "plan");
         assert.strictEqual(building.thread.interactionMode, "default");
@@ -266,7 +262,7 @@ describe("Plan mode", () => {
           refused.message,
           "Proposed plan plan:missing does not exist on thread thread:plan-mode.",
         );
-        const projection = yield* threadOf(harness);
+        const projection = yield* projectionOf(harness, THREAD_ID);
         assert.deepStrictEqual(projection.runs, []);
       }),
     );
@@ -278,7 +274,7 @@ describe("Plan mode", () => {
 
         yield* implement(harness, THREAD_ID, 1);
 
-        const projection = yield* threadOf(harness);
+        const projection = yield* projectionOf(harness, THREAD_ID);
         assert.deepStrictEqual(
           projection.plans.map((plan) => [plan.id, plan.status]),
           [[PLAN_ID, "completed"]],
@@ -299,8 +295,8 @@ describe("Plan mode", () => {
 
         yield* implement(harness, implementing, 1);
 
-        const source = yield* threadOf(harness);
-        const target = yield* threadOf(harness, implementing);
+        const source = yield* projectionOf(harness, THREAD_ID);
+        const target = yield* projectionOf(harness, implementing);
         assert.strictEqual(source.plans[0]?.status, "completed");
         assert.deepStrictEqual(target.plans, []);
         assert.strictEqual(target.thread.interactionMode, "default");
@@ -343,7 +339,7 @@ describe("Plan mode", () => {
           refused.message,
           "Proposed plan plan:plan-mode:1 belongs to a different project.",
         );
-        assert.strictEqual((yield* threadOf(harness)).plans[0]?.status, "active");
+        assert.strictEqual((yield* projectionOf(harness, THREAD_ID)).plans[0]?.status, "active");
       }),
     );
 

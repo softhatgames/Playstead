@@ -1,22 +1,10 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import { CommandId, type ThreadId } from "@playstead/contracts/baseSchemas";
-import {
-  OrchestrationDispatchCommandError,
-  type OrchestrationV2Command,
-} from "@playstead/contracts/orchestrationV2";
-import {
-  decodeProviderReplayNdjson,
-  materializeReplayWorkspace,
-} from "@playstead/provider-testing/replayTranscript";
+import type { OrchestrationV2Command } from "@playstead/contracts/orchestrationV2";
 import * as Effect from "effect/Effect";
-import * as FileSystem from "effect/FileSystem";
-import * as Option from "effect/Option";
-import * as Path from "effect/Path";
 import * as TestClock from "effect/testing/TestClock";
 
-import { makeTestServerConfig } from "../testUtils/testServer.ts";
-import { makeClaudeReplay } from "./Adapters/ClaudeAdapterV2.testkit.ts";
 import { makeOrchestrationHarness } from "./testkit/OrchestratorHarness.ts";
 import {
   FILE_CREATE_IDS,
@@ -35,6 +23,8 @@ import {
   runFirstTurn,
   runSecondTurn,
 } from "./testkit/fixtures/restartResume.ts";
+import { projectionOf, refusal, threadOf } from "./testkit/ThreadCommands.ts";
+import { replayClaude } from "./testkit/ProviderReplay.ts";
 
 /**
  * Seam 1 for pinning and settling a thread (T3 Code's `Orchestrator.ts`
@@ -45,43 +35,7 @@ import {
  * Claude's transport replaying recordings.
  */
 
-const readRecording = (name: string) =>
-  Effect.gen(function* () {
-    const fs = yield* FileSystem.FileSystem;
-    const path = yield* Path.Path;
-    const file = path.join(
-      path.dirname(yield* path.fromFileUrl(new URL(import.meta.url))),
-      "testkit",
-      "fixtures",
-      name,
-    );
-    return yield* decodeProviderReplayNdjson(yield* fs.readFileString(file));
-  });
-
-const makeHarness = (
-  recording: string,
-  folder: string,
-  options?: Parameters<typeof makeClaudeReplay>[1],
-) =>
-  Effect.gen(function* () {
-    const path = yield* Path.Path;
-    const config = yield* makeTestServerConfig();
-    const recorded = yield* readRecording(recording);
-    const replay = yield* makeClaudeReplay(
-      yield* materializeReplayWorkspace(recorded, path.join(config.baseDir, folder)),
-      options,
-    );
-    const harness = yield* makeOrchestrationHarness({ claudeRunner: replay.runner, config });
-    return { harness, replay };
-  });
-
 type Harness = Effect.Success<ReturnType<typeof makeOrchestrationHarness>>;
-
-const projectionOf = (harness: Harness, threadId: ThreadId) =>
-  Effect.map(harness.orchestrator.getThreadProjection(threadId), Option.getOrThrow);
-
-const threadOf = (harness: Harness, threadId: ThreadId) =>
-  Effect.map(projectionOf(harness, threadId), (projection) => projection.thread);
 
 const send = (
   harness: Harness,
@@ -96,22 +50,15 @@ const send = (
       : { type, commandId: CommandId.make(id), threadId, ...extra }) as OrchestrationV2Command,
   );
 
-const refusal = <A, E>(effect: Effect.Effect<A, E>) =>
-  Effect.map(Effect.flip(effect), (error) => {
-    assert.instanceOf(error, OrchestrationDispatchCommandError);
-    return (error as OrchestrationDispatchCommandError).message;
-  });
-
 describe("Pin and settle a thread", () => {
   it.layer(NodeServices.layer)((it) => {
     it.effect(
       "settling an idle thread stops its provider session, and its next message un-settles it and resumes the conversation",
       () =>
         Effect.gen(function* () {
-          const { harness, replay } = yield* makeHarness(
-            "restart_resume.claude.ndjson",
-            "resumed-game",
-          );
+          const { harness, replay } = yield* replayClaude("restart_resume.claude.ndjson", {
+            workspace: "resumed-game",
+          });
           const threadId = RESTART_RESUME_IDS.threadId;
           const first = yield* runFirstTurn(harness);
           assert.strictEqual(first.run.status, "completed");
@@ -146,8 +93,8 @@ describe("Pin and settle a thread", () => {
 
     it.effect("settling is refused while the thread's run is working", () =>
       Effect.gen(function* () {
-        const { harness, replay } = yield* makeHarness("file_create.claude.ndjson", "empty-game", {
-          holdBefore: (frame) => JSON.stringify(frame).includes('"type":"result"'),
+        const { harness, replay } = yield* replayClaude("file_create.claude.ndjson", {
+          claude: { holdBefore: (frame) => JSON.stringify(frame).includes('"type":"result"') },
         });
         const threadId = FILE_CREATE_IDS.threadId;
         yield* sendFileCreateMessage(harness);
@@ -164,7 +111,7 @@ describe("Pin and settle a thread", () => {
 
     it.effect("settling is refused while the provider waits on a question", () =>
       Effect.gen(function* () {
-        const { harness } = yield* makeHarness("question_answer.claude.ndjson", "empty-game");
+        const { harness } = yield* replayClaude("question_answer.claude.ndjson");
         const { sent } = yield* sendQuestionMessage(harness, CLAUDE_QUESTION_SCENARIO);
         yield* awaitPendingQuestion(harness, sent.sequence);
         assert.strictEqual(
@@ -178,7 +125,7 @@ describe("Pin and settle a thread", () => {
       "pinning keeps the first order key and brings a settled thread back, settling drops the pin, and un-settling holds it active",
       () =>
         Effect.gen(function* () {
-          const { harness } = yield* makeHarness("file_create.claude.ndjson", "empty-game");
+          const { harness } = yield* replayClaude("file_create.claude.ndjson");
           const threadId = FILE_CREATE_IDS.threadId;
           yield* runFileCreateScenario(harness);
 
@@ -223,7 +170,7 @@ describe("Pin and settle a thread", () => {
 
     it.effect("an archived thread refuses pin and settle, and a deleted one refuses them all", () =>
       Effect.gen(function* () {
-        const { harness } = yield* makeHarness("file_create.claude.ndjson", "empty-game");
+        const { harness } = yield* replayClaude("file_create.claude.ndjson");
         const threadId = FILE_CREATE_IDS.threadId;
         yield* runFileCreateScenario(harness);
         yield* harness.orchestrator.dispatch({

@@ -2,13 +2,9 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import { CommandId, ProjectId, ThreadId } from "@playstead/contracts/baseSchemas";
 import type { OrchestrationV2Command } from "@playstead/contracts/orchestrationV2";
-import {
-  decodeProviderReplayNdjson,
-  materializeReplayWorkspace,
-} from "@playstead/provider-testing/replayTranscript";
+import { materializeReplayWorkspace } from "@playstead/provider-testing/replayTranscript";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
-import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Stream from "effect/Stream";
 
@@ -19,6 +15,8 @@ import {
   sendFileCreateMessage,
 } from "../orchestration-v2/testkit/fixtures/fileCreate.ts";
 import { makeTestServerConfig } from "../testUtils/testServer.ts";
+import { projectionOf } from "../orchestration-v2/testkit/ThreadCommands.ts";
+import { readRecording, replayClaude } from "../orchestration-v2/testkit/ProviderReplay.ts";
 
 /**
  * Seam 1 for removing and renaming a project (T3 Code's
@@ -51,21 +49,6 @@ const addProject = (harness: Harness, name: string, folder: string) =>
 const listedIds = (harness: Harness) =>
   Effect.map(harness.projects.listShells, (shells) => shells.map((shell) => shell.id));
 
-const readRecording = (name: string) =>
-  Effect.gen(function* () {
-    const fs = yield* FileSystem.FileSystem;
-    const path = yield* Path.Path;
-    const file = path.join(
-      path.dirname(yield* path.fromFileUrl(new URL(import.meta.url))),
-      "..",
-      "orchestration-v2",
-      "testkit",
-      "fixtures",
-      name,
-    );
-    return yield* decodeProviderReplayNdjson(yield* fs.readFileString(file));
-  });
-
 /** Claude's whole final reply in the file-create recording, held back so its turn is still working. */
 const FINAL_REPLY =
   'Created `hello-claude.txt` in the working directory with the line "Hello from Claude in Playstead!"';
@@ -86,9 +69,6 @@ const createThread = (harness: Harness, projectId: ProjectId, threadId: ThreadId
     title: "New thread",
     modelSelection: { instanceId: "claudeAgent", model: "claude-haiku-5-5" },
   });
-
-const projectionOf = (harness: Harness, threadId: ThreadId) =>
-  Effect.map(harness.orchestrator.getThreadProjection(threadId), Option.getOrThrow);
 
 /** Every removal in the log so far, as `[stream, event type, command id]`. */
 const removals = (harness: Harness) =>
@@ -145,13 +125,9 @@ describe("Remove a project", () => {
         Effect.gen(function* () {
           const fs = yield* FileSystem.FileSystem;
           const path = yield* Path.Path;
-          const config = yield* makeTestServerConfig();
-          const recorded = yield* readRecording("file_create.claude.ndjson");
-          const replay = yield* makeClaudeReplay(
-            yield* materializeReplayWorkspace(recorded, path.join(config.baseDir, "empty-game")),
-            { holdBefore: isFinalReply },
-          );
-          const harness = yield* makeOrchestrationHarness({ claudeRunner: replay.runner, config });
+          const { harness, replay } = yield* replayClaude("file_create.claude.ndjson", {
+            claude: { holdBefore: isFinalReply },
+          });
           const { projectId, threadId: working } = FILE_CREATE_IDS;
           yield* sendFileCreateMessage(harness);
           yield* fs.writeFileString(

@@ -1,24 +1,13 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import { CommandId, type ThreadId } from "@playstead/contracts/baseSchemas";
-import {
-  OrchestrationDispatchCommandError,
-  type OrchestrationV2Command,
-} from "@playstead/contracts/orchestrationV2";
-import {
-  decodeProviderReplayNdjson,
-  materializeReplayWorkspace,
-} from "@playstead/provider-testing/replayTranscript";
+import type { OrchestrationV2Command } from "@playstead/contracts/orchestrationV2";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
-import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
-import * as Path from "effect/Path";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 
-import { makeTestServerConfig } from "../testUtils/testServer.ts";
-import { makeClaudeReplay } from "./Adapters/ClaudeAdapterV2.testkit.ts";
 import { makeOrchestrationHarness } from "./testkit/OrchestratorHarness.ts";
 import {
   FILE_CREATE_IDS,
@@ -31,6 +20,8 @@ import {
   QUESTION_IDS,
   sendQuestionMessage,
 } from "./testkit/fixtures/questionAnswer.ts";
+import { refusal, threadOf } from "./testkit/ThreadCommands.ts";
+import { replayClaude } from "./testkit/ProviderReplay.ts";
 
 /**
  * Seam 1 for automatic settlement (T3 Code's
@@ -43,38 +34,7 @@ import {
 
 const DAY_MS = 24 * 60 * 60 * 1_000;
 
-const readRecording = (name: string) =>
-  Effect.gen(function* () {
-    const fs = yield* FileSystem.FileSystem;
-    const path = yield* Path.Path;
-    const file = path.join(
-      path.dirname(yield* path.fromFileUrl(new URL(import.meta.url))),
-      "testkit",
-      "fixtures",
-      name,
-    );
-    return yield* decodeProviderReplayNdjson(yield* fs.readFileString(file));
-  });
-
-const makeReplayHarness = (recording: string, options?: Parameters<typeof makeClaudeReplay>[1]) =>
-  Effect.gen(function* () {
-    const path = yield* Path.Path;
-    const config = yield* makeTestServerConfig();
-    const recorded = yield* readRecording(recording);
-    const replay = yield* makeClaudeReplay(
-      yield* materializeReplayWorkspace(recorded, path.join(config.baseDir, "empty-game")),
-      options,
-    );
-    const harness = yield* makeOrchestrationHarness({ claudeRunner: replay.runner, config });
-    return { harness, replay };
-  });
-
-const makeHarness = Effect.map(
-  makeReplayHarness("file_create.claude.ndjson"),
-  ({ harness }) => harness,
-);
-
-type Harness = Effect.Success<typeof makeHarness>;
+type Harness = Effect.Success<ReturnType<typeof makeOrchestrationHarness>>;
 
 let sent = 0;
 const send = (harness: Harness, command: Record<string, unknown> & { readonly type: string }) =>
@@ -83,12 +43,6 @@ const send = (harness: Harness, command: Record<string, unknown> & { readonly ty
     threadId: FILE_CREATE_IDS.threadId,
     ...command,
   } as OrchestrationV2Command);
-
-const refusal = <A, E>(effect: Effect.Effect<A, E>) =>
-  Effect.map(Effect.flip(effect), (error) => {
-    assert.instanceOf(error, OrchestrationDispatchCommandError);
-    return (error as OrchestrationDispatchCommandError).message;
-  });
 
 /** Waits, without sleeping, for the thread's next `thread.settled` after `afterSequence`. */
 const awaitSettled = (harness: Harness, threadId: ThreadId, afterSequence: number) =>
@@ -100,12 +54,6 @@ const awaitSettled = (harness: Harness, threadId: ThreadId, afterSequence: numbe
         stored.event.type === "thread.settled",
     ),
     Stream.runHead,
-  );
-
-const threadOf = (harness: Harness, threadId: ThreadId) =>
-  Effect.map(
-    harness.orchestrator.getThreadProjection(threadId),
-    (projection) => Option.getOrThrow(projection).thread,
   );
 
 /** Moves the clock, lets the one-minute sweep run, and waits for its work. */
@@ -123,7 +71,7 @@ describe("Automatic settlement", () => {
       "an idle thread settles on the minute sweep once it has had no activity for the setting's days, at its last activity",
       () =>
         Effect.gen(function* () {
-          const harness = yield* makeHarness;
+          const { harness } = yield* replayClaude("file_create.claude.ndjson");
           const threadId = FILE_CREATE_IDS.threadId;
           const { run } = yield* runFileCreateScenario(harness);
           assert.strictEqual(run.status, "completed");
@@ -143,7 +91,7 @@ describe("Automatic settlement", () => {
       "a snoozed thread stays until it wakes, and its inactivity counts from the wake",
       () =>
         Effect.gen(function* () {
-          const harness = yield* makeHarness;
+          const { harness } = yield* replayClaude("file_create.claude.ndjson");
           const threadId = FILE_CREATE_IDS.threadId;
           yield* runFileCreateScenario(harness);
           yield* harness.settlement.start();
@@ -166,7 +114,7 @@ describe("Automatic settlement", () => {
 
     it.effect("a thread with automatic settlement turned off stays, until it is turned on", () =>
       Effect.gen(function* () {
-        const harness = yield* makeHarness;
+        const { harness } = yield* replayClaude("file_create.claude.ndjson");
         const threadId = FILE_CREATE_IDS.threadId;
         yield* runFileCreateScenario(harness);
         yield* harness.orchestrator.dispatch({
@@ -196,7 +144,7 @@ describe("Automatic settlement", () => {
       "a pinned thread stays and settles once unpinned; a thread the person un-settled stays until a message",
       () =>
         Effect.gen(function* () {
-          const harness = yield* makeHarness;
+          const { harness } = yield* replayClaude("file_create.claude.ndjson");
           const threadId = FILE_CREATE_IDS.threadId;
           yield* runFileCreateScenario(harness);
           yield* send(harness, { type: "thread.pin" });
@@ -217,7 +165,7 @@ describe("Automatic settlement", () => {
 
     it.effect("an archived thread stays, and refuses the per-thread switch", () =>
       Effect.gen(function* () {
-        const harness = yield* makeHarness;
+        const { harness } = yield* replayClaude("file_create.claude.ndjson");
         const threadId = FILE_CREATE_IDS.threadId;
         yield* runFileCreateScenario(harness);
         yield* send(harness, { type: "thread.archive" });
@@ -240,7 +188,7 @@ describe("Automatic settlement", () => {
 
     it.effect("a thread whose provider waits on a question stays", () =>
       Effect.gen(function* () {
-        const { harness } = yield* makeReplayHarness("question_answer.claude.ndjson");
+        const { harness } = yield* replayClaude("question_answer.claude.ndjson");
         const { sent: message } = yield* sendQuestionMessage(harness, CLAUDE_QUESTION_SCENARIO);
         yield* awaitPendingQuestion(harness, message.sequence);
         yield* harness.settlement.start();
@@ -252,8 +200,8 @@ describe("Automatic settlement", () => {
 
     it.effect("a thread whose run is still working stays", () =>
       Effect.gen(function* () {
-        const { harness, replay } = yield* makeReplayHarness("file_create.claude.ndjson", {
-          holdBefore: (frame) => JSON.stringify(frame).includes('"type":"result"'),
+        const { harness, replay } = yield* replayClaude("file_create.claude.ndjson", {
+          claude: { holdBefore: (frame) => JSON.stringify(frame).includes('"type":"result"') },
         });
         yield* sendFileCreateMessage(harness);
         yield* harness.worker.drain;
@@ -269,7 +217,7 @@ describe("Automatic settlement", () => {
       "turning the setting off keeps every thread, and turning it on sweeps at once with its days",
       () =>
         Effect.gen(function* () {
-          const harness = yield* makeHarness;
+          const { harness } = yield* replayClaude("file_create.claude.ndjson");
           const threadId = FILE_CREATE_IDS.threadId;
           const { run } = yield* runFileCreateScenario(harness);
           yield* harness.settings.updateSettings({ sidebarAutoSettleAfterDays: null });
@@ -290,7 +238,7 @@ describe("Automatic settlement", () => {
       "the sweep's settle is refused once the thread changed after the sweep read it, or carries an override",
       () =>
         Effect.gen(function* () {
-          const harness = yield* makeHarness;
+          const { harness } = yield* replayClaude("file_create.claude.ndjson");
           const threadId = FILE_CREATE_IDS.threadId;
           const { run } = yield* runFileCreateScenario(harness);
           const read = yield* threadOf(harness, threadId);

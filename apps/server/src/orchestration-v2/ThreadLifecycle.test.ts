@@ -1,18 +1,10 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import { CommandId, MessageId, RunId, type ThreadId } from "@playstead/contracts/baseSchemas";
-import {
-  OrchestrationDispatchCommandError,
-  type OrchestrationV2Command,
-} from "@playstead/contracts/orchestrationV2";
-import {
-  decodeProviderReplayNdjson,
-  materializeReplayWorkspace,
-} from "@playstead/provider-testing/replayTranscript";
+import type { OrchestrationV2Command } from "@playstead/contracts/orchestrationV2";
+import { materializeReplayWorkspace } from "@playstead/provider-testing/replayTranscript";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
-import * as FileSystem from "effect/FileSystem";
-import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 
 import { makeTestServerConfig } from "../testUtils/testServer.ts";
@@ -32,6 +24,8 @@ import {
   runFirstTurn,
   runSecondTurn,
 } from "./testkit/fixtures/restartResume.ts";
+import { projectionOf, refusal } from "./testkit/ThreadCommands.ts";
+import { readRecording, replayClaude } from "./testkit/ProviderReplay.ts";
 
 /**
  * Seam 1 for archiving and deleting a thread (T3 Code's `runtimeLayer.test.ts`
@@ -40,23 +34,7 @@ import {
  * replaying recordings.
  */
 
-const readRecording = (name: string) =>
-  Effect.gen(function* () {
-    const fs = yield* FileSystem.FileSystem;
-    const path = yield* Path.Path;
-    const file = path.join(
-      path.dirname(yield* path.fromFileUrl(new URL(import.meta.url))),
-      "testkit",
-      "fixtures",
-      name,
-    );
-    return yield* decodeProviderReplayNdjson(yield* fs.readFileString(file));
-  });
-
 type Harness = Effect.Success<ReturnType<typeof makeOrchestrationHarness>>;
-
-const projectionOf = (harness: Harness, threadId: ThreadId) =>
-  Effect.map(harness.orchestrator.getThreadProjection(threadId), Option.getOrThrow);
 
 const command = (harness: Harness, sent: OrchestrationV2Command) =>
   harness.orchestrator.dispatch(sent);
@@ -69,12 +47,6 @@ const unarchive = (harness: Harness, threadId: ThreadId, id: string) =>
 
 const remove = (harness: Harness, threadId: ThreadId, id: string) =>
   command(harness, { type: "thread.delete", commandId: CommandId.make(id), threadId });
-
-const refusal = <A, E>(effect: Effect.Effect<A, E>) =>
-  Effect.map(Effect.flip(effect), (error) => {
-    assert.instanceOf(error, OrchestrationDispatchCommandError);
-    return (error as OrchestrationDispatchCommandError).message;
-  });
 
 /** Claude's whole final reply in the file-create recording, held back below. */
 const FINAL_REPLY =
@@ -89,13 +61,9 @@ describe("Archive and delete a thread", () => {
       "archiving stops the thread's provider session, and after unarchiving its next message resumes the conversation in a new one",
       () =>
         Effect.gen(function* () {
-          const path = yield* Path.Path;
-          const config = yield* makeTestServerConfig();
-          const recorded = yield* readRecording("restart_resume.claude.ndjson");
-          const replay = yield* makeClaudeReplay(
-            yield* materializeReplayWorkspace(recorded, path.join(config.baseDir, "resumed-game")),
-          );
-          const harness = yield* makeOrchestrationHarness({ claudeRunner: replay.runner, config });
+          const { harness, replay } = yield* replayClaude("restart_resume.claude.ndjson", {
+            workspace: "resumed-game",
+          });
           const threadId = RESTART_RESUME_IDS.threadId;
           const first = yield* runFirstTurn(harness);
           assert.strictEqual(first.run.status, "completed");
@@ -141,14 +109,9 @@ describe("Archive and delete a thread", () => {
       "deleting a thread while Claude is working cancels the run and stops its session, and nothing revives the run",
       () =>
         Effect.gen(function* () {
-          const path = yield* Path.Path;
-          const config = yield* makeTestServerConfig();
-          const recorded = yield* readRecording("file_create.claude.ndjson");
-          const replay = yield* makeClaudeReplay(
-            yield* materializeReplayWorkspace(recorded, path.join(config.baseDir, "empty-game")),
-            { holdBefore: isFinalReply },
-          );
-          const harness = yield* makeOrchestrationHarness({ claudeRunner: replay.runner, config });
+          const { harness, replay } = yield* replayClaude("file_create.claude.ndjson", {
+            claude: { holdBefore: isFinalReply },
+          });
           const threadId = FILE_CREATE_IDS.threadId;
           yield* sendFileCreateMessage(harness);
           yield* harness.worker.drain;
@@ -193,13 +156,7 @@ describe("Archive and delete a thread", () => {
       "deleting a thread waiting on a question cancels the question, which can no longer be answered",
       () =>
         Effect.gen(function* () {
-          const path = yield* Path.Path;
-          const config = yield* makeTestServerConfig();
-          const recorded = yield* readRecording("question_answer.claude.ndjson");
-          const replay = yield* makeClaudeReplay(
-            yield* materializeReplayWorkspace(recorded, path.join(config.baseDir, "empty-game")),
-          );
-          const harness = yield* makeOrchestrationHarness({ claudeRunner: replay.runner, config });
+          const { harness } = yield* replayClaude("question_answer.claude.ndjson");
           const { sent } = yield* sendQuestionMessage(harness, CLAUDE_QUESTION_SCENARIO);
           const pending = yield* awaitPendingQuestion(harness, sent.sequence);
 
@@ -224,13 +181,7 @@ describe("Archive and delete a thread", () => {
 
     it.effect("a deleted thread refuses every command", () =>
       Effect.gen(function* () {
-        const path = yield* Path.Path;
-        const config = yield* makeTestServerConfig();
-        const recorded = yield* readRecording("file_create.claude.ndjson");
-        const replay = yield* makeClaudeReplay(
-          yield* materializeReplayWorkspace(recorded, path.join(config.baseDir, "empty-game")),
-        );
-        const harness = yield* makeOrchestrationHarness({ claudeRunner: replay.runner, config });
+        const { harness } = yield* replayClaude("file_create.claude.ndjson");
         const threadId = FILE_CREATE_IDS.threadId;
         const { sent } = yield* sendFileCreateMessage(harness);
         yield* harness.worker.drain;

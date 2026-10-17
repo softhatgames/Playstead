@@ -22,6 +22,7 @@ import {
   type MessageSteeringVariant,
   runMessageSteeringScenario,
 } from "./testkit/fixtures/messageSteering.ts";
+import { projectionOf } from "./testkit/ThreadCommands.ts";
 
 /** Seam 1 with Claude's `query()` replaying the steering recording. */
 const claudeReplay = replayClaude("message_steering.claude.ndjson", { workspace: "steer-game" });
@@ -162,9 +163,6 @@ const send = (
     ...delivery,
   });
 
-const threadOf = (harness: Harness) =>
-  Effect.map(harness.orchestrator.getThreadProjection(THREAD_ID), Option.getOrThrow);
-
 const runOf = (runs: ReadonlyArray<OrchestrationV2Run>, n: number) => {
   const run = runs.find((candidate) => candidate.userMessageId === `message:steering:${n}`);
   assert.isDefined(run);
@@ -217,7 +215,7 @@ describe("Steering", () => {
       Effect.gen(function* () {
         const harness = yield* harnessWithThread;
         yield* send(harness, 1, { dispatchMode: { type: "start_immediately" } });
-        const first = runOf((yield* threadOf(harness)).runs, 1);
+        const first = runOf((yield* projectionOf(harness, THREAD_ID)).runs, 1);
 
         const refused = yield* Effect.flip(
           send(harness, 2, { dispatchMode: { type: "steer_active", targetRunId: first.id } }),
@@ -228,7 +226,7 @@ describe("Steering", () => {
           `Target run ${first.id} is starting and cannot be steered.`,
         );
         assert.deepStrictEqual(
-          (yield* threadOf(harness)).messages.map((message) => message.text),
+          (yield* projectionOf(harness, THREAD_ID)).messages.map((message) => message.text),
           ["Message 1"],
         );
       }),
@@ -243,7 +241,10 @@ describe("Steering", () => {
           deliveryIntent: "steer",
         });
 
-        assert.strictEqual(runOf((yield* threadOf(harness)).runs, 1).status, "starting");
+        assert.strictEqual(
+          runOf((yield* projectionOf(harness, THREAD_ID)).runs, 1).status,
+          "starting",
+        );
       }),
     );
 
@@ -257,7 +258,10 @@ describe("Steering", () => {
           deliveryIntent: "auto",
         });
 
-        assert.strictEqual(runOf((yield* threadOf(harness)).runs, 2).status, "queued");
+        assert.strictEqual(
+          runOf((yield* projectionOf(harness, THREAD_ID)).runs, 2).status,
+          "queued",
+        );
       }),
     );
 
@@ -266,7 +270,7 @@ describe("Steering", () => {
         const harness = yield* harnessWithThread;
         yield* send(harness, 1, { dispatchMode: { type: "start_immediately" } });
         yield* send(harness, 2, { dispatchMode: { type: "queue_after_active" } });
-        const before = yield* threadOf(harness);
+        const before = yield* projectionOf(harness, THREAD_ID);
         const promote = (queuedRunId: OrchestrationV2Run["id"], n: number) =>
           harness.orchestrator.dispatch({
             type: "queued-message.promote-to-steer",
@@ -287,7 +291,7 @@ describe("Steering", () => {
           notQueued.message,
           `Queued run ${runOf(before.runs, 1).id} is not queued.`,
         );
-        const after = yield* threadOf(harness);
+        const after = yield* projectionOf(harness, THREAD_ID);
         assert.deepStrictEqual(
           [runOf(after.runs, 2).status, runOf(after.runs, 2).queuePosition],
           ["queued", 1],

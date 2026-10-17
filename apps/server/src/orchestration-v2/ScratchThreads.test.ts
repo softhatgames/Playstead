@@ -2,10 +2,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import { CommandId, MessageId, ProjectId, ThreadId } from "@playstead/contracts/baseSchemas";
 import type { ThreadTitleGenerationInput } from "@playstead/provider-core/server/textGeneration";
-import {
-  decodeProviderReplayNdjson,
-  materializeReplayWorkspace,
-} from "@playstead/provider-testing/replayTranscript";
+import { materializeReplayWorkspace } from "@playstead/provider-testing/replayTranscript";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
@@ -16,6 +13,7 @@ import type * as TextGeneration from "../textGeneration/TextGeneration.ts";
 import { makeClaudeReplay } from "./Adapters/ClaudeAdapterV2.testkit.ts";
 import { makeOrchestrationHarness } from "./testkit/OrchestratorHarness.ts";
 import { FILE_CREATE_SCENARIO } from "./testkit/fixtures/fileCreate.ts";
+import { readRecording } from "./testkit/ProviderReplay.ts";
 
 /**
  * Seam 1 for threads without a project (T3 Code's `ThreadLaunchService.test.ts`
@@ -25,19 +23,6 @@ import { FILE_CREATE_SCENARIO } from "./testkit/fixtures/fileCreate.ts";
  * recording in the folder the thread should get. The replay compares the
  * session's working directory with that folder strictly.
  */
-
-const readRecording = (name: string) =>
-  Effect.gen(function* () {
-    const fs = yield* FileSystem.FileSystem;
-    const path = yield* Path.Path;
-    const file = path.join(
-      path.dirname(yield* path.fromFileUrl(new URL(import.meta.url))),
-      "testkit",
-      "fixtures",
-      name,
-    );
-    return yield* decodeProviderReplayNdjson(yield* fs.readFileString(file));
-  });
 
 const threadId = ThreadId.make("thread:scratch");
 const modelSelection = {

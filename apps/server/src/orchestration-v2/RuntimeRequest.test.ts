@@ -3,10 +3,8 @@ import { assert, describe, it } from "@effect/vitest";
 import { CommandId, RuntimeRequestId } from "@playstead/contracts/baseSchemas";
 import { OrchestrationDispatchCommandError } from "@playstead/contracts/orchestrationV2";
 import * as Effect from "effect/Effect";
-import * as Option from "effect/Option";
 
 import { makeTestServerConfig } from "../testUtils/testServer.ts";
-import { makeOrchestrationHarness } from "./testkit/OrchestratorHarness.ts";
 import { replayClaude, replayProvider } from "./testkit/ProviderReplay.ts";
 import {
   answerQuestion,
@@ -18,9 +16,7 @@ import {
   runQuestionInterruptScenario,
   sendQuestionMessage,
 } from "./testkit/fixtures/questionAnswer.ts";
-
-const projectionOf = (harness: Effect.Success<ReturnType<typeof makeOrchestrationHarness>>) =>
-  Effect.map(harness.orchestrator.getThreadProjection(QUESTION_IDS.threadId), Option.getOrThrow);
+import { projectionOf } from "./testkit/ThreadCommands.ts";
 
 const PROVIDERS = [
   { name: "Claude", scenario: CLAUDE_QUESTION_SCENARIO, file: "claude" },
@@ -55,7 +51,7 @@ describe("Answer a provider's question", () => {
             );
 
             assert.strictEqual(run.status, "completed");
-            const projection = yield* projectionOf(harness);
+            const projection = yield* projectionOf(harness, QUESTION_IDS.threadId);
             const request = projection.runtimeRequests.find(
               (candidate) => candidate.id === pending.request.id,
             );
@@ -94,7 +90,7 @@ describe("Answer a provider's question", () => {
 
             yield* assertComplete;
             assert.strictEqual(run.status, "interrupted");
-            const projection = yield* projectionOf(harness);
+            const projection = yield* projectionOf(harness, QUESTION_IDS.threadId);
             assert.deepStrictEqual(
               projection.runtimeRequests.map((request) => [request.id, request.status]),
               [[pending.request.id, "cancelled"]],
@@ -157,7 +153,7 @@ describe("Answer a provider's question", () => {
           );
           const blank = yield* respond("blank", pending.request.id, "  ");
           assert.strictEqual(blank.message, "Answer each question before sending.");
-          const projection = yield* projectionOf(harness);
+          const projection = yield* projectionOf(harness, QUESTION_IDS.threadId);
           assert.strictEqual(projection.runtimeRequests[0]?.status, "pending");
         }).pipe(Effect.scoped),
     );
@@ -177,7 +173,7 @@ describe("Answer a provider's question", () => {
           const { harness } = yield* replayClaude("question_answer.claude.ndjson", {
             harness: { config, recoverOnStartup: true },
           });
-          const projection = yield* projectionOf(harness);
+          const projection = yield* projectionOf(harness, QUESTION_IDS.threadId);
           const request = projection.runtimeRequests.find(
             (candidate) => candidate.id === pending.request.id,
           );
