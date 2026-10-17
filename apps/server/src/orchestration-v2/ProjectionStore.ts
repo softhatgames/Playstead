@@ -77,6 +77,7 @@ const entityKindOf = (event: OrchestrationV2StoredEvent["event"]): EntityKind | 
     case "thread.marked-unread":
     case "thread.pinned":
     case "thread.unpinned":
+    case "thread.auto-settle-set":
     case "thread.settled":
     case "thread.unsettled":
     case "thread.snoozed":
@@ -134,6 +135,7 @@ const toThreadShell = (
     lastVisitedAt: thread.lastVisitedAt,
     worktreePath: thread.worktreePath ?? null,
     titleRegeneration: thread.titleRegeneration ?? null,
+    autoSettleDisabledAt: thread.autoSettleDisabledAt ?? null,
     settledOverride: thread.settledOverride,
     settledAt: thread.settledAt,
     unsettledAt: thread.unsettledAt,

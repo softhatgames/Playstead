@@ -34,7 +34,7 @@ import {
   ServerLifecycleStreamEvent,
   ServerProviderUpdatedPayload,
 } from "./server.ts";
-import { ServerSettings, ServerSettingsError } from "./settings.ts";
+import { AutoSettleAfterDays, ServerSettings, ServerSettingsError } from "./settings.ts";
 
 import {
   OrchestrationSearchThreadsInput,
@@ -69,6 +69,7 @@ const WsServerUpdateSettingsRpc = Rpc.make(WS_METHODS.serverUpdateSettings, {
   payload: Schema.Union([
     Schema.Struct({ providerInstanceMutation: ProviderInstanceMutation }),
     Schema.Struct({ textGenerationModelSelection: ModelSelection }),
+    Schema.Struct({ sidebarAutoSettleAfterDays: AutoSettleAfterDays }),
   ]),
   success: ServerSettings,
   error: ServerSettingsError,

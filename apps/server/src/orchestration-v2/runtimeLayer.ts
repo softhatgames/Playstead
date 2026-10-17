@@ -1,6 +1,7 @@
 import * as ManagedProjectFolders from "../project/ManagedProjectFolders.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
+import * as Settlement from "./ThreadSettlementService.ts";
 import * as ThreadTitles from "./ThreadTitleRegenerationService.ts";
 import * as Layer from "effect/Layer";
 
@@ -43,7 +44,7 @@ export const layer = EventSink.layer.pipe(
  * turns. They need the stores above and a `ProviderAdapterRegistryV2`: the
  * server's reads the provider registry, and tests give replaying adapters.
  */
-export const layerCore = EffectWorker.layer.pipe(
+export const layerCore = Layer.mergeAll(EffectWorker.layer, Settlement.layer).pipe(
   Layer.provide(ThreadTitles.layer),
   Layer.provideMerge(Orchestrator.layer),
   Layer.provideMerge(

@@ -26,6 +26,13 @@ const outline = (items: ReturnType<typeof buildThreadActionMenuItems>) =>
   ]);
 
 describe("buildThreadActionMenuItems", () => {
+  it("shows the current automatic settlement choice", () => {
+    const menu = buildThreadActionMenuItems({ ...idle, autoSettleEnabled: false });
+    assert.deepStrictEqual(menu.find((item) => item.id === "auto-settle")?.children, [
+      { id: "auto-settle:enabled", label: "Enabled", checked: false },
+      { id: "auto-settle:disabled", label: "Disabled", checked: true },
+    ]);
+  });
   it("disables regeneration while keeping rename available during generation", () => {
     const items = buildThreadActionMenuItems({ ...idle, isTitleRegenerating: true });
     assert.deepStrictEqual(
@@ -41,6 +48,17 @@ describe("buildThreadActionMenuItems", () => {
       ["rename", "Rename thread", false, false, true, []],
       ["regenerate-title", "Regenerate title", false, false, false, []],
       ["mark-unread", "Mark unread", false, false, false, []],
+      [
+        "auto-settle",
+        "Auto-settle behavior",
+        false,
+        false,
+        false,
+        [
+          ["auto-settle:enabled", "Enabled"],
+          ["auto-settle:disabled", "Disabled"],
+        ],
+      ],
       [
         "copy",
         "Copy",

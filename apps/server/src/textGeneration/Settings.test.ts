@@ -18,6 +18,8 @@ it.layer(NodeServices.layer)((it) => {
         (yield* service.getSettings).textGenerationModelSelection,
         DEFAULT_TEXT_GENERATION_MODELS.codex,
       );
+      assert.strictEqual((yield* service.getSettings).sidebarAutoSettleAfterDays, 3);
+      yield* service.updateAutoSettle(null);
       const selected = {
         instanceId: "codex" as const,
         model: "gpt-6-luna",
@@ -32,6 +34,7 @@ it.layer(NodeServices.layer)((it) => {
       const restarted = yield* Settings.ServerSettingsService.pipe(
         Effect.provideContext(yield* build()),
       );
+      assert.isNull((yield* restarted.getSettings).sidebarAutoSettleAfterDays);
       assert.deepStrictEqual((yield* restarted.getSettings).textGenerationModelSelection, selected);
     }).pipe(Effect.scoped),
   );

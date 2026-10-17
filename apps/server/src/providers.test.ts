@@ -101,6 +101,7 @@ describe("provider RPC methods", () => {
           }),
         );
         assert.deepStrictEqual(settings, {
+          sidebarAutoSettleAfterDays: 3,
           textGenerationModelSelection: DEFAULT_TEXT_GENERATION_MODELS.codex,
           providerInstances: { codex: { driver: "codex", config: { binaryPath: ownCodex } } },
         });
