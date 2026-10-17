@@ -3,27 +3,43 @@ import {
   type OrchestrationV2ThreadShell,
 } from "@playstead/contracts/orchestrationV2";
 import { Link, useNavigate, useParams } from "@tanstack/react-router";
-import { useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import { openCommandPalette } from "../commandPaletteBus.ts";
 import { usePrimaryConnectionState } from "../connection/runtime.ts";
 import { createDraft } from "../drafts.ts";
 import { useThreadActionMenu } from "../hooks/useThreadActionMenu.ts";
-import { openProject, useActiveProjectId } from "../uiState.ts";
+import { renameThread } from "../hooks/useThreadActions.ts";
+import { failureToast, warningToast } from "../toast.ts";
+import {
+  openProject,
+  setSidebarProjectFilter,
+  useActiveProjectId,
+  useSidebarProjectFilter,
+} from "../uiState.ts";
+import { resolveRenameCommit } from "./chat/ChatHeader.logic.ts";
 import { FolderIcon, FolderPlusIcon, SquarePenIcon } from "./icons.tsx";
+import { hasUnseenCompletion, isTrailingDoubleClick } from "./Sidebar.logic.ts";
 
 /**
  * The left sidebar: T3 Code's project tree (`apps/web/src/components/LegacySidebar.tsx`
  * at 2577baf, `SidebarProjectsContent`, `SidebarProjectItem` and
  * `SidebarProjectThreadList`). Projects are listed oldest first, as the
  * server keeps them, each with its threads newest first. **New thread** opens
- * a draft; right-clicking a thread opens its menu. There is no removing,
- * reordering or search yet.
+ * a draft; right-clicking a thread opens its menu. The menu's **Filter by
+ * project** shows only that thread's project until **Show all projects**
+ * (T3 Code's inbox sidebar filter, kept over the tree until that sidebar
+ * comes). There is no removing, reordering or search yet.
  */
 export function Sidebar() {
   const state = usePrimaryConnectionState();
-  const projects = state?.shell?.projects;
+  const allProjects = state?.shell?.projects;
   const threads = state?.shell?.threads ?? [];
+  // A filter to a project that is gone shows every project (T3 Code's
+  // `resolveSidebarProjectScopeKey`).
+  const projectFilter = useSidebarProjectFilter();
+  const filteredTo = allProjects?.find((project) => project.id === projectFilter);
+  const projects = filteredTo === undefined ? allProjects : [filteredTo];
   const activeProjectId = useActiveProjectId();
   const { threadId: activeThreadId } = useParams({ strict: false });
   const navigate = useNavigate();
@@ -42,6 +58,15 @@ export function Sidebar() {
     <nav aria-label="Projects" className="flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto p-2">
       <div className="mb-1 flex items-center justify-between pr-1 pl-2">
         <span className="text-xs font-medium text-neutral-500 dark:text-neutral-400">Projects</span>
+        {filteredTo === undefined ? null : (
+          <button
+            type="button"
+            onClick={() => setSidebarProjectFilter(null)}
+            className="mr-auto ml-2 rounded px-1 text-xs text-neutral-500 hover:bg-neutral-200 hover:text-neutral-900 dark:text-neutral-400 dark:hover:bg-neutral-800 dark:hover:text-neutral-100"
+          >
+            Show all projects
+          </button>
+        )}
         <button
           type="button"
           aria-label="Add project"
@@ -113,7 +138,13 @@ export function Sidebar() {
   );
 }
 
-/** A thread in the tree; right-clicking it opens the thread menu (T3 Code's `SidebarThreadRow`). */
+/**
+ * A thread in the tree (T3 Code's `SidebarThreadRow` in `LegacySidebar.tsx`):
+ * right-clicking it opens the thread menu, and double-clicking it, or
+ * **Rename thread**, renames it in place. Its status shows before the
+ * title: working while its run is, or **Completed**, the unseen-completion
+ * dot, until the thread is viewed.
+ */
 function SidebarThreadRow({
   thread,
   current,
@@ -121,31 +152,111 @@ function SidebarThreadRow({
   readonly thread: OrchestrationV2ThreadShell;
   readonly current: boolean;
 }) {
-  const { openMenu } = useThreadActionMenu(thread);
+  const [renamingTitle, setRenamingTitle] = useState<string | null>(null);
+  const renameCommittedRef = useRef(false);
+  const startRename = useCallback(() => {
+    renameCommittedRef.current = false;
+    setRenamingTitle(thread.title);
+  }, [thread.title]);
+  const { openMenu } = useThreadActionMenu(thread, {
+    onStartRename: startRename,
+    projectFilter: true,
+  });
+
+  const commitRename = (typed: string) => {
+    setRenamingTitle(null);
+    const resolution = resolveRenameCommit({ title: typed, originalTitle: thread.title });
+    if (resolution.action === "reject-empty") {
+      warningToast("Thread title cannot be empty");
+      return;
+    }
+    if (resolution.action === "noop") return;
+    renameThread(thread.id, resolution.title).catch((error: unknown) =>
+      failureToast("Failed to rename thread", error),
+    );
+  };
+
+  const working = thread.status !== "idle" && ACTIVE_RUN_STATUSES.has(thread.status);
+  const status = working ? (
+    <span
+      role="img"
+      aria-label="Working"
+      className="size-1.5 shrink-0 animate-pulse rounded-full bg-sky-500"
+    />
+  ) : hasUnseenCompletion(thread) ? (
+    <span
+      role="img"
+      aria-label="Completed"
+      title="Completed"
+      className="size-1.5 shrink-0 rounded-full bg-emerald-500 dark:bg-emerald-300/90"
+    />
+  ) : null;
+  const rowClass = `flex items-center gap-2 rounded-md px-2 py-1 text-sm ${
+    current
+      ? "bg-neutral-200 dark:bg-neutral-800"
+      : "text-neutral-700 hover:bg-neutral-100 dark:text-neutral-300 dark:hover:bg-neutral-900"
+  }`;
+
+  if (renamingTitle !== null) {
+    return (
+      <li>
+        <div className={rowClass}>
+          {status}
+          <input
+            autoFocus
+            aria-label="Thread title"
+            value={renamingTitle}
+            onChange={(event) => setRenamingTitle(event.target.value)}
+            onFocus={(event) => event.currentTarget.select()}
+            onKeyDown={(event) => {
+              if (event.nativeEvent.isComposing) return;
+              if (event.key === "Enter") {
+                event.preventDefault();
+                renameCommittedRef.current = true;
+                commitRename(event.currentTarget.value);
+              } else if (event.key === "Escape") {
+                event.preventDefault();
+                renameCommittedRef.current = true;
+                setRenamingTitle(null);
+              }
+            }}
+            onBlur={(event) => {
+              if (renameCommittedRef.current) return;
+              commitRename(event.currentTarget.value);
+            }}
+            className="min-w-0 flex-1 truncate rounded border border-neutral-400 bg-transparent px-0.5 text-sm outline-none dark:border-neutral-500"
+          />
+        </div>
+      </li>
+    );
+  }
   return (
     <li>
       <Link
         to="/threads/$threadId"
         params={{ threadId: thread.id }}
-        onClick={() => openProject(thread.projectId)}
+        onClick={(event) => {
+          if (isTrailingDoubleClick(event.detail)) {
+            event.preventDefault();
+            return;
+          }
+          openProject(thread.projectId);
+        }}
+        onDoubleClick={(event) => {
+          event.preventDefault();
+          startRename();
+        }}
         onContextMenu={(event) => {
           event.preventDefault();
           openMenu({ x: event.clientX, y: event.clientY });
         }}
         aria-current={current ? "page" : undefined}
-        className={`flex items-center gap-2 rounded-md px-2 py-1 text-sm ${
-          current
-            ? "bg-neutral-200 dark:bg-neutral-800"
-            : "text-neutral-700 hover:bg-neutral-100 dark:text-neutral-300 dark:hover:bg-neutral-900"
-        }`}
+        className={rowClass}
       >
-        <span className="truncate">{thread.title}</span>
-        {thread.status !== "idle" && ACTIVE_RUN_STATUSES.has(thread.status) ? (
-          <span
-            aria-label="Working"
-            className="ml-auto size-1.5 shrink-0 animate-pulse rounded-full bg-sky-500"
-          />
-        ) : null}
+        {status}
+        <span className="truncate" title={thread.title}>
+          {thread.title}
+        </span>
       </Link>
     </li>
   );

@@ -22,6 +22,8 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 
+import { latestRunOf } from "./ThreadCommands.ts";
+
 export class ProjectionStoreV2Error extends Schema.TaggedError<ProjectionStoreV2Error>()(
   "ProjectionStoreV2Error",
   { operation: Schema.String, cause: Schema.Defect() },
@@ -71,6 +73,8 @@ const entityKindOf = (event: OrchestrationV2StoredEvent["event"]): EntityKind | 
     case "thread.archived":
     case "thread.unarchived":
     case "thread.deleted":
+    case "thread.visited":
+    case "thread.marked-unread":
       return "thread";
     case "run.created":
     case "run.updated":
@@ -105,10 +109,7 @@ const toThreadShell = (
   thread: OrchestrationV2AppThread,
   runs: ReadonlyArray<OrchestrationV2Run>,
 ): OrchestrationV2ThreadShell => {
-  const latest = runs.reduce<OrchestrationV2Run | undefined>(
-    (found, run) => (found === undefined || run.ordinal > found.ordinal ? run : found),
-    undefined,
-  );
+  const latest = latestRunOf(runs);
   return {
     id: thread.id,
     projectId: thread.projectId,
@@ -122,6 +123,8 @@ const toThreadShell = (
     updatedAt: thread.updatedAt,
     archivedAt: thread.archivedAt,
     deletedAt: thread.deletedAt,
+    latestRunCompletedAt: latest?.completedAt ?? null,
+    lastVisitedAt: thread.lastVisitedAt,
   };
 };
 
@@ -202,6 +205,14 @@ const make = Effect.gen(function* () {
         INSERT INTO ${sql(ENTITIES[kind].table)} (id, thread_id, first_sequence, payload_json)
         VALUES (${event.payload.id}, ${event.threadId}, ${stored.sequence}, ${payloadJson})
         ON CONFLICT (id) DO UPDATE SET payload_json = excluded.payload_json
+      `;
+      // The thread's work is activity: it updates the thread (T3 Code's
+      // `updated_at` bump). Thread events carry their own `updatedAt`, and a
+      // visit or mark-unread leaves it, so reading a thread is not activity.
+      yield* sql`
+        UPDATE orchestration_v2_projection_threads
+        SET payload_json = json_set(payload_json, '$.updatedAt', ${event.occurredAt})
+        WHERE thread_id = ${event.threadId}
       `;
     }).pipe(Effect.mapError(failWith("apply")));
 

@@ -21,7 +21,7 @@ export type ThreadActionTarget = Pick<
 >;
 
 const dispatchThreadCommand = (
-  type: "thread.archive" | "thread.unarchive" | "thread.delete",
+  type: "thread.archive" | "thread.unarchive" | "thread.delete" | "thread.mark-unread",
   threadId: ThreadId,
 ) =>
   requestPrimary((client) =>
@@ -31,6 +31,32 @@ const dispatchThreadCommand = (
       threadId,
     }),
   );
+
+/** Gives the thread a title the person chose (T3 Code's `thread.metadata.update {title}`). */
+export const renameThread = (threadId: ThreadId, title: string) =>
+  requestPrimary((client) =>
+    client["orchestration.dispatchCommand"]({
+      type: "thread.metadata.update",
+      commandId: CommandId.make(`command:${newId()}`),
+      threadId,
+      title,
+    }),
+  );
+
+/** Moves the thread's read marker to `visitedAt`, when the thread view shows it. */
+export const visitThread = (threadId: ThreadId, visitedAt: string) =>
+  requestPrimary((client) =>
+    client["orchestration.dispatchCommand"]({
+      type: "thread.visit",
+      commandId: CommandId.make(`command:${newId()}`),
+      threadId,
+      visitedAt,
+    }),
+  );
+
+/** Shows the thread as unread again, until it is next viewed (T3 Code's `markThreadUnread`). */
+export const markThreadUnread = (threadId: ThreadId) =>
+  dispatchThreadCommand("thread.mark-unread", threadId);
 
 /**
  * What the interface does to a thread (T3 Code's

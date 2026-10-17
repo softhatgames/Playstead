@@ -19,7 +19,13 @@ export function ToastHost() {
         >
           <div className="min-w-0 flex-1">
             <div
-              className={`font-medium ${toast.type === "error" ? "text-red-600 dark:text-red-400" : ""}`}
+              className={`font-medium ${
+                toast.type === "error"
+                  ? "text-red-600 dark:text-red-400"
+                  : toast.type === "warning"
+                    ? "text-amber-600 dark:text-amber-400"
+                    : ""
+              }`}
             >
               {toast.title}
             </div>
