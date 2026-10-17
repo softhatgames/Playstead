@@ -119,9 +119,11 @@ export function resolveComposerSelection(input: {
  * model and traits; a message to a started thread carries them, as T3
  * Code's composer sends them. A message that implements a proposed plan
  * names it (`sourcePlanRef`). A message sent while a run is active is
- * queued behind it (`queue_after_active`); otherwise the server starts it,
- * or queues it if a run started meanwhile (`start_immediately` with
- * `deliveryIntent: "auto"`, as T3 Code's `startThreadTurn` sends them).
+ * queued behind it (`queue_after_active`), or steers it (`deliveryIntent:
+ * "steer"`, which the server puts into the active run, or starts as a run
+ * if the turn has ended); otherwise the server starts it, or puts it
+ * behind or into a run that started meanwhile (`deliveryIntent: "auto"`).
+ * Both go with `start_immediately`, as T3 Code's `startThreadTurn` sends them.
  */
 export function buildSendCommands(input: {
   readonly target: SendTarget;
@@ -155,7 +157,7 @@ export function buildSendCommands(input: {
     ...(target.kind === "existing" ? { modelSelection: target.modelSelection } : {}),
     ...(input.dispatchMode === "queue"
       ? { dispatchMode: { type: "queue_after_active" } }
-      : { dispatchMode: { type: "start_immediately" }, deliveryIntent: "auto" }),
+      : { dispatchMode: { type: "start_immediately" }, deliveryIntent: input.dispatchMode }),
     ...(input.sourcePlanRef === undefined ? {} : { sourcePlanRef: input.sourcePlanRef }),
   };
   if (target.kind === "existing") {
@@ -198,6 +200,7 @@ export function buildSendCommands(input: {
 export type ComposerAction =
   | { readonly kind: "send" }
   | { readonly kind: "queue" }
+  | { readonly kind: "steer" }
   | { readonly kind: "update-queued" }
   | { readonly kind: "resume" }
   | { readonly kind: "interrupt"; readonly runId: RunId }
@@ -205,10 +208,10 @@ export type ComposerAction =
 
 /**
  * The composer's primary action (T3 Code's `ComposerPrimaryActions` at
- * 2577baf, without steering, plans or compaction). Editing a queued
- * message saves it. While a run is active an empty composer offers
- * **Interrupt**, and once that is pressed, the run stopping; with something
- * typed, the follow-up (queueing). An empty composer offers **Resume**
+ * 2577baf, without compaction). Editing a queued message saves it. While a
+ * run is active an empty composer offers **Interrupt**, and once that is
+ * pressed, the run stopping; with something typed, the follow-up: queueing
+ * or steering. An empty composer offers **Resume**
  * after a stop or while the queue is held. Otherwise it sends.
  */
 export function deriveComposerAction(input: {
@@ -230,6 +233,7 @@ export function deriveComposerAction(input: {
   }
   if (input.canResume && !input.hasContent) return { kind: "resume" };
   if (active !== undefined && input.dispatchMode === "queue") return { kind: "queue" };
+  if (active !== undefined && input.dispatchMode === "steer") return { kind: "steer" };
   return { kind: "send" };
 }
 
@@ -276,6 +280,20 @@ export function isSendAlternateShortcut(event: ShortcutKeys, platform: string): 
   return (
     event.key === "Enter" &&
     !event.shiftKey &&
+    !event.altKey &&
+    (mac ? event.metaKey && !event.ctrlKey : event.ctrlKey && !event.metaKey)
+  );
+}
+
+/**
+ * Whether a key press is `mod+shift+enter`, T3 Code's default keybinding for
+ * `thread.steerQueuedMessage`, which sends the first queued message as a steer.
+ */
+export function isSteerQueuedMessageShortcut(event: ShortcutKeys, platform: string): boolean {
+  const mac = /mac/i.test(platform);
+  return (
+    event.key === "Enter" &&
+    event.shiftKey &&
     !event.altKey &&
     (mac ? event.metaKey && !event.ctrlKey : event.ctrlKey && !event.metaKey)
   );

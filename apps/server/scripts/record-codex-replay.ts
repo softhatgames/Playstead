@@ -71,6 +71,10 @@ import {
   runQueuedTurnScenario,
 } from "../src/orchestration-v2/testkit/fixtures/queuedTurn.ts";
 import {
+  CODEX_MESSAGE_STEERING_SCENARIO,
+  runMessageSteeringScenario,
+} from "../src/orchestration-v2/testkit/fixtures/messageSteering.ts";
+import {
   readMachineIdentity,
   recordingReplacements,
   scrubbed,
@@ -86,7 +90,7 @@ import {
  * `codex` on PATH, in a temporary empty folder, and writes
  * `src/orchestration-v2/testkit/fixtures/<scenario>.codex.ndjson`.
  *
- *   node apps/server/scripts/record-codex-replay.ts [file_create | turn_interrupt | auto_mode | traits_change | proposed_plan | question_answer | question_interrupt | todo_list | approval_accept | approval_decline | approval_cancel | approval_interrupt | auto_accept_edits | session_command | session_edits | queued_turn | --help]
+ *   node apps/server/scripts/record-codex-replay.ts [file_create | turn_interrupt | auto_mode | traits_change | proposed_plan | question_answer | question_interrupt | todo_list | approval_accept | approval_decline | approval_cancel | approval_interrupt | auto_accept_edits | session_command | session_edits | queued_turn | message_steering | --help]
  *
  * `turn_interrupt` interrupts a long command once it runs, then sends one
  * more message. `auto_mode` writes a file in Auto, then sends one more
@@ -98,7 +102,9 @@ import {
  * turns in Auto-accept edits and Supervised and answer each turn's
  * approvals with its decision, **Always allow this session** among them.
  * `queued_turn` queues messages behind a turn, removes one, and holds the
- * queue with Stop before resuming it.
+ * queue with Stop before resuming it. `message_steering` steers a turn
+ * while its command runs, then sends a steer as a turn ends, which starts
+ * a turn of its own.
  *
  * `proposed_plan` asks for a plan in plan mode, then implements it in the
  * default mode. `question_answer` and `question_interrupt` run in plan mode,
@@ -186,6 +192,23 @@ const recordQueuedTurn = (harness: Harness) =>
     );
     if ([one, two, five].some((run) => run.status !== "completed")) {
       return yield* Effect.die("A queued turn did not complete.");
+    }
+    return workspace;
+  });
+
+/** A turn steered while its command runs, then a steer too late that starts its own turn. */
+const recordMessageSteering = (harness: Harness) =>
+  Effect.gen(function* () {
+    const { workspace, steered, three, late } = yield* runMessageSteeringScenario(
+      harness,
+      CODEX_MESSAGE_STEERING_SCENARIO,
+    );
+    const runs = [steered, three, late];
+    yield* Effect.logInfo("The turns ended.").pipe(
+      Effect.annotateLogs({ runs: runs.map((run) => run.status).join(", ") }),
+    );
+    if (runs.some((run) => run.status !== "completed")) {
+      return yield* Effect.die("A steering turn did not complete.");
     }
     return workspace;
   });
@@ -361,6 +384,15 @@ const SCENARIOS = {
       model: CODEX_QUEUED_TURN_SCENARIO.model,
       prompts: [1, 2, 5].map(queuedTurnPrompt),
       queuedOptions: CODEX_QUEUED_TURN_SCENARIO.queuedOptions,
+    },
+  },
+  [CODEX_MESSAGE_STEERING_SCENARIO.scenario]: {
+    record: recordMessageSteering,
+    metadata: {
+      model: CODEX_MESSAGE_STEERING_SCENARIO.model,
+      prompts: CODEX_MESSAGE_STEERING_SCENARIO.prompts,
+      steerAfter: "command_execution running",
+      lateSteer: "sent while the turn's end is held back from the server",
     },
   },
   [CODEX_TRAITS_CHANGE_SCENARIO.scenario]: {

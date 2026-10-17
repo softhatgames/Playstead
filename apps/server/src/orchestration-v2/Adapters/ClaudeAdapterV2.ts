@@ -366,14 +366,28 @@ export const recordedQueryOptions = (options: ClaudeAgentSdkQueryOptions) => ({
 
 /**
  * A plain-text message from the person, as T3 Code's `makeClaudeUserMessage`
- * builds one, with the uuid Claude Code stamps on the turn's frames.
+ * builds one, with the uuid Claude Code stamps on the turn's frames. A
+ * steer goes with priority `now`.
  */
-const makeClaudeUserMessage = (text: string, uuid: string): SDKUserMessage => ({
+const makeClaudeUserMessage = (
+  text: string,
+  uuid: string,
+  priority?: SDKUserMessage["priority"],
+): SDKUserMessage => ({
   type: "user",
   message: { role: "user", content: text },
   parent_tool_use_id: null,
+  ...(priority === undefined ? {} : { priority }),
   uuid: uuid as SDKUserMessage["uuid"] & string,
 });
+
+/**
+ * Whether a `result` is Claude Code stopping the turn's current step for
+ * a steer, not the turn's end (T3 Code's `isClaudeActiveSteeringAbortResult`):
+ * a message with priority `now` aborts what is streaming or running.
+ */
+const isActiveSteeringAbortResult = (result: SDKResultMessage) =>
+  result.terminal_reason === "aborted_streaming" || result.terminal_reason === "aborted_tools";
 
 /** A turn's prompt uuid: its provider turn id is `provider-turn:<uuid>`. */
 const promptUuidFor = (providerTurnId: string) => providerTurnId.replace(/^provider-turn:/, "");
@@ -385,15 +399,16 @@ const stampOf = (message: SDKMessage): string | undefined => {
 };
 
 /**
- * Whether a `result` answers the turn's prompt. A result without any echo
- * comes from a Claude Code too old to stamp, or from a turn of its own that
- * answered no prompt; only the first is the turn's.
+ * Whether a `result` answers one of the turn's prompts: the message that
+ * started it, or a steer. A result without any echo comes from a Claude
+ * Code too old to stamp, or from a turn of its own that answered no prompt;
+ * only the first is the turn's.
  */
-const resultAnswers = (result: SDKResultMessage, promptUuid: string) => {
+const resultAnswers = (result: SDKResultMessage, promptUuids: ReadonlySet<string>) => {
   const uuids =
     result.user_message_uuids ??
     (result.user_message_uuid === undefined ? undefined : [result.user_message_uuid]);
-  if (uuids !== undefined) return uuids.includes(promptUuid);
+  if (uuids !== undefined) return uuids.some((uuid) => promptUuids.has(uuid));
   return result.result_index === undefined;
 };
 
@@ -698,7 +713,10 @@ const toolResultText = (content: unknown): string | undefined => {
 
 interface ActiveTurn {
   readonly input: ProviderAdapterV2TurnInput;
-  readonly promptUuid: string;
+  /** The uuids of the turn's prompts: the message that started it, then each steer. */
+  readonly promptUuids: Set<string>;
+  /** Set once a steer was offered (T3 Code's `steeredTurns`). */
+  steered: boolean;
   readonly items: Map<string, OrchestrationV2TurnItem>;
   /** Content blocks seen per Claude message, so a whole message lines up with its streamed blocks. */
   readonly blocksSeen: Map<string, number>;
@@ -722,8 +740,13 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (input
   readonly binaryPath: string;
   readonly environment: ProcessEnvironment;
   readonly platform: NodeJS.Platform;
-}): Effect.fn.Return<ProviderAdapterV2, never, ClaudeAgentSdkQueryRunner | FileSystem.FileSystem> {
+}): Effect.fn.Return<
+  ProviderAdapterV2,
+  never,
+  ClaudeAgentSdkQueryRunner | FileSystem.FileSystem | Crypto.Crypto
+> {
   const runner = yield* ClaudeAgentSdkQueryRunner;
+  const crypto = yield* Crypto.Crypto;
   // Each thread's latest plan of each kind, across its sessions, so a new one replaces it.
   const latestPlans = new Map<string, OrchestrationV2PlanArtifact>();
   // Each thread's task list as Claude Code's task tools keep it (T3 Code keys it by session).
@@ -1393,7 +1416,11 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (input
         });
 
       const handleResult = (turn: ActiveTurn, result: SDKResultMessage) => {
-        if (!resultAnswers(result, turn.promptUuid)) return Effect.void;
+        if (!resultAnswers(result, turn.promptUuids)) return Effect.void;
+        // A steer stopped the step it interrupted; the turn goes on with it.
+        if (turn.steered && !turn.interrupting && isActiveSteeringAbortResult(result)) {
+          return Effect.void;
+        }
         // T3 Code's `terminalStatusFromResult`, and its `interruptedTurns`.
         if (
           turn.interrupting ||
@@ -1433,7 +1460,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (input
             return;
           }
           const stamp = stampOf(message);
-          if (stamp !== undefined) turn.owned = stamp === turn.promptUuid;
+          if (stamp !== undefined) turn.owned = turn.promptUuids.has(stamp);
           if (message.type === "result") return yield* handleResult(turn, message);
           if (!turn.owned) return;
           switch (message.type) {
@@ -1539,7 +1566,8 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (input
             const promptUuid = promptUuidFor(turnInput.providerTurnId);
             yield* Ref.set(activeTurn, {
               input: turnInput,
-              promptUuid,
+              promptUuids: new Set([promptUuid]),
+              steered: false,
               items: new Map(),
               blocksSeen: new Map(),
               currentMessageId: undefined,
@@ -1552,6 +1580,30 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (input
               Effect.tapError(() => Ref.set(activeTurn, undefined)),
               Effect.mapError(adapterError("start-turn")),
             );
+          }),
+        // T3 Code's `steerTurn`: the message goes into the running query
+        // with priority `now`, and with a uuid of its own, which the turn
+        // takes as one of its prompts.
+        steerTurn: ({ providerTurnId, message }) =>
+          Effect.gen(function* () {
+            const turn = yield* Ref.get(activeTurn);
+            if (turn === undefined || turn.input.providerTurnId !== providerTurnId) {
+              return yield* adapterError("steer-turn")(
+                `Claude provider turn ${providerTurnId} is not the active turn.`,
+              );
+            }
+            const uuid = yield* crypto
+              .randomUUIDv4()
+              .pipe(Effect.mapError(adapterError("steer-turn")));
+            const text = applyClaudePromptEffortPrefix(
+              message.text,
+              compileClaudeModelSelection(turn.input.modelSelection).promptEffort,
+            );
+            turn.promptUuids.add(uuid);
+            turn.steered = true;
+            yield* session
+              .offer(makeClaudeUserMessage(text, uuid, "now"))
+              .pipe(Effect.mapError(adapterError("steer-turn")));
           }),
         interruptTurn: ({ providerTurnId }) =>
           Effect.gen(function* () {
@@ -1606,7 +1658,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (input
     // A query keeps the permission mode it opened with; another mode reopens it.
     capabilities: {
       sessions: { supportsRuntimeModeSwitchInSession: false },
-      turns: { supportsQueuedMessages: true },
+      turns: { supportsQueuedMessages: true, supportsActiveSteering: true },
     },
     openSession,
   } satisfies ProviderAdapterV2;

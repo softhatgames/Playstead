@@ -1,6 +1,15 @@
-import { MessageId, RunId, ThreadId } from "@playstead/contracts/baseSchemas";
+import {
+  MessageId,
+  NodeId,
+  ProviderThreadId,
+  ProviderTurnId,
+  RunAttemptId,
+  RunId,
+  ThreadId,
+} from "@playstead/contracts/baseSchemas";
 import type {
   OrchestrationV2ConversationMessage,
+  OrchestrationV2ProviderTurn,
   OrchestrationV2Run,
 } from "@playstead/contracts/orchestrationV2";
 import { describe, expect, it } from "vite-plus/test";
@@ -56,6 +65,37 @@ describe("deriveThreadQueueWorkflowState", () => {
     expect(state.activeRun?.id).toBe("run:1");
     expect(state.queuedRuns.map((queued) => queued.text)).toEqual(["third", "second"]);
     expect(state.isHeld).toBe(false);
+  });
+
+  it("lets a queued message steer only a run whose provider turn is running", () => {
+    const attempt = RunAttemptId.make("run-attempt:1");
+    const active = { ...run(1, "running"), activeAttemptId: attempt };
+    const turn = (status: OrchestrationV2ProviderTurn["status"]): OrchestrationV2ProviderTurn => ({
+      id: ProviderTurnId.make("provider-turn:1"),
+      providerThreadId: ProviderThreadId.make("provider-thread:1"),
+      nodeId: NodeId.make("node:1"),
+      runAttemptId: attempt,
+      ordinal: 1,
+      status,
+      startedAt: AT,
+      completedAt: null,
+    });
+    const queued = run(2, "queued", { queuePosition: 1 });
+    const canPromote = (
+      runs: ReadonlyArray<OrchestrationV2Run>,
+      providerTurns: ReadonlyArray<OrchestrationV2ProviderTurn>,
+    ) =>
+      deriveThreadQueueWorkflowState({
+        runs,
+        messages: [message(1, "first"), message(2, "second")],
+        providerTurns,
+      }).canPromoteToSteer;
+
+    expect(canPromote([active, queued], [turn("running")])).toBe(true);
+    // Still starting, with no turn yet; its turn already over; nothing active.
+    expect(canPromote([{ ...active, status: "starting" }, queued], [])).toBe(false);
+    expect(canPromote([active, queued], [turn("completed")])).toBe(false);
+    expect(canPromote([run(1, "completed"), queued], [turn("completed")])).toBe(false);
   });
 
   it("says the queue is held while any queued run is", () => {

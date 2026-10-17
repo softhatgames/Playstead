@@ -1,6 +1,6 @@
 import { useEffect, useRef } from "react";
 
-import { FilePenIcon, MessageCircleIcon, WrenchIcon } from "../icons.tsx";
+import { FilePenIcon, MessageCircleIcon, Redo2Icon, WrenchIcon } from "../icons.tsx";
 import { ProposedPlanCard } from "./ProposedPlanCard.tsx";
 import type { TimelineRow } from "./timeline.logic.ts";
 
@@ -37,7 +37,8 @@ export function MessagesTimeline(props: {
         switch (row.kind) {
           case "user":
             return (
-              <div key={row.id} className="flex justify-end">
+              <div key={row.id} className="flex flex-col items-end gap-1">
+                {row.intent === undefined ? null : <UserMessageIntentMarker intent={row.intent} />}
                 <div className="max-w-[80%] rounded-2xl bg-neutral-100 px-4 py-2 text-sm whitespace-pre-wrap dark:bg-neutral-800">
                   {row.text}
                 </div>
@@ -121,6 +122,33 @@ export function MessagesTimeline(props: {
         <div className="animate-pulse text-xs text-neutral-500 dark:text-neutral-400">Working…</div>
       ) : null}
       <div ref={end} />
+    </div>
+  );
+}
+
+/**
+ * How a message reached its turn, above it (T3 Code's
+ * `UserMessageIntentMarker`): "Steer" for one that steered the running turn,
+ * "From queue" for one that waited in the queue; the title says more.
+ */
+function UserMessageIntentMarker(props: {
+  readonly intent: NonNullable<Extract<TimelineRow, { kind: "user" }>["intent"]>;
+}) {
+  const steer = props.intent !== "queued_turn";
+  return (
+    <div
+      data-user-message-intent={props.intent}
+      title={
+        props.intent === "queued_turn"
+          ? "Queued while the agent was busy"
+          : props.intent === "promoted_queued_to_steer"
+            ? "Originally queued, then promoted to steer the active turn"
+            : "Steered the active turn"
+      }
+      className="me-1 flex items-center gap-1 text-xs leading-none text-neutral-500 dark:text-neutral-400"
+    >
+      {steer ? <Redo2Icon className="size-3" /> : null}
+      {steer ? "Steer" : "From queue"}
     </div>
   );
 }

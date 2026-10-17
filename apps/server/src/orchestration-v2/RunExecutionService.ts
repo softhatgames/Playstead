@@ -1,4 +1,5 @@
 import {
+  type MessageId,
   type ProviderSessionId,
   type ProviderTurnId,
   type RunId,
@@ -381,6 +382,20 @@ export class RunExecutionServiceV2 extends Context.Service<
       readonly providerTurnId: ProviderTurnId;
     }) => Effect.Effect<void, EventSinkWriteError | ProjectionStore.ProjectionStoreV2Error>;
     /**
+     * The effect worker's `provider-turn.steer` (T3 Code's
+     * `ProviderTurnControlServiceV2.steer`): gives the run's live session
+     * the steering message for the turn it is running. Fails when that turn
+     * has ended, saying whether it completed, so the message can start a
+     * turn of its own.
+     */
+    readonly steerRun: (input: {
+      readonly threadId: ThreadId;
+      readonly runId: RunId;
+      readonly providerSessionId: ProviderSessionId;
+      readonly providerTurnId: ProviderTurnId;
+      readonly messageId: MessageId;
+    }) => Effect.Effect<void, ProviderTurnSteerError | ProjectionStore.ProjectionStoreV2Error>;
+    /**
      * The effect worker's `runtime-request.respond` (T3 Code's
      * `RuntimeRequestServiceV2.respond`): gives the run's live session the
      * person's decision or answers. Fails when the session that asked is gone.
@@ -399,6 +414,20 @@ export class RunExecutionServiceV2 extends Context.Service<
 export class RuntimeRequestResponseError extends Schema.TaggedError<RuntimeRequestResponseError>()(
   "RuntimeRequestResponseError",
   { requestId: Schema.String, detail: Schema.String },
+) {
+  override get message(): string {
+    return this.detail;
+  }
+}
+
+/**
+ * The steering message did not reach the turn (T3 Code's
+ * `ProviderTurnControlError` for `steer`). `turnCompleted` says the turn
+ * had already completed, so the message should start a turn of its own.
+ */
+export class ProviderTurnSteerError extends Schema.TaggedError<ProviderTurnSteerError>()(
+  "ProviderTurnSteerError",
+  { runId: Schema.String, turnCompleted: Schema.Boolean, detail: Schema.String },
 ) {
   override get message(): string {
     return this.detail;
@@ -590,7 +619,64 @@ const make = Effect.gen(function* () {
       },
     );
 
-  return RunExecutionServiceV2.of({ startRootRun, interruptRun, respondToRuntimeRequest });
+  /** The steer's provider turn as the projection has it now, and its message. */
+  const steerContext = (input: {
+    readonly threadId: ThreadId;
+    readonly providerTurnId: ProviderTurnId;
+    readonly messageId: MessageId;
+  }) =>
+    Effect.map(projections.getThread(input.threadId), (projection) => ({
+      providerTurn: Option.getOrUndefined(projection)?.providerTurns.find(
+        (turn) => turn.id === input.providerTurnId,
+      ),
+      message: Option.getOrUndefined(projection)?.messages.find(
+        (candidate) => candidate.id === input.messageId,
+      ),
+    }));
+
+  const steerRun: RunExecutionServiceV2["Service"]["steerRun"] = (input) =>
+    Effect.gen(function* () {
+      const steerError = (turnCompleted: boolean, detail: string) =>
+        new ProviderTurnSteerError({ runId: input.runId, turnCompleted, detail });
+      const { providerTurn, message } = yield* steerContext(input);
+      if (providerTurn === undefined || message === undefined) {
+        return yield* steerError(false, "The steering message or its provider turn is missing.");
+      }
+      if (providerTurn.status !== "running") {
+        return yield* steerError(
+          providerTurn.status === "completed",
+          "The provider turn ended before the steering message was delivered.",
+        );
+      }
+      const running = live.get(input.runId);
+      if (running === undefined || running.session.providerSession.id !== input.providerSessionId) {
+        return yield* steerError(
+          false,
+          `Provider session ${input.providerSessionId} is not active.`,
+        );
+      }
+      yield* running.session
+        .steerTurn({
+          providerThread: running.records.providerThread,
+          providerTurnId: input.providerTurnId,
+          message: { messageId: message.id, text: message.text },
+        })
+        .pipe(
+          // The turn may have ended while the message was on its way.
+          Effect.catch((error) =>
+            Effect.flatMap(steerContext(input), (current) =>
+              Effect.fail(steerError(current.providerTurn?.status === "completed", error.message)),
+            ),
+          ),
+        );
+    });
+
+  return RunExecutionServiceV2.of({
+    startRootRun,
+    interruptRun,
+    steerRun,
+    respondToRuntimeRequest,
+  });
 });
 
 export const layer = Layer.effect(RunExecutionServiceV2, make);

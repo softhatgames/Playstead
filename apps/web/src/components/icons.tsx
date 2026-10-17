@@ -174,6 +174,24 @@ export function ListPlusIcon({ className }: IconProps) {
   );
 }
 
+/** Steer message, and a queued message's **Steer** button (Lucide's `corner-up-right`). */
+export function CornerUpRightIcon({ className }: IconProps) {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true" className={className} {...strokeProps}>
+      <path d="m15 14 5-5-5-5M4 20v-7a4 4 0 0 1 4-4h12" />
+    </svg>
+  );
+}
+
+/** The mark on a message that steered its turn (Lucide's `redo-2`). */
+export function Redo2Icon({ className }: IconProps) {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true" className={className} {...strokeProps}>
+      <path d="m15 14 5-5-5-5M20 9H9.5a5.5 5.5 0 0 0 0 11H13" />
+    </svg>
+  );
+}
+
 /** The queued messages above the composer. */
 export function ListOrderedIcon({ className }: IconProps) {
   return (

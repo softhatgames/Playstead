@@ -19,9 +19,9 @@ import { RuntimeModePicker } from "../chat/RuntimeModePicker.tsx";
  * `ProjectDefaultsSettings.tsx`), and the **Behavior** section's
  * **Follow-up behavior** row, a client setting. Projects can't override the
  * permissions yet, so that description leaves out T3 Code's "Projects can
- * override them."; queueing is the one follow-up so far, so the follow-up
- * row offers only **Queue** and says nothing yet of Mod+Enter doing the
- * opposite. **Legacy features** holds **Plan mode (legacy)**, off by default,
+ * override them."; the follow-up row offers **Queue** and **Steer** with
+ * T3 Code's description for its default send shortcut (Playstead has no
+ * other). **Legacy features** holds **Plan mode (legacy)**, off by default,
  * as in T3 Code. The rest of General waits for its features and slice 5.
  */
 export function GeneralSettingsPanel() {
@@ -90,7 +90,9 @@ export function GeneralSettingsPanel() {
         <div className="divide-y divide-neutral-200 rounded-lg border border-neutral-200 dark:divide-neutral-800 dark:border-neutral-800">
           <SettingsRow
             title="Follow-up behavior"
-            description="Queue follow-ups while the agent runs."
+            description={`Queue follow-ups while the agent runs or steer the current run. Press ${
+              /mac/i.test(navigator.platform) ? "⌘" : "Ctrl"
+            } + Enter to do the opposite for one message.`}
             reset={{
               label: "follow-up behavior",
               isDefault:
@@ -159,7 +161,7 @@ export function GeneralSettingsPanel() {
   );
 }
 
-const FOLLOW_UP_LABELS: Record<FollowUpBehavior, string> = { queue: "Queue" };
+const FOLLOW_UP_LABELS: Record<FollowUpBehavior, string> = { queue: "Queue", steer: "Steer" };
 
 /**
  * A setting's row: its title, description and control, and **Reset** while

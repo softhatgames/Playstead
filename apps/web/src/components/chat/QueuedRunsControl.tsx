@@ -4,6 +4,7 @@ import { type Ref, useId, useImperativeHandle, useRef, useState } from "react";
 
 import {
   ChevronDownIcon,
+  CornerUpRightIcon,
   GripVerticalIcon,
   ListOrderedIcon,
   PencilIcon,
@@ -15,16 +16,20 @@ const QUEUED_RUN_DRAG_TYPE = "application/x-playstead-queued-run";
 export interface QueuedRunsControlHandle {
   /** `alt+arrowup`: opens the last queued message for editing; false when there is none. */
   readonly editLatest: (repeat: boolean) => boolean;
+  /** `mod+shift+enter`: sends the first queued message as a steer; false when it can't. */
+  readonly steerNext: (repeat: boolean) => boolean;
 }
 
 /**
  * The queued messages above the composer (T3 Code's
  * `apps/web/src/components/chat/QueuedRunsControl.tsx` at 2577baf, without
- * attachments, optimistic rows or steering): a header that collapses the
- * list, and a row per message in the order they will start. A row's grip
- * reorders it, by drag or with the arrow keys; the pencil opens it in the
- * composer for editing, and the cross removes it. The row being edited is
- * highlighted, with **Cancel** in place of its actions.
+ * attachments or optimistic rows): a header that collapses the list, and a
+ * row per message in the order they will start. A row's grip reorders it,
+ * by drag or with the arrow keys; the pencil opens it in the composer for
+ * editing, **Steer** sends it into the running turn instead
+ * (`queued-message.promote-to-steer`; `mod+shift+enter` does it for the
+ * first), and the cross removes it. The row being edited is highlighted,
+ * with **Cancel** in place of its actions.
  */
 export function QueuedRunsControl(props: {
   readonly ref?: Ref<QueuedRunsControlHandle>;
@@ -34,6 +39,13 @@ export function QueuedRunsControl(props: {
   readonly onCancelEdit: () => void;
   readonly onReorder: (runId: RunId, beforeRunId: RunId | null) => Promise<void>;
   readonly onRemove: (runId: RunId) => Promise<void>;
+  /** Whether a run is active, and whether its turn can take a steer now. */
+  readonly hasActiveRun: boolean;
+  readonly canPromoteToSteer: boolean;
+  /** Sends a queued message as a steer into the active run. */
+  readonly onSteer: (runId: RunId) => Promise<void>;
+  /** `mod+shift+enter` as this platform writes it, for the first row's tooltip. */
+  readonly steerShortcutLabel: string;
 }) {
   const { queuedRuns } = props;
   const [expanded, setExpanded] = useState(true);
@@ -68,7 +80,25 @@ export function QueuedRunsControl(props: {
     move(runId, queuedRuns[insertIndex]?.run.id ?? null);
   };
 
+  // One steer at a time, even before the busy state renders.
+  const steerInFlight = useRef(false);
+  const steer = async (runId: RunId) => {
+    if (!props.canPromoteToSteer || steerInFlight.current) return;
+    steerInFlight.current = true;
+    try {
+      await busy(runId, props.onSteer(runId));
+    } finally {
+      steerInFlight.current = false;
+    }
+  };
+
   useImperativeHandle(props.ref, () => ({
+    steerNext(repeat) {
+      const next = queuedRuns[0];
+      if (next === undefined || !props.canPromoteToSteer) return false;
+      if (!repeat && busyRunId === null) void steer(next.run.id);
+      return true;
+    },
     editLatest(repeat) {
       const latest = queuedRuns.at(-1);
       // While one is being edited the key moves the caret in that draft instead.
@@ -203,6 +233,20 @@ export function QueuedRunsControl(props: {
                     className="rounded p-1 text-neutral-400 hover:text-neutral-700 disabled:opacity-50 dark:hover:text-neutral-200"
                   >
                     <PencilIcon className="size-3.5" />
+                  </button>
+                  <button
+                    type="button"
+                    title={
+                      props.hasActiveRun
+                        ? `Send as a steer instead${index === 0 ? ` (${props.steerShortcutLabel})` : ""}`
+                        : "There is no active run to steer"
+                    }
+                    disabled={busyRunId !== null || !props.canPromoteToSteer}
+                    onClick={() => void steer(runId)}
+                    className="flex items-center gap-1 rounded px-1.5 py-0.5 text-xs text-neutral-500 hover:text-neutral-800 disabled:opacity-50 dark:text-neutral-400 dark:hover:text-neutral-100"
+                  >
+                    <CornerUpRightIcon className="size-3.5" />
+                    Steer
                   </button>
                   <button
                     type="button"

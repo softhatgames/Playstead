@@ -68,6 +68,35 @@ describe("deriveTimelineRows", () => {
     ]);
   });
 
+  it("marks a message that steered the turn, or came from the queue", () => {
+    const user = (
+      n: number,
+      inputIntent: Extract<OrchestrationV2TurnItem, { type: "user_message" }>["inputIntent"],
+    ): OrchestrationV2TurnItem => ({
+      ...base(`item:user:${n}`, n, "completed"),
+      type: "user_message",
+      messageId: MessageId.make(`message:${n}`),
+      text: `Message ${n}`,
+      ...(inputIntent === undefined ? {} : { inputIntent }),
+    });
+
+    const rows = deriveTimelineRows(
+      [
+        user(1, "turn_start"),
+        user(2, "steer"),
+        user(3, "promoted_queued_to_steer"),
+        user(4, "queued_turn"),
+        user(5, undefined),
+      ],
+      undefined,
+    );
+
+    assert.deepStrictEqual(
+      rows.map((row) => (row.kind === "user" ? (row.intent ?? null) : row.kind)),
+      [null, "steer", "promoted_queued_to_steer", "queued_turn", null],
+    );
+  });
+
   it("names running and failed work as T3 Code does", () => {
     const rows = deriveTimelineRows(
       [

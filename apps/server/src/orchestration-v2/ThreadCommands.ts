@@ -53,6 +53,8 @@ export interface ThreadCommandState {
   readonly sourcePlanThread?: OrchestrationV2ThreadProjection | undefined;
   /** For `message.dispatch`: whether the thread's adapter can queue a message behind an active run. */
   readonly supportsQueuedMessages: boolean;
+  /** For `message.dispatch` and promotion: whether the thread's adapter can steer a running turn. */
+  readonly supportsActiveSteering: boolean;
 }
 
 /** Ids a message needs, allocated before deciding so the decision stays pure. */
@@ -122,15 +124,18 @@ const reject = (command: OrchestrationV2Command, reason: string) =>
  * - `thread.runtime-mode.set` and `thread.interaction-mode.set` change the
  *   modes the thread's next turn starts in; as in T3 Code, an active run
  *   prevents neither.
- * - `message.dispatch` starts a run when no run is active, and otherwise
- *   queues one behind it, whatever its dispatch mode (T3 Code's
- *   `CommandPolicy.decideMessageDispatch`). A model selection the message
- *   carries (the composer's traits) must name the thread's own instance; a
- *   started run makes it the thread's first, and a queued run keeps it
- *   until it starts. **Resume** continues an interrupted run that is the
- *   thread's latest. A message that implements a proposed plan
- *   (`sourcePlanRef`, perhaps another thread's in the same project) needs
- *   the plan still active, and completes it.
+ * - `message.dispatch` starts a run when no run is active, steers the
+ *   active run's turn when its dispatch mode or delivery intent says so,
+ *   and otherwise queues a run behind it (T3 Code's `CommandPolicy`). A
+ *   steer whose turn has already ended starts a run instead. A model
+ *   selection the message carries (the composer's traits) must name the
+ *   thread's own instance; a started run makes it the thread's first, and
+ *   a queued run keeps it until it starts. **Resume** continues an
+ *   interrupted run that is the thread's latest. A message that implements
+ *   a proposed plan (`sourcePlanRef`, perhaps another thread's in the same
+ *   project) needs the plan still active, and completes it.
+ * - `queued-message.promote-to-steer` removes a queued run and steers the
+ *   active run with its message.
  * - `queue.resume`, `queued-run.reorder`, `queued-run.cancel` and
  *   `queued-run.edit` release, reorder, remove and rewrite queued runs, as
  *   T3 Code's do; the orchestrator starts the next queued run after a
@@ -283,8 +288,26 @@ export function decideThreadCommand(input: {
           return reject(command, "This thread can no longer be resumed from that run.");
         }
       }
-      // Whatever the mode asks, a message sent while a run is active waits
-      // behind it, as T3 Code's `decideMessageDispatch` decides.
+      const dispatchMode = lateSteerFallback(
+        projection,
+        resolveMessageDispatchIntent(projection, command, state),
+      );
+      if (dispatchMode.type === "steer_active") {
+        return steerIntoRun({
+          command,
+          state,
+          projection,
+          targetRunId: dispatchMode.targetRunId,
+          message: { id: command.messageId, text: command.text },
+          modelSelection: command.modelSelection ?? projection.thread.modelSelection,
+          inputIntent: "steer",
+          precedingEvents: [],
+          ids,
+          now,
+        });
+      }
+      // Otherwise a message sent while a run is active waits behind it, as
+      // T3 Code's `decideMessageDispatch` decides.
       const active = projection.runs.find((run) => ACTIVE_RUN_STATUSES.has(run.status));
       if (active === undefined) {
         return Result.succeed(dispatchMessage(command, projection, sourcePlan, ids, now));
@@ -296,6 +319,36 @@ export function decideThreadCommand(input: {
         );
       }
       return Result.succeed(queueMessage(command, projection, sourcePlan, ids, now));
+    }
+    case "queued-message.promote-to-steer": {
+      const projection = state.projection;
+      if (projection === undefined) {
+        return reject(command, `Thread ${command.threadId} does not exist.`);
+      }
+      const queuedRun = projection.runs.find((run) => run.id === command.queuedRunId);
+      if (queuedRun === undefined || queuedRun.status !== "queued") {
+        return reject(command, `Queued run ${command.queuedRunId} is not queued.`);
+      }
+      const message = projection.messages.find(
+        (candidate) => candidate.id === queuedRun.userMessageId,
+      );
+      if (message === undefined) {
+        return reject(command, `Queued run ${queuedRun.id} is missing its message.`);
+      }
+      // The queued run goes, and its message steers the target instead,
+      // with the thread's selection (T3 Code's `dispatchQueuedMessagePromoteToSteer`).
+      return steerIntoRun({
+        command,
+        state,
+        projection,
+        targetRunId: command.targetRunId,
+        message: { id: message.id, text: message.text },
+        modelSelection: projection.thread.modelSelection,
+        inputIntent: "promoted_queued_to_steer",
+        precedingEvents: cancelQueuedRun(projection, queuedRun, now),
+        ids,
+        now,
+      });
     }
     case "queue.resume": {
       const projection = state.projection;
@@ -639,6 +692,170 @@ function dispatchRunInterrupt(
   };
 }
 
+type MessageDispatchCommand = Extract<OrchestrationV2Command, { type: "message.dispatch" }>;
+
+/**
+ * The dispatch mode a message's delivery intent leaves it (T3 Code's
+ * `CommandPolicy.resolveMessageDispatchIntent` at 2577baf, without
+ * `restart`): with nothing active the message starts a run; `steer` steers
+ * the active run; `auto` queues behind a run still starting, and otherwise
+ * steers when the provider can, else queues. T3 Code reads the live
+ * session's capabilities, Playstead the adapter's, which are the same.
+ */
+function resolveMessageDispatchIntent(
+  projection: OrchestrationV2ThreadProjection,
+  command: MessageDispatchCommand,
+  state: ThreadCommandState,
+): MessageDispatchCommand["dispatchMode"] {
+  if (command.deliveryIntent === undefined) return command.dispatchMode;
+  const active = projection.runs.findLast((run) => ACTIVE_RUN_STATUSES.has(run.status));
+  if (active === undefined) return { type: "start_immediately" };
+  if (command.deliveryIntent === "steer") return { type: "steer_active", targetRunId: active.id };
+  if (active.status === "starting") return { type: "queue_after_active" };
+  return state.supportsActiveSteering
+    ? { type: "steer_active", targetRunId: active.id }
+    : { type: "queue_after_active" };
+}
+
+/**
+ * A steer whose turn has already ended starts a run of its own instead (T3
+ * Code's fallback in `dispatchMessage`): the person may have seen the turn
+ * running a moment before it ended, and the message must not be lost.
+ */
+function lateSteerFallback(
+  projection: OrchestrationV2ThreadProjection,
+  dispatchMode: MessageDispatchCommand["dispatchMode"],
+): MessageDispatchCommand["dispatchMode"] {
+  if (dispatchMode.type !== "steer_active") return dispatchMode;
+  const target = projection.runs.find((run) => run.id === dispatchMode.targetRunId);
+  if (target === undefined) return dispatchMode;
+  const turn = projection.providerTurns.findLast(
+    (candidate) => candidate.runAttemptId === target.activeAttemptId,
+  );
+  const ended =
+    target.status === "completed" ||
+    ((target.status === "running" || target.status === "waiting") && turn?.status === "completed");
+  return ended ? { type: "start_immediately" } : dispatchMode;
+}
+
+/**
+ * A message sent into a run's running turn (the active-steering branch of
+ * T3 Code's `dispatchSteerIntoRun`): the run must be running a provider
+ * turn on a session, and its provider must steer. The message joins the
+ * run, its user item is marked as a steer (or a promoted queued message),
+ * a selection that differs becomes the thread's for its next turn, and the
+ * provider is given the message (`provider-turn.steer`). Events a caller
+ * makes first, such as a promoted queued run's cancellation, come before.
+ */
+function steerIntoRun(input: {
+  readonly command: OrchestrationV2Command;
+  readonly state: ThreadCommandState;
+  readonly projection: OrchestrationV2ThreadProjection;
+  readonly targetRunId: RunId;
+  readonly message: { readonly id: MessageId; readonly text: string };
+  readonly modelSelection: OrchestrationV2AppThread["modelSelection"];
+  readonly inputIntent: "steer" | "promoted_queued_to_steer";
+  readonly precedingEvents: ReadonlyArray<NewDomainEvent>;
+  readonly ids: ThreadCommandIds;
+  readonly now: string;
+}): Result.Result<ThreadCommandDecision, ThreadCommandRejection> {
+  const { command, projection, ids, now } = input;
+  const target = projection.runs.find((run) => run.id === input.targetRunId);
+  if (target === undefined)
+    return reject(command, `Target run ${input.targetRunId} was not found.`);
+  if (target.rootNodeId === null) {
+    return reject(command, `Target run ${target.id} has no root node.`);
+  }
+  if (target.status !== "running") {
+    return reject(command, `Target run ${target.id} is ${target.status} and cannot be steered.`);
+  }
+  const providerThread = projection.providerThreads.find(
+    (candidate) => candidate.id === target.providerThreadId,
+  );
+  if (providerThread === undefined || providerThread.providerSessionId === null) {
+    return reject(
+      command,
+      `Provider thread ${target.providerThreadId} has no active provider session for steering.`,
+    );
+  }
+  const providerTurn = projection.providerTurns.find(
+    (turn) => turn.runAttemptId === target.activeAttemptId && turn.status === "running",
+  );
+  if (providerTurn === undefined) {
+    return reject(command, `No running provider turn found for active run ${target.id}.`);
+  }
+  if (!input.state.supportsActiveSteering) {
+    return reject(command, `${target.providerInstanceId} cannot steer active turns.`);
+  }
+  const { thread } = projection;
+  const base = { threadId: thread.id, runId: target.id, occurredAt: now };
+  return Result.succeed({
+    events: [
+      ...input.precedingEvents,
+      ...(modelSelectionsEqual(thread.modelSelection, input.modelSelection)
+        ? []
+        : [
+            {
+              type: "thread.model-selection-updated",
+              threadId: thread.id,
+              occurredAt: now,
+              payload: { ...thread, modelSelection: input.modelSelection, updatedAt: now },
+            } as const,
+          ]),
+      {
+        ...base,
+        type: "message.updated",
+        payload: {
+          id: input.message.id,
+          threadId: thread.id,
+          runId: target.id,
+          nodeId: target.rootNodeId,
+          role: "user",
+          text: input.message.text,
+          streaming: false,
+          createdAt: now,
+          updatedAt: now,
+        },
+      },
+      {
+        ...base,
+        type: "turn-item.updated",
+        payload: {
+          id: ids.userItemId,
+          threadId: thread.id,
+          runId: target.id,
+          nodeId: target.rootNodeId,
+          providerThreadId: providerThread.id,
+          providerTurnId: providerTurn.id,
+          ordinal: 0,
+          status: "completed",
+          title: null,
+          startedAt: now,
+          completedAt: now,
+          updatedAt: now,
+          type: "user_message",
+          messageId: input.message.id,
+          text: input.message.text,
+          inputIntent: input.inputIntent,
+        },
+      },
+    ],
+    effects: [
+      {
+        id: ids.effectId,
+        request: {
+          type: "provider-turn.steer",
+          runId: target.id,
+          providerSessionId: providerThread.providerSessionId,
+          providerThreadId: providerThread.id,
+          providerTurnId: providerTurn.id,
+          messageId: input.message.id,
+        },
+      },
+    ],
+  });
+}
+
 type SourcePlan = Extract<OrchestrationV2PlanArtifact, { kind: "proposed_plan" }>;
 
 /** The plan a message implements is done, as T3 Code's `completeSourcePlan` marks it. */
@@ -810,7 +1027,12 @@ function dispatchMessage(
       runId,
       occurredAt: now,
       payload: {
-        id: ids.userItemId,
+        // A steer that came too late starts its run with the item it
+        // already has, as T3 Code's item id derived from the message keeps it.
+        id:
+          projection.turnItems.find(
+            (item) => item.type === "user_message" && item.messageId === command.messageId,
+          )?.id ?? ids.userItemId,
         threadId,
         runId,
         nodeId: ids.rootNodeId,

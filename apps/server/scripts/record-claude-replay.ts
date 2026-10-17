@@ -80,6 +80,10 @@ import {
   runQueuedTurnScenario,
 } from "../src/orchestration-v2/testkit/fixtures/queuedTurn.ts";
 import {
+  CLAUDE_MESSAGE_STEERING_SCENARIO,
+  runMessageSteeringScenario,
+} from "../src/orchestration-v2/testkit/fixtures/messageSteering.ts";
+import {
   readMachineIdentity,
   recordingReplacements,
   type Replacements,
@@ -97,7 +101,7 @@ import { makeTestServerConfig } from "../src/testUtils/testServer.ts";
  * adapter sends). It uses the signed-in `claude` on PATH, in a temporary
  * empty folder, and writes `src/orchestration-v2/testkit/fixtures/<scenario>.claude.ndjson`.
  *
- *   node apps/server/scripts/record-claude-replay.ts [file_create | restart_resume | turn_interrupt | question_answer | question_interrupt | auto_mode | traits_change | approval_accept | approval_decline | approval_cancel | approval_interrupt | auto_accept_edits | session_command | session_edits | queued_turn | proposed_plan | todo_list]
+ *   node apps/server/scripts/record-claude-replay.ts [file_create | restart_resume | turn_interrupt | question_answer | question_interrupt | auto_mode | traits_change | approval_accept | approval_decline | approval_cancel | approval_interrupt | auto_accept_edits | session_command | session_edits | queued_turn | proposed_plan | todo_list | message_steering]
  *
  * `auto_mode` writes a file in Auto, then changes the thread to Full access,
  * which reopens the query with `resume`, and sends one more message.
@@ -114,7 +118,9 @@ import { makeTestServerConfig } from "../src/testUtils/testServer.ts";
  * Auto-accept edits and Supervised and answer each turn's approvals with its
  * decision, **Always allow this session** among them. `queued_turn` queues
  * messages behind a turn, removes one, and holds the queue with Stop before
- * resuming it.
+ * resuming it. `message_steering` steers a turn while its command runs (a
+ * message with priority `now`), then sends a steer as a turn ends, which
+ * starts a turn of its own.
  *
  * The header carries `claude --version` and the capture date. The frames are
  * scrubbed by `src/orchestration-v2/testkit/replayScrub.ts`, shared with the
@@ -382,6 +388,24 @@ const recordQueuedTurn = (options: HarnessOptions) =>
     return { harness, workspace };
   });
 
+/** A turn steered while its command runs, then a steer too late that starts its own turn. */
+const recordMessageSteering = (options: HarnessOptions) =>
+  Effect.gen(function* () {
+    const harness = yield* makeOrchestrationHarness(options);
+    const { workspace, steered, three, late } = yield* runMessageSteeringScenario(
+      harness,
+      CLAUDE_MESSAGE_STEERING_SCENARIO,
+    );
+    const runs = [steered, three, late];
+    yield* Effect.logInfo("The turns ended.").pipe(
+      Effect.annotateLogs({ runs: runs.map((run) => run.status).join(", ") }),
+    );
+    if (runs.some((run) => run.status !== "completed")) {
+      return yield* Effect.die("A steering turn did not complete.");
+    }
+    return { harness, workspace };
+  });
+
 /** A file written in Auto, then a turn after the change to Full access. */
 const recordAutoMode = (options: HarnessOptions) =>
   Effect.gen(function* () {
@@ -511,6 +535,15 @@ const SCENARIOS = {
       model: CLAUDE_QUEUED_TURN_SCENARIO.model,
       prompts: [1, 2, 5].map(queuedTurnPrompt),
       queuedOptions: CLAUDE_QUEUED_TURN_SCENARIO.queuedOptions,
+    },
+  },
+  [CLAUDE_MESSAGE_STEERING_SCENARIO.scenario]: {
+    record: recordMessageSteering,
+    metadata: {
+      model: CLAUDE_MESSAGE_STEERING_SCENARIO.model,
+      prompts: CLAUDE_MESSAGE_STEERING_SCENARIO.prompts,
+      steerAfter: "command_execution running",
+      lateSteer: "sent while the turn's end is held back from the server",
     },
   },
   [CLAUDE_TRAITS_CHANGE_SCENARIO.scenario]: {

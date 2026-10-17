@@ -25,7 +25,14 @@ import {
   useState,
 } from "react";
 
-import { ArrowUpIcon, CheckIcon, ChevronDownIcon, ListPlusIcon, PlayIcon } from "../icons.tsx";
+import {
+  ArrowUpIcon,
+  CheckIcon,
+  ChevronDownIcon,
+  CornerUpRightIcon,
+  ListPlusIcon,
+  PlayIcon,
+} from "../icons.tsx";
 import { ComposerPlanFollowUpBanner, ComposerTasksBadge } from "./ComposerPlanBanners.tsx";
 import { InteractionModeToggle } from "./InteractionModeToggle.tsx";
 import {
@@ -35,6 +42,7 @@ import {
   isComposerModeShortcut,
   isEditQueuedMessageShortcut,
   isSendAlternateShortcut,
+  isSteerQueuedMessageShortcut,
   type ModelPickerEntry,
 } from "./composer.logic.ts";
 import { QueuedRunsControl, type QueuedRunsControlHandle } from "./QueuedRunsControl.tsx";
@@ -88,14 +96,16 @@ interface QueuedEdit {
 /**
  * The plain-text composer, after T3 Code's `ChatComposer.tsx` and
  * `ComposerPrimaryActions.tsx` at 2577baf without rich text, attachments,
- * chips, provider commands or steering. Enter sends and Shift+Enter starts a new
+ * chips or provider commands. Enter sends and Shift+Enter starts a new
  * line. While a run is active, an empty composer offers **Interrupt** (which
  * holds the queue, as T3 Code's Stop does), and once pressed says the run is
- * stopping; a message typed then is queued, by the thread's follow-up
- * behaviour, and Mod+Enter or a Ctrl/⌘-click sends the other follow-up when
- * there is one. The queued messages show above the composer; the pencil, or
+ * stopping; a message typed then is queued or steers the running turn, by
+ * the thread's follow-up behaviour, and Mod+Enter or a Ctrl/⌘-click does the
+ * other. The queued messages show above the composer; the pencil, or
  * `alt+arrowup` at the start of the composer, opens one for editing in the
- * composer, which keeps what was typed and gives it back afterwards. After
+ * composer, which keeps what was typed and gives it back afterwards; its
+ * **Steer** button, or `mod+shift+enter` for the first, sends it into the
+ * running turn instead. After
  * a stop, or while the queue is held, an empty composer offers **Resume**.
  * An approval the provider waits on shows above it, in the approval panel,
  * the oldest first; else a question, in the pending user-input panel (T3
@@ -135,6 +145,9 @@ export function ChatComposer(props: {
   readonly onReorderQueuedRun: (runId: RunId, beforeRunId: RunId | null) => Promise<void>;
   readonly onRemoveQueuedRun: (runId: RunId) => Promise<void>;
   readonly onUpdateQueuedRun: (runId: RunId, text: string) => Promise<void>;
+  /** Whether the active run's turn can take a queued message as a steer now. */
+  readonly canPromoteToSteer: boolean;
+  readonly onSteerQueuedRun: (runId: RunId) => Promise<void>;
   /** The approvals waiting, oldest first; the panel shows the first. */
   readonly pendingApprovals: ReadonlyArray<PendingApproval>;
   readonly onRespondToApproval: (
@@ -202,9 +215,24 @@ export function ChatComposer(props: {
     return () => window.removeEventListener("keydown", open);
   }, []);
 
+  // T3 Code's `thread.steerQueuedMessage`: the first queued message steers the running turn.
+  useEffect(() => {
+    const steerNext = (event: globalThis.KeyboardEvent) => {
+      if (!isSteerQueuedMessageShortcut(event, navigator.platform)) return;
+      if (queueRef.current?.steerNext(event.repeat) !== true) return;
+      event.preventDefault();
+      event.stopPropagation();
+    };
+    window.addEventListener("keydown", steerNext);
+    return () => window.removeEventListener("keydown", steerNext);
+  }, []);
+
   const canSend =
     hasContent &&
-    (action.kind === "send" || action.kind === "queue" || action.kind === "update-queued") &&
+    (action.kind === "send" ||
+      action.kind === "queue" ||
+      action.kind === "steer" ||
+      action.kind === "update-queued") &&
     !sending &&
     props.selection !== undefined;
 
@@ -405,9 +433,10 @@ export function ChatComposer(props: {
     }
   };
 
-  const queueTooltip = `Click to ${props.followUpBehavior}${
-    alternate === undefined ? "" : `, Ctrl/⌘-click or Mod+Enter to ${alternate}`
-  }`;
+  const mac = /mac/i.test(navigator.platform);
+  const followUpTooltip = `Click to ${props.followUpBehavior}, Ctrl/⌘-click or ${
+    mac ? "⌘+Enter" : "Ctrl+Enter"
+  } to ${alternate}`;
 
   return (
     <div className="mx-auto w-full max-w-3xl px-6 pb-6">
@@ -433,6 +462,10 @@ export function ChatComposer(props: {
         onCancelEdit={cancelEdit}
         onReorder={props.onReorderQueuedRun}
         onRemove={props.onRemoveQueuedRun}
+        hasActiveRun={running}
+        canPromoteToSteer={props.canPromoteToSteer}
+        onSteer={props.onSteerQueuedRun}
+        steerShortcutLabel={mac ? "⌘+Shift+Enter" : "Ctrl+Shift+Enter"}
       />
       {props.tasks === undefined ? null : <ComposerTasksBadge tasks={props.tasks} />}
       {props.planFollowUp === undefined ? null : (
@@ -594,13 +627,15 @@ export function ChatComposer(props: {
                   ? "Update queued message"
                   : action.kind === "queue"
                     ? "Queue message"
-                    : "Send message"
+                    : action.kind === "steer"
+                      ? "Steer message"
+                      : "Send message"
               }
               title={
                 action.kind === "update-queued"
                   ? "Update queued message"
                   : running
-                    ? queueTooltip
+                    ? followUpTooltip
                     : "Send message"
               }
               disabled={!canSend}
@@ -613,6 +648,8 @@ export function ChatComposer(props: {
                 <CheckIcon className="size-4" />
               ) : action.kind === "queue" ? (
                 <ListPlusIcon className="size-4" />
+              ) : action.kind === "steer" ? (
+                <CornerUpRightIcon className="size-4" />
               ) : (
                 <ArrowUpIcon className="size-4" />
               )}

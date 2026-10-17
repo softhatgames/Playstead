@@ -54,7 +54,7 @@ import { codexClientInfo, spawnCodexAppServer } from "../../provider/CodexProvid
 /**
  * Codex through `codex app-server`, over Playstead's Codex app-server client,
  * following T3 Code's `apps/server/src/orchestration-v2/Adapters/CodexAdapterV2.ts`
- * at 2577baf, trimmed to starting, interrupting and answering turns.
+ * at 2577baf, trimmed to starting, steering, interrupting and answering turns.
  *
  * - One app-server per session: `initialize`, then one Codex thread
  *   (`thread/start`) that every turn of the session continues
@@ -71,6 +71,8 @@ import { codexClientInfo, spawnCodexAppServer } from "../../provider/CodexProvid
  * - A file Codex adds is a `file_change` item carrying the file's name and
  *   content, which T3 Code's item keeps only as a diff.
  *
+ * - A steer is `turn/steer` with the running turn's id as `expectedTurnId`
+ *   (T3 Code's `steerTurn`); Codex takes the message into that turn.
  * - An interrupt is `turn/interrupt` (T3 Code's `interruptTurn`), then
  *   `thread/backgroundTerminals/terminate` for each command still running,
  *   which Codex's interrupt leaves running; the turn ends interrupted on
@@ -1248,6 +1250,29 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (input: 
             if (collaborationMode !== undefined) collaborationModeSent = true;
             turn.nativeTurnId ??= started.turn.id;
           }),
+        // T3 Code's `steerTurn`: `turn/steer` names the turn Codex must still be running.
+        steerTurn: ({ providerTurnId, message }) =>
+          Effect.gen(function* () {
+            const turn = yield* Ref.get(activeTurn);
+            const threadId = yield* Ref.get(nativeThreadId);
+            if (
+              turn === undefined ||
+              turn.input.providerTurnId !== providerTurnId ||
+              turn.nativeTurnId === undefined ||
+              threadId === undefined
+            ) {
+              return yield* adapterError("steer-turn")(
+                `Provider turn ${providerTurnId} is not active and cannot be steered.`,
+              );
+            }
+            yield* client
+              .request("turn/steer", {
+                threadId,
+                expectedTurnId: turn.nativeTurnId,
+                input: [{ type: "text", text: message.text }],
+              })
+              .pipe(Effect.mapError(adapterError("steer-turn")));
+          }),
         interruptTurn: ({ providerTurnId }) =>
           Effect.gen(function* () {
             const turn = yield* Ref.get(activeTurn);
@@ -1320,7 +1345,7 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (input: 
     driver: CODEX,
     capabilities: {
       sessions: { supportsRuntimeModeSwitchInSession: true },
-      turns: { supportsQueuedMessages: true },
+      turns: { supportsQueuedMessages: true, supportsActiveSteering: true },
     },
     openSession,
   } satisfies ProviderAdapterV2;

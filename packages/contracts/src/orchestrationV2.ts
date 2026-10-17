@@ -425,10 +425,13 @@ export const OrchestrationV2TurnItem = Schema.Union([
     messageId: MessageId,
     text: Schema.String,
     /**
-     * How the message reached its run (T3 Code's `inputIntent`, without
-     * steering): it started the run, or waited in the queue first.
+     * How the message reached its run (T3 Code's `inputIntent`): it started
+     * the run, waited in the queue first, steered the running turn, or was
+     * queued and then sent as a steer.
      */
-    inputIntent: Schema.optionalKey(Schema.Literals(["turn_start", "queued_turn"])),
+    inputIntent: Schema.optionalKey(
+      Schema.Literals(["turn_start", "queued_turn", "steer", "promoted_queued_to_steer"]),
+    ),
   }),
   Schema.Struct({
     ...TurnItemBaseFields,
@@ -633,12 +636,16 @@ export type OrchestrationV2ThreadStreamItem = typeof OrchestrationV2ThreadStream
 
 /**
  * How a message reaches a run (T3 Code's `message.dispatch.dispatchMode`,
- * without workspace preparation and steering): either starts a run when the
+ * without workspace preparation and the interrupt-and-restart steer, which
+ * the Codex and Claude interfaces never send): either starts a run when the
  * thread has none active, and otherwise queues one behind it.
+ * `steer_active` sends the message into the target run's running turn; when
+ * that turn has already ended, the message starts a run of its own.
  */
 export const MessageDispatchMode = Schema.Union([
   Schema.Struct({ type: Schema.Literal("start_immediately") }),
   Schema.Struct({ type: Schema.Literal("queue_after_active") }),
+  Schema.Struct({ type: Schema.Literal("steer_active"), targetRunId: RunId }),
 ]);
 export type MessageDispatchMode = typeof MessageDispatchMode.Type;
 
@@ -652,12 +659,12 @@ export type MessageDispatchMode = typeof MessageDispatchMode.Type;
  * given, becomes the thread's before its run starts (the composer sends the
  * model's options this way, as T3 Code's does). A message that implements a
  * proposed plan names it in `sourcePlanRef`, which completes the plan. A
- * message sent while a run is active is queued behind it; queued runs can
- * be reordered, edited and cancelled, and once held wait for
- * `queue.resume`. `run.interrupt` stops a run that is still active, and
- * **Stop** holds the queue with it. `runtime-request.respond` answers a
- * provider's request: an approval with a `decision`, questions with
- * `answers`.
+ * message sent while a run is active is queued behind it, or steers its
+ * running turn; queued runs can be reordered, edited, cancelled and sent as
+ * a steer, and once held wait for `queue.resume`. `run.interrupt` stops a
+ * run that is still active, and **Stop** holds the queue with it.
+ * `runtime-request.respond` answers a provider's request: an approval with
+ * a `decision`, questions with `answers`.
  */
 export const OrchestrationV2Command = Schema.Union([
   Schema.Struct({
@@ -703,9 +710,10 @@ export const OrchestrationV2Command = Schema.Union([
     /**
      * Lets the server choose the dispatch mode from the thread as it is
      * when the message arrives (T3 Code's `deliveryIntent`, without
-     * `steer` and `restart`, which come with steering).
+     * `restart`): `auto` steers a running turn its provider can steer and
+     * queues otherwise; `steer` steers the active run.
      */
-    deliveryIntent: Schema.optionalKey(Schema.Literal("auto")),
+    deliveryIntent: Schema.optionalKey(Schema.Literals(["auto", "steer"])),
     /** **Resume** after a stop: the interrupted run this message continues (T3 Code's `manualContinuationOfRunId`). */
     manualContinuationOfRunId: Schema.optionalKey(RunId),
     /** The proposed plan this message implements; it must still be active. */
@@ -718,6 +726,14 @@ export const OrchestrationV2Command = Schema.Union([
     runId: RunId,
     /** **Stop**: hold the thread's queued runs until the person resumes them. */
     holdQueue: Schema.optionalKey(Schema.Boolean),
+  }),
+  Schema.Struct({
+    type: Schema.Literal("queued-message.promote-to-steer"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    /** The queued run whose message steers the target run instead. */
+    queuedRunId: RunId,
+    targetRunId: RunId,
   }),
   Schema.Struct({
     type: Schema.Literal("queue.resume"),
