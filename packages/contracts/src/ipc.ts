@@ -27,6 +27,11 @@ export interface DesktopEnvironmentBootstrap {
   readonly wsBaseUrl: string;
 }
 
+const SidebarProjectGroupingMode = Schema.Literals(["repository", "repository_path", "separate"]);
+const SidebarProjectSortOrder = Schema.Literals(["updated_at", "created_at", "manual"]);
+const SidebarThreadSortOrder = Schema.Literals(["updated_at", "created_at"]);
+const SidebarThreadPreviewCount = Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 15 }));
+
 /**
  * The interface's settings that live with the client rather than the server
  * (T3 Code's `ClientSettingsSchema`, `packages/contracts/src/settings.ts` at
@@ -39,11 +44,39 @@ export const ClientSettings = Schema.Struct({
   confirmThreadArchive: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   /** Ask before deleting a thread. */
   confirmThreadDelete: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  /** Ask before unpinning a thread. */
+  confirmThreadUnpin: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  /** Show the project tree (**Sidebar (legacy)**) instead of the inbox sidebar. */
+  legacySidebarEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  /** Fold working threads into the inbox sidebar's **Working** section (beta). */
+  sidebarWorkingShelfEnabled: Schema.Boolean.pipe(
+    Schema.withDecodingDefault(Effect.succeed(false)),
+  ),
+  /**
+   * How projects group in the sidebar: by repository, by repository and
+   * path, or each apart. Playstead has no repositories until version control
+   * (slice 4), so every project is its own group whatever this says.
+   */
+  sidebarProjectGroupingMode: SidebarProjectGroupingMode.pipe(
+    Schema.withDecodingDefault(Effect.succeed("repository" as const)),
+  ),
+  /** The order of the sidebar's projects. */
+  sidebarProjectSortOrder: SidebarProjectSortOrder.pipe(
+    Schema.withDecodingDefault(Effect.succeed("updated_at" as const)),
+  ),
+  /** The order of the project tree's threads. */
+  sidebarThreadSortOrder: SidebarThreadSortOrder.pipe(
+    Schema.withDecodingDefault(Effect.succeed("updated_at" as const)),
+  ),
+  /** How many threads the project tree shows per project before **Show more**. */
+  sidebarThreadPreviewCount: SidebarThreadPreviewCount.pipe(
+    Schema.withDecodingDefault(Effect.succeed(6)),
+  ),
 });
 export type ClientSettings = typeof ClientSettings.Type;
 
 /** Every client setting at its default. */
-export const DEFAULT_CLIENT_SETTINGS: ClientSettings = Schema.decodeUnknownSync(ClientSettings)({});
+export const DEFAULT_CLIENT_SETTINGS: ClientSettings = Schema.decodeSync(ClientSettings)({});
 
 /**
  * One entry of a context menu (T3 Code's `ContextMenuItem`): the desktop app

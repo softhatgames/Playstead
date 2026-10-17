@@ -9,7 +9,7 @@ import {
 
 import { desktopBridge } from "../../env.ts";
 import { useThreadActionMenu } from "../../hooks/useThreadActionMenu.ts";
-import { renameThread, type ThreadActionTarget } from "../../hooks/useThreadActions.ts";
+import { renameThread, type ThreadLifecycleTarget } from "../../hooks/useThreadActions.ts";
 import { failureToast, warningToast } from "../../toast.ts";
 import { ChevronDownIcon } from "../icons.tsx";
 import { isTrailingDoubleClick } from "../Sidebar.logic.ts";
@@ -35,7 +35,7 @@ export function ChatHeader(props: {
   readonly title: string;
   readonly projectTitle: string | undefined;
   /** The thread, once it exists; a draft's header has no menu and cannot be renamed. */
-  readonly thread: ThreadActionTarget | null;
+  readonly thread: ThreadLifecycleTarget | null;
 }) {
   const { title, thread } = props;
   const [renamingTitle, setRenamingTitle] = useState<string | null>(null);

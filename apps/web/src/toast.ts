@@ -53,3 +53,8 @@ export function failureToast(title: string, error: unknown): void {
     description: error instanceof Error ? error.message : "An error occurred.",
   });
 }
+
+/** Confirms a local action such as copying a thread reference. */
+export function successToast(title: string, description?: string): void {
+  addToast({ type: "success", title, ...(description === undefined ? {} : { description }) });
+}

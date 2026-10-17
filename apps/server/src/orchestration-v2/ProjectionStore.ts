@@ -75,6 +75,10 @@ const entityKindOf = (event: OrchestrationV2StoredEvent["event"]): EntityKind | 
     case "thread.deleted":
     case "thread.visited":
     case "thread.marked-unread":
+    case "thread.pinned":
+    case "thread.unpinned":
+    case "thread.settled":
+    case "thread.unsettled":
       return "thread";
     case "run.created":
     case "run.updated":
@@ -123,8 +127,15 @@ const toThreadShell = (
     updatedAt: thread.updatedAt,
     archivedAt: thread.archivedAt,
     deletedAt: thread.deletedAt,
+    latestRunRequestedAt: latest?.requestedAt ?? null,
     latestRunCompletedAt: latest?.completedAt ?? null,
     lastVisitedAt: thread.lastVisitedAt,
+    settledOverride: thread.settledOverride,
+    settledAt: thread.settledAt,
+    unsettledAt: thread.unsettledAt,
+    pinnedAt: thread.pinnedAt,
+    pinOrderKey: thread.pinOrderKey,
+    activeOrderKey: thread.activeOrderKey,
   };
 };
 

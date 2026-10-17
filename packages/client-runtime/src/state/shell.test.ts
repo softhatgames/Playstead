@@ -28,8 +28,15 @@ const thread = (
   updatedAt: "2026-10-17T00:00:00.000Z",
   archivedAt: null,
   deletedAt: null,
+  latestRunRequestedAt: null,
   latestRunCompletedAt: null,
   lastVisitedAt: null,
+  settledOverride: null,
+  settledAt: null,
+  unsettledAt: null,
+  pinnedAt: null,
+  pinOrderKey: null,
+  activeOrderKey: null,
   ...overrides,
 });
 

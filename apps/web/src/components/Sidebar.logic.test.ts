@@ -1,6 +1,11 @@
+import type { OrchestrationV2ThreadShell } from "@playstead/contracts/orchestrationV2";
 import { assert, describe, it } from "@effect/vitest";
 
-import { hasUnseenCompletion, isTrailingDoubleClick } from "./Sidebar.logic.ts";
+import {
+  hasUnseenCompletion,
+  isTrailingDoubleClick,
+  resolveProjectStatusIndicator,
+} from "./Sidebar.logic.ts";
 
 describe("hasUnseenCompletion", () => {
   const completedAt = "2026-10-17T12:00:00.000Z";
@@ -36,6 +41,31 @@ describe("isTrailingDoubleClick", () => {
     assert.deepStrictEqual(
       [0, 1, 2, 3].map((detail) => isTrailingDoubleClick(detail)),
       [false, false, true, true],
+    );
+  });
+});
+
+describe("resolveProjectStatusIndicator", () => {
+  const completedAt = "2026-10-17T12:00:00.000Z";
+  const thread = (
+    status: OrchestrationV2ThreadShell["status"],
+    lastVisitedAt: string | null = completedAt,
+  ) => ({ status, latestRunCompletedAt: completedAt, lastVisitedAt });
+  const seenLongAgo = "2026-10-17T11:00:00.000Z";
+
+  it("shows nothing for a folded project whose threads have no status", () => {
+    assert.isNull(resolveProjectStatusIndicator([]));
+    assert.isNull(resolveProjectStatusIndicator([thread("completed"), thread("idle")]));
+  });
+
+  it("shows the most pressing status of its threads: working before completed", () => {
+    assert.strictEqual(
+      resolveProjectStatusIndicator([thread("completed", seenLongAgo)]),
+      "Completed",
+    );
+    assert.strictEqual(
+      resolveProjectStatusIndicator([thread("completed", seenLongAgo), thread("running")]),
+      "Working",
     );
   });
 });
