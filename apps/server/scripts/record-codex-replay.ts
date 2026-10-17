@@ -6,6 +6,7 @@ import {
   type ProviderReplayEntry,
 } from "@playstead/provider-testing/replayTranscript";
 import { withoutAgentShellVariables } from "@playstead/shared/agentShell";
+import * as Console from "effect/Console";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -22,6 +23,10 @@ import {
   CODEX_FILE_CREATE_SCENARIO,
   runProviderFileCreateScenario,
 } from "../src/orchestration-v2/testkit/fixtures/fileCreate.ts";
+import {
+  QUESTION_ANSWER_SCENARIO_NAME,
+  QUESTION_INTERRUPT_SCENARIO_NAME,
+} from "../src/orchestration-v2/testkit/fixtures/questionAnswer.ts";
 import {
   CODEX_TURN_INTERRUPT_SCENARIO,
   runTurnInterruptScenario,
@@ -42,14 +47,16 @@ import {
  * `codex` on PATH, in a temporary empty folder, and writes
  * `src/orchestration-v2/testkit/fixtures/<scenario>.codex.ndjson`.
  *
- *   node apps/server/scripts/record-codex-replay.ts [file_create | turn_interrupt]
+ *   node apps/server/scripts/record-codex-replay.ts [file_create | turn_interrupt | --help]
  *
  * `turn_interrupt` interrupts a long command once it runs, then sends one
  * more message.
  *
- * There is no question scenario: Codex 0.163.0 refuses `request_user_input`
- * outside plan mode, so `question_answer.codex.ndjson` and
- * `question_interrupt.codex.ndjson` are hand-made (see their headers).
+ * `question_answer` and `question_interrupt` cannot be recorded, and the
+ * recorder says so when asked for them: Codex 0.163.0 refuses
+ * `request_user_input` outside plan mode, and Playstead runs no plan mode, so
+ * `question_answer.codex.ndjson` and `question_interrupt.codex.ndjson` are
+ * hand-made (see their headers).
  *
  * The header carries `codex --version` and the capture date. The frames are
  * scrubbed by `src/orchestration-v2/testkit/replayScrub.ts`, shared with the
@@ -122,14 +129,38 @@ const SCENARIOS = {
   },
 };
 
+/** Scenarios with a Codex fixture that this recorder cannot make. */
+const HAND_MADE_SCENARIOS: ReadonlyArray<string> = [
+  QUESTION_ANSWER_SCENARIO_NAME,
+  QUESTION_INTERRUPT_SCENARIO_NAME,
+];
+
+const HAND_MADE_REASON =
+  `${HAND_MADE_SCENARIOS.join(" and ")} are hand-made Codex fixtures, not recordings: ` +
+  "Codex 0.163.0 refuses request_user_input outside plan mode, and Playstead runs no plan mode, " +
+  "so a real Codex never asks. Edit question_answer.codex.ndjson and " +
+  "question_interrupt.codex.ndjson by hand; their headers say how they were made.";
+
+const HELP = [
+  "Records a Codex app-server replay through Playstead's adapter.",
+  "",
+  `  node apps/server/scripts/record-codex-replay.ts [${Object.keys(SCENARIOS).join(" | ")}]`,
+  "",
+  `The default is ${CODEX_FILE_CREATE_SCENARIO.scenario}. ${HAND_MADE_REASON}`,
+].join("\n");
+
 const program = Effect.gen(function* () {
   const scenarioName = process.argv[2] ?? CODEX_FILE_CREATE_SCENARIO.scenario;
+  if (scenarioName === "--help" || scenarioName === "-h") return yield* Console.log(HELP);
+  if (HAND_MADE_SCENARIOS.includes(scenarioName)) {
+    return yield* Effect.die(`Cannot record ${scenarioName}. ${HAND_MADE_REASON}`);
+  }
   const scenario = Object.hasOwn(SCENARIOS, scenarioName)
     ? SCENARIOS[scenarioName as keyof typeof SCENARIOS]
     : undefined;
   if (scenario === undefined) {
     return yield* Effect.die(
-      `No scenario is called ${scenarioName}. The scenarios are ${Object.keys(SCENARIOS).join(", ")}.`,
+      `No scenario is called ${scenarioName}. The scenarios are ${Object.keys(SCENARIOS).join(", ")}; ${HAND_MADE_REASON}`,
     );
   }
   const version = yield* codexVersion;
