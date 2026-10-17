@@ -160,7 +160,7 @@ Anthropic's wording differs between pages. Each is quoted in full where it bears
   - The SDK overview and the legal page tell _developers_ of products, "including those using the Agent SDK", to use API keys. They forbid _offering_ claude.ai login, routing plan credentials "on behalf of their users", and collecting or intermediating claude.ai credentials.
   - The Help Center tells _users_ they can still use "the Claude Agent SDK, claude -p, and third-party apps" with subscription limits. The legal page allows "an end user… signing in to the unmodified Claude Code binary with their own Claude subscription".
   - Playstead is open source, runs on the person's own computer and drives the unmodified binary. The person would sign in through Claude Code's own flow, and Playstead would never see the token. No page says whether that counts as "offering claude.ai login" for a product. The legal page sends such questions to sales. **Unconfirmed**, and this note does not resolve it.
-  - Anthropic's position is stricter than OpenAI's in [decision 0008](https://github.com/softhatgames/playstead-v0/blob/v0/docs/adr/0008-codex-sign-in-for-milestone-1.md). OpenAI says app-server authentication may continue for local or open-source apps ([Codex note §3](codex-app-server.md#3-authentication)). Anthropic names open-source projects among the "third-party tools" for which API keys are "preferred". It does not exempt them.
+  - Anthropic's position is stricter than OpenAI's. OpenAI says app-server authentication may continue for local or open-source apps ([Codex note §3](codex-app-server.md#3-authentication)). Anthropic names open-source projects among the "third-party tools" for which API keys are "preferred". It does not exempt them.
 
 ### Methods and precedence
 
@@ -203,7 +203,7 @@ Anthropic's wording differs between pages. Each is quoted in full where it bears
 
 ## 4. Separation from personal setup
 
-This is the Claude analogue of [decision 0009](https://github.com/softhatgames/playstead-v0/blob/v0/docs/adr/0009-playstead-owned-codex-home.md) and ARCHITECTURE's "Personal skills" and "Folder trust" rules.
+How Claude can run apart from the person's own Claude Code setup: their personal settings and skills, and which folders it trusts.
 
 - **`settingSources` (Documented, Source).**
   - Current default: "When you omit `settingSources`, `query()` reads the same filesystem settings as the Claude Code CLI: user, project, and local settings, CLAUDE.md files, and `.claude/` skills, agents, and commands. To run without these, pass `settingSources: []`" ([ccf]). `sdk.d.ts` agrees: "When omitted, all sources are loaded (matches CLI defaults). Pass `[]` to disable filesystem settings (SDK isolation mode). Must include `'project'` to load CLAUDE.md files." (2264-2273).
@@ -287,8 +287,8 @@ This is the Claude analogue of [decision 0009](https://github.com/softhatgames/p
   - The docs suggest, for moving between hosts: "**Don't rely on session resume.** Capture the results you need… as application state and pass them into a fresh session's prompt" ([sess#resume-across-hosts]).
   - T3 Code reports that `sessionId` "would fail with 'already in use'" when the id already has a transcript, so it switches to `resume` ([t3-ca-resume]).
 - **Concurrency (Unconfirmed).** Whether two processes can resume the same session at once is not documented. The startup failure reason `session_held_by_background` suggests the CLI detects some conflicts.
-- **Fit with [decision 0010](https://github.com/softhatgames/playstead-v0/blob/v0/docs/adr/0010-host-conversation-record.md) (Inference).**
-  - The decision's premise holds: Claude's transcript is internal, version-dependent and has no sequence numbers. It records nothing of the host's permission answers beyond tool results.
+- **Fit with a conversation record kept by Playstead (Inference).**
+  - Its premise holds: Claude's transcript is internal, version-dependent and has no sequence numbers. It records nothing of the host's permission answers beyond tool results.
   - The host keeps its own record and stores Claude's session id only to resume. The id can be chosen and stored before the first turn.
   - The SDK's own resume path (`resume`, then `resumeSessionAt` if needed) is the only supported way back into a conversation. Reading the transcript to rebuild the record is not.
   - Because the transcript lives under the config folder, Playstead's choice of `CLAUDE_CONFIG_DIR` decides where it lives, and `cleanupPeriodDays` decides how long it stays resumable.
@@ -522,7 +522,7 @@ This is the Claude analogue of [decision 0009](https://github.com/softhatgames/p
   - `reloadSkills()` reloads from disk mid-session ([skills-sdk]).
   - "Only one skill expands per message; a second `/x` becomes argument text" (T3 Code, citing a Claude Code issue, [t3-skilldispatch]).
 - **Reporting the active set (Documented, Source).** The init message's `skills`, `plugins` and `slash_commands`; `supportedCommands()`; `commands_changed` "when Claude Code discovers skills as the agent enters a subdirectory" ([ts]).
-- **For [decision 0006](https://github.com/softhatgames/playstead-v0/blob/v0/docs/adr/0006-project-controlled-skills.md) (Inference).**
+- **For skills the game project controls (Inference).**
   - Personal skills stay out when `user` is not a setting source. Under a Playstead `CLAUDE_CONFIG_DIR` the personal folder would be Playstead's own, if Claude resolves `~/.claude/skills` through that variable (**Unconfirmed**; the docs say settings, history and plugins move).
   - Unlike Codex, Claude finds no personal skills through `HOME`, as far as the docs say.
   - A game project's own skills and CLAUDE.md need the `project` source, which also brings its hooks, `env` and `.mcp.json` (§4).
