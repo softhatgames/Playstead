@@ -36,7 +36,7 @@ import type * as Stream from "effect/Stream";
  * questions. Steering, rollback, fork and approvals are absent.
  */
 
-/** Every thread runs in Full access with the default interaction mode, in its project's folder. */
+/** A turn runs in its thread's runtime mode, with the default interaction mode, in its project's folder. */
 export interface ProviderAdapterV2RuntimePolicy {
   readonly runtimeMode: RuntimeMode;
   readonly interactionMode: ProviderInteractionMode;
@@ -167,9 +167,21 @@ export interface ProviderAdapterV2SessionRuntime {
  */
 export const INTERRUPT_TERMINAL_TIMEOUT = "10 seconds";
 
+/**
+ * What an adapter's sessions can do (T3 Code's
+ * `OrchestrationV2ProviderCapabilities`, trimmed). A session that cannot
+ * switch runtime mode in session is closed and opened again, continuing the
+ * provider's conversation, when a turn starts in another mode than the
+ * session opened with.
+ */
+export interface ProviderAdapterV2Capabilities {
+  readonly sessions: { readonly supportsRuntimeModeSwitchInSession: boolean };
+}
+
 export interface ProviderAdapterV2 {
   readonly instanceId: ProviderInstanceId;
   readonly driver: ProviderDriverKind;
+  readonly capabilities: ProviderAdapterV2Capabilities;
   readonly openSession: (
     input: ProviderAdapterV2OpenSessionInput,
   ) => Effect.Effect<ProviderAdapterV2SessionRuntime, ProviderAdapterV2Error, Scope.Scope>;

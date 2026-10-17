@@ -2,14 +2,21 @@ import type { RuntimeRequestId } from "@playstead/contracts/baseSchemas";
 import type {
   ModelSelection,
   ProviderUserInputAnswers,
+  RuntimeMode,
 } from "@playstead/contracts/orchestrationV2";
-import { type KeyboardEvent, useState } from "react";
+import { type KeyboardEvent, useCallback, useEffect, useState } from "react";
 
 import { ArrowUpIcon } from "../icons.tsx";
-import { canChooseModel, type ComposerAction, type ModelPickerEntry } from "./composer.logic.ts";
+import {
+  canChooseModel,
+  type ComposerAction,
+  isComposerModeShortcut,
+  type ModelPickerEntry,
+} from "./composer.logic.ts";
 import { ComposerPendingUserInputPanel } from "./ComposerPendingUserInputPanel.tsx";
 import type { PendingUserInput } from "./pendingUserInput.logic.ts";
 import { ProviderModelPicker } from "./ProviderModelPicker.tsx";
+import { RuntimeModePicker } from "./RuntimeModePicker.tsx";
 import { TraitsPicker } from "./TraitsPicker.tsx";
 
 const errorMessage = (cause: unknown, fallback: string) =>
@@ -25,8 +32,10 @@ const errorMessage = (cause: unknown, fallback: string) =>
  * **Interrupt**, and once pressed the composer says the run is stopping. A
  * question the provider waits on shows above it, in the pending user-input
  * panel, the oldest first (T3 Code's `ChatComposer` renders it there too).
- * Beside the model picker is the reasoning and traits picker for the
- * selected model, which can rewrite the prompt for Ultrathink.
+ * Beside the model picker are the reasoning and traits picker for the
+ * selected model, which can rewrite the prompt for Ultrathink, and the mode
+ * picker, which `mod+shift+a` opens; a mode chosen there goes with the next
+ * message, even while a run is active.
  */
 export function ChatComposer(props: {
   readonly entries: ReadonlyArray<ModelPickerEntry>;
@@ -34,6 +43,8 @@ export function ChatComposer(props: {
   readonly onSelectModel: (selection: ModelSelection) => void | Promise<void>;
   /** The traits picker's new choices for the selected model. */
   readonly onTraitsChange: (options: ModelSelection["options"]) => void;
+  readonly runtimeMode: RuntimeMode;
+  readonly onSelectRuntimeMode: (mode: RuntimeMode) => void;
   readonly action: ComposerAction;
   readonly onSend: (text: string) => Promise<void>;
   readonly onInterrupt: (
@@ -50,6 +61,21 @@ export function ChatComposer(props: {
   const [sending, setSending] = useState(false);
   const [interrupting, setInterrupting] = useState(false);
   const [error, setError] = useState<string | undefined>(undefined);
+  const [modePickerOpen, setModePickerOpen] = useState(false);
+  const onModePickerOpenChange = useCallback((open: boolean) => setModePickerOpen(open), []);
+
+  // T3 Code's `composer.mode` keybinding, wherever focus is in the window.
+  useEffect(() => {
+    const open = (event: globalThis.KeyboardEvent) => {
+      if (!isComposerModeShortcut(event, navigator.platform)) return;
+      event.preventDefault();
+      event.stopPropagation();
+      if (!event.repeat) setModePickerOpen(true);
+    };
+    window.addEventListener("keydown", open);
+    return () => window.removeEventListener("keydown", open);
+  }, []);
+
   const canSend =
     text.trim().length > 0 && action.kind === "send" && !sending && props.selection !== undefined;
 
@@ -142,6 +168,13 @@ export function ChatComposer(props: {
                 disabled={!canChooseModel(action) || sending}
               />
             )}
+            <span aria-hidden="true" className="h-4 w-px bg-neutral-200 dark:bg-neutral-800" />
+            <RuntimeModePicker
+              mode={props.runtimeMode}
+              open={modePickerOpen}
+              onOpenChange={onModePickerOpenChange}
+              onSelect={props.onSelectRuntimeMode}
+            />
           </div>
           {action.kind === "interrupt" ? (
             <InterruptButton disabled={interrupting} onClick={() => void interrupt(action.runId)} />

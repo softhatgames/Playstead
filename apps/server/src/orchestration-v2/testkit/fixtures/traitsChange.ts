@@ -93,6 +93,7 @@ export const runTraitsChangeScenario = (harness: Harness, scenario: TraitsChange
       projectId: TRAITS_CHANGE_IDS.projectId,
       title: "New thread",
       modelSelection: selection(scenario.turns[0]!.options),
+      runtimeMode: "full-access",
     });
     const runs = [];
     for (const [index, turn] of scenario.turns.entries()) {

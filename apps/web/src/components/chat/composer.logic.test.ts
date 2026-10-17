@@ -19,6 +19,7 @@ import {
   defaultModelSelection,
   deriveComposerAction,
   deriveModelPickerEntries,
+  isComposerModeShortcut,
   resolveComposerSelection,
 } from "./composer.logic.ts";
 
@@ -94,9 +95,10 @@ describe("buildSendCommands", () => {
     threadCommandId: CommandId.make("command:thread"),
     messageCommandId: CommandId.make("command:message"),
     messageId: MessageId.make("message:1"),
+    runtimeModeCommandId: CommandId.make("command:mode"),
   };
 
-  it("creates the thread first when sending from a new thread, titled from the message", () => {
+  it("creates the thread first, in the draft's mode, when sending from a new thread, titled from the message", () => {
     const commands = buildSendCommands({
       target: {
         kind: "new",
@@ -104,6 +106,7 @@ describe("buildSendCommands", () => {
         projectId: ProjectId.make("project:1"),
         modelSelection: { instanceId: "claudeAgent", model: "claude-fable-5-1" },
       },
+      runtimeMode: "auto",
       text: "  Make a tiny platformer\n",
       ids,
     });
@@ -116,6 +119,7 @@ describe("buildSendCommands", () => {
         projectId: "project:1",
         title: "New thread",
         modelSelection: { instanceId: "claudeAgent", model: "claude-fable-5-1" },
+        runtimeMode: "auto",
       },
       {
         type: "message.dispatch",
@@ -134,12 +138,14 @@ describe("buildSendCommands", () => {
         kind: "existing",
         threadId: ThreadId.make("thread:1"),
         hasMessages: true,
+        runtimeMode: "full-access",
         modelSelection: {
           instanceId: "codex",
           model: "gpt-5.6-terra",
           options: [{ id: "reasoningEffort", value: "high" }],
         },
       },
+      runtimeMode: "full-access",
       text: "Now add a jump",
       ids,
     });
@@ -156,6 +162,38 @@ describe("buildSendCommands", () => {
           model: "gpt-5.6-terra",
           options: [{ id: "reasoningEffort", value: "high" }],
         },
+      },
+    ]);
+  });
+
+  it("sends a mode chosen in the composer before the next message", () => {
+    const commands = buildSendCommands({
+      target: {
+        kind: "existing",
+        threadId: ThreadId.make("thread:1"),
+        hasMessages: true,
+        runtimeMode: "full-access",
+        modelSelection: { instanceId: "codex", model: "gpt-5.6-terra" },
+      },
+      runtimeMode: "auto",
+      text: "Now add a jump",
+      ids,
+    });
+
+    assert.deepStrictEqual<unknown>(commands, [
+      {
+        type: "thread.runtime-mode.set",
+        commandId: "command:mode",
+        threadId: "thread:1",
+        runtimeMode: "auto",
+      },
+      {
+        type: "message.dispatch",
+        commandId: "command:message",
+        threadId: "thread:1",
+        messageId: "message:1",
+        text: "Now add a jump",
+        modelSelection: { instanceId: "codex", model: "gpt-5.6-terra" },
       },
     ]);
   });
@@ -264,6 +302,40 @@ describe("deriveComposerAction", () => {
     assert.deepStrictEqual(
       deriveComposerAction([run("run:2", "running")], [interruptRequest("run:2")]),
       { kind: "interrupting" },
+    );
+  });
+});
+
+describe("isComposerModeShortcut", () => {
+  const keys = (key: string, held: ReadonlyArray<"meta" | "ctrl" | "shift" | "alt">) => ({
+    key,
+    metaKey: held.includes("meta"),
+    ctrlKey: held.includes("ctrl"),
+    shiftKey: held.includes("shift"),
+    altKey: held.includes("alt"),
+  });
+
+  it("is mod+shift+a: Command on a Mac, Control elsewhere", () => {
+    assert.deepStrictEqual(
+      [
+        isComposerModeShortcut(keys("A", ["meta", "shift"]), "MacIntel"),
+        isComposerModeShortcut(keys("a", ["ctrl", "shift"]), "Win32"),
+        isComposerModeShortcut(keys("A", ["ctrl", "shift"]), "Linux x86_64"),
+      ],
+      [true, true, true],
+    );
+  });
+
+  it("is not another chord with the same key", () => {
+    assert.deepStrictEqual(
+      [
+        isComposerModeShortcut(keys("A", ["ctrl", "shift"]), "MacIntel"),
+        isComposerModeShortcut(keys("a", ["meta"]), "MacIntel"),
+        isComposerModeShortcut(keys("A", ["meta", "shift", "alt"]), "MacIntel"),
+        isComposerModeShortcut(keys("A", ["meta", "ctrl", "shift"]), "MacIntel"),
+        isComposerModeShortcut(keys("S", ["meta", "shift"]), "MacIntel"),
+      ],
+      [false, false, false, false, false],
     );
   });
 });

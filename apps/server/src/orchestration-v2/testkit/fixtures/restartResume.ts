@@ -59,6 +59,7 @@ export const runFirstTurn = (harness: Harness) =>
       projectId: RESTART_RESUME_IDS.projectId,
       title: "New thread",
       modelSelection: { instanceId: "claudeAgent", model: RESTART_RESUME_SCENARIO.model },
+      runtimeMode: "full-access",
     });
     const run = yield* sendAndAwait(harness, 1, RESTART_RESUME_SCENARIO.firstPrompt);
     return { workspace: folder, run };

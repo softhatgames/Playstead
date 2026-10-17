@@ -49,16 +49,18 @@ import { codexClientInfo, spawnCodexAppServer } from "../../provider/CodexProvid
 /**
  * Codex through `codex app-server`, over Playstead's Codex app-server client,
  * following T3 Code's `apps/server/src/orchestration-v2/Adapters/CodexAdapterV2.ts`
- * at 2577baf, trimmed to starting turns in Full access.
+ * at 2577baf, trimmed to starting, interrupting and answering turns.
  *
  * - One app-server per session: `initialize`, then one Codex thread
  *   (`thread/start`) that every turn of the session continues
  *   (`turn/start`).
- * - Full access is `approvalPolicy: "never"` with the `dangerFullAccess`
- *   sandbox on each `turn/start`, as T3 Code's `codexRuntimeModeTurnDefaults`
- *   maps it, so Codex never asks for approval. Each `turn/start` also asks
- *   for detailed reasoning summaries and carries the reasoning effort and
- *   service tier the person chose, as T3 Code's does.
+ * - Each `turn/start` carries the turn's runtime mode as Codex's approval
+ *   policy, approvals reviewer and sandbox (T3 Code's
+ *   `codexRuntimeModeTurnDefaults`), so a mode change applies from the next
+ *   turn in the same session (`supportsRuntimeModeSwitchInSession`). Full
+ *   access never asks; Auto leaves approvals to Codex's own review. Each
+ *   `turn/start` also asks for detailed reasoning summaries and carries the
+ *   reasoning effort and service tier the person chose, as T3 Code's does.
  * - Assistant text streams from `item/agentMessage/delta`, one update per
  *   delta (T3 Code coalesces them every 50 ms).
  * - A file Codex adds is a `file_change` item carrying the file's name and
@@ -142,18 +144,42 @@ export const layerAppServerClientFactory: Layer.Layer<
   }),
 );
 
-/** T3 Code's `codexRuntimeModeTurnDefaults` for the one mode Playstead runs in. */
-const codexTurnPolicyForRuntimeMode = (runtimeMode: RuntimeMode) => {
+/**
+ * Each runtime mode's approval policy, approvals reviewer and sandbox, sent
+ * on every `turn/start` (T3 Code's `codexRuntimeModeTurnDefaults`). The
+ * reviewer is always explicit: left out, Codex keeps the previous turn's,
+ * so Auto's review would outlast a change away from Auto.
+ */
+const codexTurnPolicyForRuntimeMode = (
+  runtimeMode: RuntimeMode,
+): Required<
+  Pick<CodexSchema.V2TurnStartParams, "approvalPolicy" | "approvalsReviewer" | "sandboxPolicy">
+> => {
   switch (runtimeMode) {
+    case "approval-required":
+      return {
+        approvalPolicy: "untrusted",
+        approvalsReviewer: "user",
+        sandboxPolicy: { type: "readOnly" },
+      };
+    case "auto-accept-edits":
+      return {
+        approvalPolicy: "on-request",
+        approvalsReviewer: "user",
+        sandboxPolicy: { type: "workspaceWrite" },
+      };
+    case "auto":
+      return {
+        approvalPolicy: "on-request",
+        approvalsReviewer: "auto_review",
+        sandboxPolicy: { type: "workspaceWrite" },
+      };
     case "full-access":
       return {
         approvalPolicy: "never",
         approvalsReviewer: "user",
         sandboxPolicy: { type: "dangerFullAccess" },
-      } as const satisfies Pick<
-        CodexSchema.V2TurnStartParams,
-        "approvalPolicy" | "approvalsReviewer" | "sandboxPolicy"
-      >;
+      };
   }
 };
 
@@ -786,6 +812,7 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (input: 
   return {
     instanceId: input.instanceId,
     driver: CODEX,
+    capabilities: { sessions: { supportsRuntimeModeSwitchInSession: true } },
     openSession,
   } satisfies ProviderAdapterV2;
 });

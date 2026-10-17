@@ -169,6 +169,7 @@ describe("Survive a restart, and the same thread in a browser", () => {
             projectId,
             title: "New thread",
             modelSelection: { instanceId: "claudeAgent", model: FILE_CREATE_SCENARIO.model },
+            runtimeMode: "full-access",
           }),
         );
         const seenInBrowser = yield* Effect.forkScoped(

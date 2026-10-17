@@ -7,8 +7,10 @@ import {
 } from "@playstead/contracts/baseSchemas";
 import {
   ACTIVE_RUN_STATUSES,
+  DEFAULT_RUNTIME_MODE,
   type ModelSelection,
   type ProviderUserInputAnswers,
+  type RuntimeMode,
 } from "@playstead/contracts/orchestrationV2";
 import { useNavigate } from "@tanstack/react-router";
 import { useMemo } from "react";
@@ -21,7 +23,15 @@ import {
   setComposerTraits,
   useComposerTraits,
 } from "../../composerTraits.ts";
-import { discardDraft, setDraftModelSelection, type ThreadDraft } from "../../drafts.ts";
+import {
+  clearComposerRuntimeMode,
+  discardDraft,
+  setComposerRuntimeMode,
+  setDraftModelSelection,
+  setDraftRuntimeMode,
+  type ThreadDraft,
+  useComposerRuntimeMode,
+} from "../../drafts.ts";
 import { newId } from "../../ids.ts";
 import { ChatComposer } from "./ChatComposer.tsx";
 import {
@@ -37,14 +47,21 @@ import { MessagesTimeline } from "./MessagesTimeline.tsx";
 import { derivePendingUserInputs } from "./pendingUserInput.logic.ts";
 import { deriveTimelineRows } from "./timeline.logic.ts";
 
-const sendCommands = async (target: SendTarget, text: string, threadCommandId: CommandId) => {
+const sendCommands = async (
+  target: SendTarget,
+  runtimeMode: RuntimeMode,
+  text: string,
+  threadCommandId: CommandId,
+) => {
   const commands = buildSendCommands({
     target,
+    runtimeMode,
     text,
     ids: {
       threadCommandId,
       messageCommandId: CommandId.make(`command:${newId()}`),
       messageId: MessageId.make(`message:${newId()}`),
+      runtimeModeCommandId: CommandId.make(`command:${newId()}`),
     },
   });
   for (const command of commands) {
@@ -148,6 +165,12 @@ export function ChatView(
           model: selection.model,
           ...(dispatchOptions === undefined ? {} : { options: dispatchOptions }),
         };
+  // The mode chosen in the composer, else the thread's own (T3 Code's
+  // composer draft over the thread's `runtimeMode`).
+  const composerRuntimeMode = useComposerRuntimeMode(threadId);
+  const threadRuntimeMode = projection?.thread.runtimeMode ?? DEFAULT_RUNTIME_MODE;
+  const runtimeMode =
+    props.kind === "draft" ? props.draft.runtimeMode : (composerRuntimeMode ?? threadRuntimeMode);
 
   const onSend = async (text: string) => {
     if (dispatchSelection === undefined) return;
@@ -157,12 +180,15 @@ export function ChatView(
           kind: "existing",
           threadId: props.threadId,
           hasMessages: (projection?.messages.length ?? 0) > 0,
+          runtimeMode: threadRuntimeMode,
           modelSelection: dispatchSelection,
         },
+        runtimeMode,
         text,
         CommandId.make(`command:${newId()}`),
       );
       clearComposerTraits(composerKey);
+      clearComposerRuntimeMode(props.threadId);
       return;
     }
     const { draft } = props;
@@ -173,6 +199,7 @@ export function ChatView(
         projectId: draft.projectId,
         modelSelection: dispatchSelection,
       },
+      runtimeMode,
       text,
       draft.threadCommandId,
     );
@@ -218,6 +245,12 @@ export function ChatView(
         onTraitsChange={(options) => {
           if (selection !== undefined) setComposerTraits(composerKey, selection, options);
         }}
+        runtimeMode={runtimeMode}
+        onSelectRuntimeMode={(next) =>
+          props.kind === "draft"
+            ? setDraftRuntimeMode(props.draft.draftId, next)
+            : setComposerRuntimeMode(props.threadId, next)
+        }
         action={action}
         onSend={onSend}
         onInterrupt={(runId) => interruptRun(threadId, runId).then(() => undefined)}

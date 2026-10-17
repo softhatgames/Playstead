@@ -102,11 +102,13 @@ const reject = (command: OrchestrationV2Command, reason: string) =>
  * (`apps/server/src/orchestration-v2/Orchestrator.ts`); Playstead keeps the
  * same events in the same order as a pure function.
  *
- * - `thread.create` makes a thread in Full access and the default
+ * - `thread.create` makes a thread in its runtime mode and the default
  *   interaction mode, for an existing project and an instance that can run it.
  * - `thread.model-selection.set` changes the model the thread's next run
  *   copies. Naming another instance is T3 Code's provider switch, which
  *   Playstead refuses.
+ * - `thread.runtime-mode.set` changes the mode the thread's next turn
+ *   starts in; as in T3 Code, an active run does not prevent it.
  * - `message.dispatch` starts a run at once. T3 Code queues a message sent
  *   while a run is active; Playstead has no queue and refuses it. A model
  *   selection the message carries (the composer's traits) becomes the
@@ -147,7 +149,7 @@ export function decideThreadCommand(input: {
         title: command.title,
         providerInstanceId: command.modelSelection.instanceId,
         modelSelection: command.modelSelection,
-        runtimeMode: "full-access",
+        runtimeMode: command.runtimeMode,
         interactionMode: "default",
         activeProviderThreadId: null,
         createdAt: now,
@@ -177,6 +179,24 @@ export function decideThreadCommand(input: {
             threadId: thread.id,
             occurredAt: now,
             payload: { ...thread, modelSelection: command.modelSelection, updatedAt: now },
+          },
+        ],
+        effects: [],
+      });
+    }
+    case "thread.runtime-mode.set": {
+      const projection = state.projection;
+      if (projection === undefined) {
+        return reject(command, `Thread ${command.threadId} does not exist.`);
+      }
+      const { thread } = projection;
+      return Result.succeed({
+        events: [
+          {
+            type: "thread.runtime-mode-updated",
+            threadId: thread.id,
+            occurredAt: now,
+            payload: { ...thread, runtimeMode: command.runtimeMode, updatedAt: now },
           },
         ],
         effects: [],
