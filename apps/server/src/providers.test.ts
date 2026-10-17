@@ -6,6 +6,7 @@ import {
   makeLocalConnection,
 } from "@playstead/client-runtime/connection";
 import { writeFakeCodex } from "@playstead/provider-testing/fakeProviders";
+import { makeTempDirectoryScoped } from "@playstead/shared/tempDirectory";
 import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -57,16 +58,6 @@ const connectSignedIn = (server: TestServer) =>
     return connection;
   });
 
-const makeTempDirectory = (prefix: string) =>
-  Effect.acquireRelease(
-    Effect.flatMap(FileSystem.FileSystem, (fs) => fs.makeTempDirectory({ prefix })),
-    (directory) =>
-      Effect.flatMap(FileSystem.FileSystem, (fs) => fs.remove(directory, { recursive: true })).pipe(
-        Effect.retry({ times: 10 }),
-        Effect.ignore,
-      ),
-  );
-
 describe("provider RPC methods", () => {
   it.layer(
     Layer.mergeAll(NodeServices.layer, FetchHttpClient.layer, NodeSocket.layerWebSocketConstructor),
@@ -75,8 +66,8 @@ describe("provider RPC methods", () => {
     it.effect("reports both providers, refreshes them and saves Codex's Binary path", () =>
       Effect.gen(function* () {
         const path = yield* Path.Path;
-        const emptyBin = yield* makeTempDirectory("playstead-bin-");
-        const ownBin = yield* makeTempDirectory("playstead-own-");
+        const emptyBin = yield* makeTempDirectoryScoped("playstead-bin-");
+        const ownBin = yield* makeTempDirectoryScoped("playstead-own-");
         const ownCodex = yield* writeFakeCodex({ directory: ownBin, version: "0.160.0" });
         const server = yield* startTestServer({
           providerEnvironment: {

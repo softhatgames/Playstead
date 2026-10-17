@@ -30,6 +30,10 @@
     "./shell": {
       "types": "./src/shell.ts",
       "import": "./src/shell.ts"
+    },
+    "./tempDirectory": {
+      "types": "./src/tempDirectory.ts",
+      "import": "./src/tempDirectory.ts"
     }
   },
   "scripts": {
