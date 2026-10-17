@@ -8,7 +8,18 @@
  */
 
 /** The commands with shortcuts so far. */
-export type KeybindingCommand = "sidebar.toggle" | "thread.settle" | "thread.pin" | "thread.undo";
+export type KeybindingCommand =
+  | "sidebar.toggle"
+  | "thread.settle"
+  | "thread.pin"
+  | "thread.undo"
+  | "commandPalette.toggle"
+  | "chat.new"
+  | "chat.newLocal"
+  | "thread.previous"
+  | "thread.next"
+  | "thread.copyReference"
+  | `thread.jump.${1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9}`;
 
 export interface KeybindingRule {
   readonly key: string;
@@ -265,6 +276,18 @@ function compileResolvedKeybindingsConfig(
 
 /** T3 Code's default bindings, for the commands Playstead has. */
 const DEFAULT_KEYBINDINGS: ReadonlyArray<KeybindingRule> = [
+  { key: "mod+k", command: "commandPalette.toggle", when: "!terminalFocus" },
+  { key: "mod+n", command: "chat.new", when: "!terminalFocus" },
+  { key: "mod+shift+o", command: "chat.new", when: "!terminalFocus" },
+  { key: "mod+shift+n", command: "chat.newLocal", when: "!terminalFocus" },
+  { key: "mod+shift+[", command: "thread.previous" },
+  { key: "mod+shift+]", command: "thread.next" },
+  { key: "mod+shift+c", command: "thread.copyReference", when: "!terminalFocus" },
+  ...([1, 2, 3, 4, 5, 6, 7, 8, 9] as const).map((number): KeybindingRule => ({
+    key: `mod+${number}`,
+    command: `thread.jump.${number}`,
+    when: "isDesktop && !modelPickerOpen",
+  })),
   { key: "mod+b", command: "sidebar.toggle" },
   { key: "mod+shift+s", command: "thread.settle", when: "!terminalFocus" },
   { key: "mod+shift+p", command: "thread.pin", when: "!terminalFocus" },

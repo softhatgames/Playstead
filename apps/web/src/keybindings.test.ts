@@ -67,3 +67,25 @@ describe("keyboard shortcuts", () => {
     );
   });
 });
+
+it("opens the palette and project-aware new thread, traverses threads and copies their reference", () => {
+  expect(resolve(key("k", { metaKey: true }), MAC)).toBe("commandPalette.toggle");
+  expect(resolve(key("n", { ctrlKey: true }), WINDOWS)).toBe("chat.new");
+  expect(resolve(key("N", { metaKey: true, shiftKey: true }), MAC)).toBe("chat.newLocal");
+  expect(resolve(key("{", { metaKey: true, shiftKey: true }, "BracketLeft"), MAC)).toBe(
+    "thread.previous",
+  );
+  expect(resolve(key("}", { ctrlKey: true, shiftKey: true }, "BracketRight"), WINDOWS)).toBe(
+    "thread.next",
+  );
+  expect(resolve(key("C", { metaKey: true, shiftKey: true }), MAC)).toBe("thread.copyReference");
+});
+
+it("reserves all nine numbered thread jumps for desktop, leaving browser tab shortcuts alone", () => {
+  for (let index = 1; index <= 9; index += 1) {
+    const event = key(String(index), { ctrlKey: true }, `Digit${index}`);
+    expect(resolve(event, WINDOWS, { isDesktop: true })).toBe(`thread.jump.${index}`);
+    expect(resolve(event, WINDOWS, { isDesktop: false })).toBeNull();
+    expect(resolve(event, WINDOWS, { isDesktop: true, modelPickerOpen: true })).toBeNull();
+  }
+});

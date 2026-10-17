@@ -1,5 +1,6 @@
 import { type ReactNode, useEffect } from "react";
 
+import { isCommandPaletteOpen } from "../commandPaletteBus.ts";
 import { APP_DISPLAY_NAME } from "../branding.ts";
 import { useClientSettings } from "../clientSettings.ts";
 import { undoLatestThreadAction } from "../hooks/showThreadUndoNotice.ts";
@@ -21,7 +22,7 @@ import { SidebarThreadUndoNotice } from "./sidebar/SidebarThreadUndoNotice.tsx";
 function useGlobalShortcuts() {
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.defaultPrevented) return;
+      if (event.defaultPrevented || isCommandPaletteOpen()) return;
       const command = resolveShortcutCommand(event, keybindings, {
         context: { editableFocus: isEditableTarget(event.target) },
       });
