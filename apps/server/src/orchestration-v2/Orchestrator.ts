@@ -12,6 +12,7 @@ import {
   type OrchestrationV2Command,
   type OrchestrationV2DispatchCommandResult,
   type OrchestrationV2ThreadProjection,
+  TERMINAL_RUN_STATUSES,
 } from "@playstead/contracts/orchestrationV2";
 import * as KeyedLock from "@playstead/shared/keyedLock";
 import * as Context from "effect/Context";
@@ -33,13 +34,6 @@ import * as EventStore from "./EventStore.ts";
 import { decideNextQueuedRun } from "./QueueCommands.ts";
 import type { ThreadCommandIds } from "./ThreadCommandDecision.ts";
 import { decideThreadCommand } from "./ThreadCommands.ts";
-
-const TERMINAL_RUN_STATUSES: ReadonlySet<string> = new Set([
-  "completed",
-  "interrupted",
-  "failed",
-  "cancelled",
-]);
 
 /** Reading or writing failed; the command may not have been decided. */
 export class OrchestratorDispatchError extends Schema.TaggedError<OrchestratorDispatchError>()(

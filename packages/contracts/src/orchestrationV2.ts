@@ -133,6 +133,14 @@ export const ACTIVE_RUN_STATUSES: ReadonlySet<OrchestrationV2RunStatus> = new Se
   "waiting",
 ]);
 
+/** The statuses in which a run has ended; each lets the next queued run start (T3 Code's `handleTerminalRun`). */
+export const TERMINAL_RUN_STATUSES: ReadonlySet<OrchestrationV2RunStatus> = new Set([
+  "completed",
+  "interrupted",
+  "failed",
+  "cancelled",
+]);
+
 export const OrchestrationV2Run = Schema.Struct({
   id: RunId,
   threadId: ThreadId,
