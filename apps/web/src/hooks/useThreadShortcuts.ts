@@ -9,7 +9,7 @@ import {
   pinThread,
   settleThread,
   type ThreadLifecycleTarget,
-  unpinThread,
+  confirmAndUnpinThread,
   unsettleThread,
 } from "./useThreadActions.ts";
 
@@ -64,7 +64,7 @@ export function useThreadShortcuts(thread: ThreadLifecycleTarget | null): void {
         return;
       }
       const pinned = current.pinnedAt !== null;
-      (pinned ? unpinThread(current) : pinThread(current.id)).catch((error: unknown) =>
+      (pinned ? confirmAndUnpinThread(current) : pinThread(current.id)).catch((error: unknown) =>
         failureToast(pinned ? "Failed to unpin thread" : "Failed to pin thread", error),
       );
     };

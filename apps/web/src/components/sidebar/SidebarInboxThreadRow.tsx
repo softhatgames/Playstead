@@ -15,7 +15,11 @@ import {
 } from "react";
 
 import { useThreadActionMenu } from "../../hooks/useThreadActionMenu.ts";
-import { unpinThread, unsettleThread, unsnoozeThread } from "../../hooks/useThreadActions.ts";
+import {
+  confirmAndUnpinThread,
+  unsettleThread,
+  unsnoozeThread,
+} from "../../hooks/useThreadActions.ts";
 import { readLocalApi } from "../../localApi.ts";
 import { useThreadSelection } from "../../threadSelectionStore.ts";
 import { requestCustomSnooze } from "../CustomSnoozeDialog.tsx";
@@ -301,7 +305,7 @@ export function InboxThreadRow(props: {
           aria-label="Unpin thread"
           title="Unpin thread"
           onClick={() =>
-            unpinThread(thread).catch((error: unknown) =>
+            confirmAndUnpinThread(thread).catch((error: unknown) =>
               failureToast("Failed to unpin thread", error),
             )
           }

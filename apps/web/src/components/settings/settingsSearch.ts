@@ -63,6 +63,9 @@ const SETTINGS_SEARCH_ITEMS: ReadonlyArray<SettingsSearchItem> = [
     "sending a message while the agent works",
     "queue it or steer the run",
   ]),
+  general("unpin-confirmation", "Unpin confirmation", [
+    "ask before taking a thread out of the pinned section",
+  ]),
   general("archive-confirmation", "Archive confirmation", [
     "ask before putting a thread away",
     "click twice in the sidebar",

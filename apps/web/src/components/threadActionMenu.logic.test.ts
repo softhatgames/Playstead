@@ -6,6 +6,7 @@ import {
   buildThreadActionMenuItems,
   fallbackThreadAfterDelete,
   legacyThreadMenuItems,
+  requestThreadUnpinConfirmation,
   threadArchiveConfirmation,
   threadDeleteConfirmation,
   threadRuntimeCanArchive,
@@ -227,6 +228,38 @@ describe("confirmations", () => {
       threadDeleteConfirmation("Make a maze"),
       'Delete thread "Make a maze"?\nThis permanently clears conversation history for this thread.',
     );
+  });
+});
+
+describe("unpin confirmation", () => {
+  it("unpins without asking while Unpin confirmation is off", async () => {
+    const asked: Array<string> = [];
+    const confirmed = await requestThreadUnpinConfirmation({
+      enabled: false,
+      title: "Pinned thread",
+      confirm: async (message) => {
+        asked.push(message);
+        return false;
+      },
+    });
+    assert.isTrue(confirmed);
+    assert.deepStrictEqual(asked, []);
+  });
+
+  it("asks with the thread's title, in T3 Code's words, and keeps the answer", async () => {
+    const asked: Array<string> = [];
+    const confirmed = await requestThreadUnpinConfirmation({
+      enabled: true,
+      title: "Release prep",
+      confirm: async (message) => {
+        asked.push(message);
+        return false;
+      },
+    });
+    assert.isFalse(confirmed);
+    assert.deepStrictEqual(asked, [
+      'Unpin thread "Release prep"?\nThis will move the thread out of your pinned section.',
+    ]);
   });
 });
 

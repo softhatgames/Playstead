@@ -162,6 +162,24 @@ export const archivedThreadMenuItems: ReadonlyArray<ContextMenuItem<ArchivedThre
 /** Asked before archiving when **Confirm before archiving** is on (T3 Code's words). */
 export const threadArchiveConfirmation = (title: string) => `Archive thread "${title}"?`;
 
+/**
+ * Whether to unpin, asking first while **Unpin confirmation** is on (T3
+ * Code's `requestThreadUnpinConfirmation` and its words).
+ */
+export async function requestThreadUnpinConfirmation(input: {
+  readonly enabled: boolean;
+  readonly title: string;
+  readonly confirm: (message: string) => Promise<boolean>;
+}): Promise<boolean> {
+  if (!input.enabled) return true;
+  return input.confirm(
+    [
+      `Unpin thread "${input.title}"?`,
+      "This will move the thread out of your pinned section.",
+    ].join("\n"),
+  );
+}
+
 /** Asked before deleting when **Confirm before deleting** is on (T3 Code's words). */
 export const threadDeleteConfirmation = (title: string) =>
   [

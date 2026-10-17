@@ -17,7 +17,7 @@ import { failureToast } from "../components/ui/toast.tsx";
 import {
   markThreadUnread,
   regenerateThreadTitle,
-  unpinThread,
+  confirmAndUnpinThread,
   useThreadActions,
 } from "./useThreadActions.ts";
 
@@ -94,7 +94,7 @@ export function useBulkThreadMenu(input: {
           case "unpin":
             clearThreadSelection();
             for (const thread of pinned) {
-              unpinThread(thread).catch((error: unknown) =>
+              confirmAndUnpinThread(thread).catch((error: unknown) =>
                 failureToast("Failed to unpin thread", error),
               );
             }

@@ -31,7 +31,7 @@ import {
   settleThread,
   snoozeThread,
   type ThreadLifecycleTarget,
-  unpinThread,
+  confirmAndUnpinThread,
   unsettleThread,
   unsnoozeThread,
   useThreadActions,
@@ -45,7 +45,8 @@ import {
  * rows and the thread view's header open the full menu; the project tree's
  * rows open its own (`variant: "tree"`).
  *
- * - **Pin thread** / **Unpin thread**, with Undo after unpinning.
+ * - **Pin thread** / **Unpin thread** (asking first while **Unpin
+ *   confirmation** is on), with Undo after unpinning.
  * - **Settle thread** / **Un-settle thread**; settling the thread in view
  *   moves the view on, through the inbox sidebar when it is shown, and
  *   shows Undo. A refusal, such as a thread still working, is a notice.
@@ -145,7 +146,7 @@ export function useThreadActionMenu(
             );
             return;
           case "unpin":
-            await unpinThread(thread).catch((error: unknown) =>
+            await confirmAndUnpinThread(thread).catch((error: unknown) =>
               failureToast("Failed to unpin thread", error),
             );
             return;
