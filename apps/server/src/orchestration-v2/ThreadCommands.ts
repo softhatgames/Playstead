@@ -1,3 +1,4 @@
+import { isAutoSettlementCandidate } from "./ThreadSettlementPolicy.ts";
 import {
   type MessageId,
   type NodeId,
@@ -371,11 +372,7 @@ function dispatchThreadMutation(
   if (
     command.type === "thread.auto-settle" &&
     (thread.updatedAt !== command.snapshotAt ||
-      thread.archivedAt !== null ||
-      thread.settledOverride !== null ||
-      thread.pinnedAt !== null ||
-      thread.autoSettleDisabledAt != null ||
-      settleBlocker(projection) !== null)
+      !isAutoSettlementCandidate(projection, DateTime.toEpochMillis(DateTime.makeUnsafe(now))))
   )
     return reject(command, `Thread ${thread.id} changed before automatic settlement.`);
   if (command.type === "thread.archive" && thread.archivedAt !== null) {

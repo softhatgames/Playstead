@@ -23,9 +23,7 @@ export function AutoSettleSettings() {
   return (
     <fieldset disabled={!config || saving} className="flex items-center gap-4 px-4 py-3">
       <div className="min-w-0 flex-1">
-        <label htmlFor="auto-settle-days" className="text-sm font-medium">
-          Auto-settle after N days
-        </label>
+        <div className="text-sm font-medium">Auto-settle inactive threads</div>
         <p className="text-xs text-neutral-500">
           Settle inactive threads automatically. Pinned, snoozed and working threads stay active.
         </p>
@@ -35,25 +33,45 @@ export function AutoSettleSettings() {
           Reset
         </button>
       )}
-      <select
-        id="auto-settle-days"
-        aria-label="Auto-settle after N days"
-        value={days ?? "never"}
-        className="rounded-md border border-neutral-300 bg-transparent px-2 py-1 text-sm dark:border-neutral-700"
-        onChange={(event) =>
-          void save(event.target.value === "never" ? null : Number(event.target.value))
-        }
+      {days === null ? (
+        <span className="text-sm text-neutral-500">Never</span>
+      ) : (
+        <label className="flex items-center gap-2 text-sm">
+          <input
+            key={days}
+            id="auto-settle-days"
+            type="number"
+            min={1}
+            max={90}
+            step={1}
+            aria-label="Days of inactivity before auto-settle"
+            defaultValue={days}
+            className="w-16 rounded-md border border-neutral-300 bg-transparent px-2 py-1 dark:border-neutral-700"
+            onBlur={(event) => {
+              const next = event.currentTarget.valueAsNumber;
+              if (Number.isInteger(next) && next >= 1 && next <= 90 && next !== days)
+                void save(next);
+              else event.currentTarget.value = String(days);
+            }}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") event.currentTarget.blur();
+            }}
+          />{" "}
+          days
+        </label>
+      )}
+      <button
+        type="button"
+        role="switch"
+        aria-label="Auto-settle inactive threads"
+        aria-checked={days !== null}
+        onClick={() => void save(days === null ? 3 : null)}
+        className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full ${days !== null ? "bg-sky-600" : "bg-neutral-300 dark:bg-neutral-700"}`}
       >
-        <option value="never">Never</option>
-        {![1, 3, 7, 14, 30, 90, null].includes(days) && (
-          <option value={days ?? "never"}>{days} days</option>
-        )}
-        {[1, 3, 7, 14, 30, 90].map((value) => (
-          <option key={value} value={value}>
-            {value} {value === 1 ? "day" : "days"}
-          </option>
-        ))}
-      </select>
+        <span
+          className={`inline-block size-4 rounded-full bg-white shadow ${days !== null ? "translate-x-4.5" : "translate-x-0.5"}`}
+        />
+      </button>
     </fieldset>
   );
 }

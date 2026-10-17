@@ -1,9 +1,6 @@
 import { CommandId } from "@playstead/contracts/baseSchemas";
-import {
-  ACTIVE_RUN_STATUSES,
-  QUEUED_RUN_STATUSES,
-  type OrchestrationV2ThreadProjection,
-} from "@playstead/contracts/orchestrationV2";
+import { ACTIVE_RUN_STATUSES } from "@playstead/contracts/orchestrationV2";
+import { settlementAt } from "./ThreadSettlementPolicy.ts";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
@@ -17,52 +14,6 @@ import * as ServerSettings from "../serverSettings.ts";
 import * as EventStore from "./EventStore.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
-
-/** Inactivity rules studied in T3 Code's ThreadSettlementService.ts at 2577baf.
- * Creation, visits and metadata edits are not conversation activity. */
-function settlementAt(
-  projection: OrchestrationV2ThreadProjection,
-  now: number,
-  days: number | null,
-): string | null {
-  const { thread, runs, messages, runtimeRequests } = projection;
-  if (
-    days === null ||
-    thread.archivedAt !== null ||
-    thread.deletedAt !== null ||
-    thread.settledOverride !== null ||
-    thread.pinnedAt !== null ||
-    thread.autoSettleDisabledAt != null ||
-    runtimeRequests.some((request) => request.status === "pending") ||
-    runs.some((run) => ACTIVE_RUN_STATUSES.has(run.status) || QUEUED_RUN_STATUSES.has(run.status))
-  )
-    return null;
-  const userTimes = messages
-    .filter((message) => message.role === "user")
-    .map((message) => Date.parse(message.createdAt));
-  const runTimes = runs
-    .flatMap((run) => [run.requestedAt, run.startedAt, run.completedAt])
-    .filter((time) => time !== null)
-    .map(Date.parse);
-  const latestMessage = Math.max(...userTimes);
-  const latestRun = runs.reduce<(typeof runs)[number] | undefined>(
-    (latest, run) => (latest === undefined || run.ordinal > latest.ordinal ? run : latest),
-    undefined,
-  );
-  if (
-    latestRun?.status !== "failed" &&
-    Math.abs(now - latestMessage) <= 120_000 &&
-    (latestRun === undefined ||
-      [latestRun.requestedAt, latestRun.startedAt, latestRun.completedAt].every(
-        (time) => time === null || Date.parse(time) < latestMessage,
-      ))
-  )
-    return null;
-  const activity = Math.max(...userTimes, ...runTimes);
-  return Number.isFinite(activity) && activity < now - days * 86_400_000
-    ? DateTime.formatIso(DateTime.makeUnsafe(activity))
-    : null;
-}
 
 export class ThreadSettlementService extends Context.Service<
   ThreadSettlementService,
@@ -82,11 +33,12 @@ export const layer = Layer.effect(
     const crypto = yield* Crypto.Crypto;
     const lock = yield* Semaphore.make(1);
     const sweep = Effect.gen(function* () {
-      const saved = (yield* settings.getSettings).sidebarAutoSettleAfterDays;
-      const days = saved === undefined ? 3 : saved;
+      if ((yield* settings.getSettings).sidebarAutoSettleAfterDays === null) return;
       for (const shell of yield* projections.listThreadShells("active")) {
         const current = yield* projections.getThread(shell.id);
         if (Option.isNone(current)) continue;
+        const saved = (yield* settings.getSettings).sidebarAutoSettleAfterDays;
+        const days = saved === undefined ? 3 : saved;
         const at = settlementAt(current.value, DateTime.toEpochMillis(yield* DateTime.now), days);
         if (at === null) continue;
         yield* orchestrator
