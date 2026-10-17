@@ -141,15 +141,18 @@ function useProjectRemovalNavigation() {
   return useCallback(
     (project: ProjectActionTarget) => {
       const location = router.state.location.href;
-      const belongs = router.state.matches.some(
-        ({ params }) =>
-          ("projectKey" in params && params.projectKey === project.id) ||
-          ("threadId" in params &&
-            readPrimaryConnectionState()?.shell?.threads.some(
-              (thread) => thread.id === params.threadId && thread.projectId === project.id,
-            )) ||
-          ("draftId" in params && readDraft(params.draftId)?.projectId === project.id),
-      );
+      const belongs =
+        (router.state.location.pathname === "/settings/projects" &&
+          router.state.location.search.project === project.id) ||
+        router.state.matches.some(
+          ({ params }) =>
+            ("projectKey" in params && params.projectKey === project.id) ||
+            ("threadId" in params &&
+              readPrimaryConnectionState()?.shell?.threads.some(
+                (thread) => thread.id === params.threadId && thread.projectId === project.id,
+              )) ||
+            ("draftId" in params && readDraft(params.draftId)?.projectId === project.id),
+        );
       return () => {
         if (belongs && router.state.location.href === location)
           void navigate({ to: "/", replace: true });
