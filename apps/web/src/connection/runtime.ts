@@ -7,6 +7,7 @@ import {
   type WsRpcClient,
 } from "@playstead/client-runtime/connection";
 import { PRIMARY_LOCAL_ENVIRONMENT_ID } from "@playstead/contracts/ipc";
+import { DEFAULT_SERVER_SETTINGS, type ServerSettings } from "@playstead/contracts/settings";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as ManagedRuntime from "effect/ManagedRuntime";
@@ -118,6 +119,12 @@ export function runPrimaryStream<A, E>(
 export const readPrimaryShellThreads = () => current?.shell?.threads ?? [];
 /** The page's connection state now, for an action that needs the latest shell. */
 export const readPrimaryConnectionState = (): ConnectionState | undefined => current;
+/**
+ * The server's settings as the page last heard them, or the defaults before
+ * the config arrives: what a new thread's draft starts from.
+ */
+export const readPrimaryServerSettings = (): ServerSettings =>
+  current?.config?.settings ?? DEFAULT_SERVER_SETTINGS;
 
 /**
  * Resolves true once the page's connection state matches, or false after

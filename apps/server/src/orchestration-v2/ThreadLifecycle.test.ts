@@ -78,7 +78,7 @@ const refusal = <A, E>(effect: Effect.Effect<A, E>) =>
 
 /** Claude's whole final reply in the file-create recording, held back below. */
 const FINAL_REPLY =
-  'Created `hello-claude.txt` in the current folder with the line "Hello from Claude in Playstead!" using the Write tool.';
+  'Created `hello-claude.txt` in the working directory with the line "Hello from Claude in Playstead!"';
 
 const isFinalReply = (frame: unknown) =>
   JSON.stringify(frame).includes(`"type":"text","text":${JSON.stringify(FINAL_REPLY)}`);
@@ -246,6 +246,7 @@ describe("Archive and delete a thread", () => {
           {
             ...base,
             type: "message.dispatch",
+            dispatchMode: { type: "start_immediately" },
             commandId: CommandId.make("command:after:message"),
             messageId: MessageId.make("message:after"),
             text: "Are you there?",

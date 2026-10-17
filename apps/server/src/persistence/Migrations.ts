@@ -5,7 +5,8 @@ import Migration0001 from "./Migrations/001_Initial.ts";
 import Migration0002 from "./Migrations/002_Projects.ts";
 import Migration0003 from "./Migrations/003_Orchestration.ts";
 import Migration0004 from "./Migrations/004_RuntimeRequests.ts";
-import Migration0005 from "./Migrations/005_ProjectDeletion.ts";
+import Migration0005 from "./Migrations/005_Plans.ts";
+import Migration0006 from "./Migrations/006_ProjectDeletion.ts";
 
 /**
  * Every migration, in order. A new one is a new file `NNN_Name.ts` and an entry
@@ -16,7 +17,8 @@ const migrationEntries = [
   [2, "Projects", Migration0002],
   [3, "Orchestration", Migration0003],
   [4, "RuntimeRequests", Migration0004],
-  [5, "ProjectDeletion", Migration0005],
+  [5, "Plans", Migration0005],
+  [6, "ProjectDeletion", Migration0006],
 ] as const;
 
 const run = Migrator.make({});

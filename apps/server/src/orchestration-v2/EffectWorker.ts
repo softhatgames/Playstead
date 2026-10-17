@@ -1,3 +1,4 @@
+import { CommandId, type MessageId } from "@playstead/contracts/baseSchemas";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -6,6 +7,7 @@ import * as Option from "effect/Option";
 
 import * as EffectOutbox from "./EffectOutbox.ts";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
+import * as Orchestrator from "./Orchestrator.ts";
 import * as ProviderTurnStartService from "./ProviderTurnStartService.ts";
 import * as RunExecutionService from "./RunExecutionService.ts";
 import * as ThreadTitleRegenerationService from "./ThreadTitleRegenerationService.ts";
@@ -18,9 +20,10 @@ const DAEMON_CONCURRENCY = 4;
 /**
  * Runs the outbox's effects (T3 Code's
  * `apps/server/src/orchestration-v2/EffectWorker.ts` at 2577baf): starting a
- * run's provider turn, interrupting it, giving it the person's answers,
- * stopping a thread's provider session and generating a thread's title;
- * there is no checkpoint step. An effect a command cancels while it runs is
+ * run's provider turn, interrupting it, steering it, giving it the person's
+ * answers, stopping a thread's provider session and generating a thread's
+ * title; there is no checkpoint step. A steer that finds its turn completed
+ * starts a run with its message instead. An effect a command cancels while it runs is
  * stopped, as T3 Code's `runOnce` races `execute` against
  * `awaitCancellation`. The server runs `runDaemon`, which runs up to four
  * effects at once, as T3 Code's daemon does, so a title being generated
@@ -45,6 +48,30 @@ const make = Effect.gen(function* () {
   const runs = yield* RunExecutionService.RunExecutionServiceV2;
   const sessions = yield* ProviderSessionManager.ProviderSessionManagerV2;
   const titles = yield* ThreadTitleRegenerationService.ThreadTitleRegenerationService;
+  const orchestrator = yield* Orchestrator.OrchestratorV2;
+
+  /**
+   * A steer that found its turn completed is sent again as a message that
+   * starts a run (T3 Code's steer follow-up in `EffectWorker.ts`), with the
+   * same message and a command id of its own, so a second try cannot start a
+   * second run.
+   */
+  const steerFollowUp = (effect: EffectOutbox.ClaimedEffect, messageId: MessageId) =>
+    Effect.gen(function* () {
+      const projection = yield* orchestrator.getThreadProjection(effect.threadId);
+      const message = Option.getOrUndefined(projection)?.messages.find(
+        (candidate) => candidate.id === messageId,
+      );
+      if (message === undefined) return;
+      yield* orchestrator.dispatch({
+        type: "message.dispatch",
+        commandId: CommandId.make(`command:steer-follow-up:${effect.id}`),
+        threadId: effect.threadId,
+        messageId: message.id,
+        text: message.text,
+        dispatchMode: { type: "start_immediately" },
+      });
+    });
 
   const execute = (
     effect: EffectOutbox.ClaimedEffect,
@@ -52,6 +79,8 @@ const make = Effect.gen(function* () {
     void,
     | ProviderTurnStartService.ProviderTurnStartError
     | Effect.Error<ReturnType<RunExecutionService.RunExecutionServiceV2["Service"]["interruptRun"]>>
+    | Effect.Error<ReturnType<RunExecutionService.RunExecutionServiceV2["Service"]["steerRun"]>>
+    | Effect.Error<ReturnType<Orchestrator.OrchestratorV2["Service"]["dispatch"]>>
     | Effect.Error<
         ReturnType<RunExecutionService.RunExecutionServiceV2["Service"]["respondToRuntimeRequest"]>
       >
@@ -70,12 +99,37 @@ const make = Effect.gen(function* () {
           runId: effect.request.runId,
           providerTurnId: effect.request.providerTurnId,
         });
+      case "provider-turn.steer": {
+        const request = effect.request;
+        return runs
+          .steerRun({
+            threadId: effect.threadId,
+            runId: request.runId,
+            providerSessionId: request.providerSessionId,
+            providerTurnId: request.providerTurnId,
+            messageId: request.messageId,
+          })
+          .pipe(
+            Effect.catchTag(
+              "ProviderTurnSteerError",
+              (
+                error,
+              ): Effect.Effect<
+                void,
+                | RunExecutionService.ProviderTurnSteerError
+                | Effect.Error<ReturnType<typeof steerFollowUp>>
+              > =>
+                error.turnCompleted ? steerFollowUp(effect, request.messageId) : Effect.fail(error),
+            ),
+          );
+      }
       case "runtime-request.respond":
         return runs.respondToRuntimeRequest({
           runId: effect.request.runId,
           providerSessionId: effect.request.providerSessionId,
           requestId: effect.request.requestId,
-          answers: effect.request.answers,
+          ...(effect.request.decision === undefined ? {} : { decision: effect.request.decision }),
+          ...(effect.request.answers === undefined ? {} : { answers: effect.request.answers }),
         });
       case "provider-session.detach":
         return sessions.detach({

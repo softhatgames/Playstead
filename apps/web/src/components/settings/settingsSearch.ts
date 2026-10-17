@@ -28,6 +28,14 @@ export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
 /** In the pages' order, which breaks ties. */
 const SETTINGS_SEARCH_ITEMS: ReadonlyArray<SettingsSearchItem> = [
   {
+    id: "default-permissions",
+    title: "Permissions",
+    to: "/settings/general",
+    searchTerms: [
+      "new thread default runtime mode supervised approvals auto accept edits full access",
+    ],
+  },
+  {
     id: "working-shelf",
     title: "Working section (beta)",
     to: "/settings/general",
@@ -47,6 +55,12 @@ const SETTINGS_SEARCH_ITEMS: ReadonlyArray<SettingsSearchItem> = [
     searchTerms: ["thread timeout activity sidebar"],
   },
   {
+    id: "follow-up-behavior",
+    title: "Follow-up behavior",
+    to: "/settings/general",
+    searchTerms: ["queue steer running turn send default behavior composer"],
+  },
+  {
     id: "archive-confirmation",
     title: "Archive confirmation",
     to: "/settings/general",
@@ -63,6 +77,12 @@ const SETTINGS_SEARCH_ITEMS: ReadonlyArray<SettingsSearchItem> = [
     title: "Text generation model",
     to: "/settings/general",
     searchTerms: ["generated thread titles default provider"],
+  },
+  {
+    id: "legacy-plan-mode",
+    title: "Plan mode (legacy)",
+    to: "/settings/general",
+    searchTerms: ["build plan composer old"],
   },
   {
     id: "legacy-sidebar",

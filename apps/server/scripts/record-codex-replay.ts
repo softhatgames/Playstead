@@ -20,17 +20,60 @@ import {
 } from "../src/orchestration-v2/Adapters/CodexAdapterV2.testkit.ts";
 import { makeOrchestrationHarness } from "../src/orchestration-v2/testkit/OrchestratorHarness.ts";
 import {
+  CODEX_AUTO_MODE_SCENARIO,
+  runAutoModeScenario,
+} from "../src/orchestration-v2/testkit/fixtures/autoMode.ts";
+import {
   CODEX_FILE_CREATE_SCENARIO,
   runProviderFileCreateScenario,
 } from "../src/orchestration-v2/testkit/fixtures/fileCreate.ts";
 import {
+  CODEX_PROPOSED_PLAN_SCENARIO,
+  PROPOSED_PLAN_SCENARIO_NAME,
+  runProposedPlanScenario,
+} from "../src/orchestration-v2/testkit/fixtures/proposedPlan.ts";
+import {
+  CODEX_QUESTION_SCENARIO,
   QUESTION_ANSWER_SCENARIO_NAME,
   QUESTION_INTERRUPT_SCENARIO_NAME,
+  runQuestionAnswerScenario,
+  runQuestionInterruptScenario,
 } from "../src/orchestration-v2/testkit/fixtures/questionAnswer.ts";
+import {
+  describeSessionApprovalRun,
+  runSessionApprovalScenario,
+  SESSION_APPROVAL_SCENARIOS,
+  type SessionApprovalScenario,
+} from "../src/orchestration-v2/testkit/fixtures/sessionApprovals.ts";
+import {
+  CODEX_SUPERVISED_SCENARIO,
+  runSupervisedScenario,
+  SUPERVISED_ANSWERS,
+  type SupervisedScenarioName,
+} from "../src/orchestration-v2/testkit/fixtures/supervisedApproval.ts";
 import {
   CODEX_TURN_INTERRUPT_SCENARIO,
   runTurnInterruptScenario,
 } from "../src/orchestration-v2/testkit/fixtures/turnInterrupt.ts";
+import {
+  CODEX_TODO_LIST_SCENARIO,
+  runTodoListScenario,
+  TODO_LIST_IDS,
+  TODO_LIST_SCENARIO_NAME,
+} from "../src/orchestration-v2/testkit/fixtures/todoList.ts";
+import {
+  CODEX_TRAITS_CHANGE_SCENARIO,
+  runTraitsChangeScenario,
+} from "../src/orchestration-v2/testkit/fixtures/traitsChange.ts";
+import {
+  CODEX_QUEUED_TURN_SCENARIO,
+  queuedTurnPrompt,
+  runQueuedTurnScenario,
+} from "../src/orchestration-v2/testkit/fixtures/queuedTurn.ts";
+import {
+  CODEX_MESSAGE_STEERING_SCENARIO,
+  runMessageSteeringScenario,
+} from "../src/orchestration-v2/testkit/fixtures/messageSteering.ts";
 import {
   readMachineIdentity,
   recordingReplacements,
@@ -47,16 +90,27 @@ import {
  * `codex` on PATH, in a temporary empty folder, and writes
  * `src/orchestration-v2/testkit/fixtures/<scenario>.codex.ndjson`.
  *
- *   node apps/server/scripts/record-codex-replay.ts [file_create | turn_interrupt | --help]
+ *   node apps/server/scripts/record-codex-replay.ts [file_create | turn_interrupt | auto_mode | traits_change | proposed_plan | question_answer | question_interrupt | todo_list | approval_accept | approval_decline | approval_cancel | approval_interrupt | auto_accept_edits | session_command | session_edits | queued_turn | message_steering | --help]
  *
  * `turn_interrupt` interrupts a long command once it runs, then sends one
- * more message.
+ * more message. `auto_mode` writes a file in Auto, then sends one more
+ * message after the change to Full access. `traits_change` sends turns that
+ * each carry another reasoning effort and service tier. The `approval_*` scenarios ask
+ * Codex, in Supervised, to write a file, and approve, decline or cancel each
+ * approval through `runtime-request.respond`, or interrupt the turn waiting
+ * on one. `auto_accept_edits`, `session_command` and `session_edits` send
+ * turns in Auto-accept edits and Supervised and answer each turn's
+ * approvals with its decision, **Always allow this session** among them.
+ * `queued_turn` queues messages behind a turn, removes one, and holds the
+ * queue with Stop before resuming it. `message_steering` steers a turn
+ * while its command runs, then sends a steer as a turn ends, which starts
+ * a turn of its own.
  *
- * `question_answer` and `question_interrupt` cannot be recorded, and the
- * recorder says so when asked for them: Codex 0.163.0 refuses
- * `request_user_input` outside plan mode, and Playstead runs no plan mode, so
- * `question_answer.codex.ndjson` and `question_interrupt.codex.ndjson` are
- * hand-made (see their headers).
+ * `proposed_plan` asks for a plan in plan mode, then implements it in the
+ * default mode. `question_answer` and `question_interrupt` run in plan mode,
+ * the only mode in which Codex 0.163.0 uses `request_user_input` (T3 Code's
+ * `plan_questions`), and answer the question or interrupt the turn. `todo_list`
+ * keeps a todo list with Codex's plan tool.
  *
  * The header carries `codex --version` and the capture date. The frames are
  * scrubbed by `src/orchestration-v2/testkit/replayScrub.ts`, shared with the
@@ -110,8 +164,252 @@ const recordTurnInterrupt = (harness: Harness) =>
     return workspace;
   });
 
+/** Turns that each carry other traits. */
+const recordTraitsChange = (harness: Harness) =>
+  Effect.gen(function* () {
+    const { workspace, runs } = yield* runTraitsChangeScenario(
+      harness,
+      CODEX_TRAITS_CHANGE_SCENARIO,
+    );
+    yield* Effect.logInfo("The turns ended.").pipe(
+      Effect.annotateLogs({ runs: runs.map((run) => run.status).join(", ") }),
+    );
+    if (runs.some((run) => run.status !== "completed")) {
+      return yield* Effect.die("A traits turn did not complete.");
+    }
+    return workspace;
+  });
+
+/** Queued turns, one removed, and a queue held by Stop and resumed. */
+const recordQueuedTurn = (harness: Harness) =>
+  Effect.gen(function* () {
+    const { workspace, one, two, five } = yield* runQueuedTurnScenario(
+      harness,
+      CODEX_QUEUED_TURN_SCENARIO,
+    );
+    yield* Effect.logInfo("The turns ended.").pipe(
+      Effect.annotateLogs({ runs: [one, two, five].map((run) => run.status).join(", ") }),
+    );
+    if ([one, two, five].some((run) => run.status !== "completed")) {
+      return yield* Effect.die("A queued turn did not complete.");
+    }
+    return workspace;
+  });
+
+/** A turn steered while its command runs, then a steer too late that starts its own turn. */
+const recordMessageSteering = (harness: Harness) =>
+  Effect.gen(function* () {
+    const { workspace, steered, three, late } = yield* runMessageSteeringScenario(
+      harness,
+      CODEX_MESSAGE_STEERING_SCENARIO,
+    );
+    const runs = [steered, three, late];
+    yield* Effect.logInfo("The turns ended.").pipe(
+      Effect.annotateLogs({ runs: runs.map((run) => run.status).join(", ") }),
+    );
+    if (runs.some((run) => run.status !== "completed")) {
+      return yield* Effect.die("A steering turn did not complete.");
+    }
+    return workspace;
+  });
+
+/** A file written in Auto, then a turn after the change to Full access. */
+const recordAutoMode = (harness: Harness) =>
+  Effect.gen(function* () {
+    const { workspace, write, next } = yield* runAutoModeScenario(
+      harness,
+      CODEX_AUTO_MODE_SCENARIO,
+    );
+    yield* Effect.logInfo("The turns ended.").pipe(
+      Effect.annotateLogs({ write: write.status, next: next.status }),
+    );
+    if (write.status !== "completed" || next.status !== "completed") {
+      return yield* Effect.die(`The runs ended ${write.status} and ${next.status}.`);
+    }
+    return workspace;
+  });
+
+/** A file write in Supervised, and the person's answer to each approval it asks for. */
+const recordSupervised = (harness: Harness, name: SupervisedScenarioName) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const answer = SUPERVISED_ANSWERS[name];
+    const { workspace, approvals, run } = yield* runSupervisedScenario(
+      harness,
+      CODEX_SUPERVISED_SCENARIO,
+      answer,
+    );
+    const written = path.join(workspace, CODEX_SUPERVISED_SCENARIO.fileName);
+    yield* Effect.logInfo("The turn ended.").pipe(
+      Effect.annotateLogs({
+        run: run.status,
+        approvals: JSON.stringify(approvals.map((approval) => approval.kind)),
+        file: (yield* fs.exists(written)) ? "written" : "missing",
+      }),
+    );
+    const expected = answer === "accept" || answer === "decline" ? "completed" : "interrupted";
+    if (run.status !== expected || approvals.length === 0) {
+      return yield* Effect.die(`The run ended ${run.status} after ${approvals.length} approvals.`);
+    }
+    // Only an approved change may happen.
+    if ((yield* fs.exists(written)) !== (answer === "accept")) {
+      return yield* Effect.die(`The file is ${answer === "accept" ? "missing" : "written"}.`);
+    }
+    return workspace;
+  });
+
+/** Turns whose approvals are each answered with the turn's decision. */
+const recordSessionApprovals = (harness: Harness, scenario: SessionApprovalScenario) =>
+  Effect.gen(function* () {
+    const { workspace, turns } = yield* runSessionApprovalScenario(harness, scenario);
+    yield* Effect.logInfo("The turns ended.").pipe(
+      Effect.annotateLogs(yield* describeSessionApprovalRun(workspace, scenario, turns)),
+    );
+    if (turns.some((turn) => turn.run.status !== "completed")) {
+      return yield* Effect.die("A turn did not complete.");
+    }
+    return workspace;
+  });
+
+const sessionApprovalEntry = (scenario: SessionApprovalScenario) => ({
+  record: (harness: Harness) => recordSessionApprovals(harness, scenario),
+  metadata: { model: scenario.model, turns: scenario.turns },
+});
+
+const supervisedEntry = (name: SupervisedScenarioName) => ({
+  record: (harness: Harness) => recordSupervised(harness, name),
+  metadata: {
+    model: CODEX_SUPERVISED_SCENARIO.model,
+    prompt: CODEX_SUPERVISED_SCENARIO.prompt,
+    runtimeMode: "approval-required",
+    answer: SUPERVISED_ANSWERS[name],
+  },
+});
+
+/** In plan mode Codex asks, and the question is answered, or its turn interrupted. */
+const recordQuestion = (harness: Harness, interrupt: boolean) =>
+  Effect.gen(function* () {
+    const { workspace, pending, run } = yield* (
+      interrupt ? runQuestionInterruptScenario : runQuestionAnswerScenario
+    )(harness, CODEX_QUESTION_SCENARIO);
+    yield* Effect.logInfo("The turn ended.").pipe(
+      Effect.annotateLogs({ run: run.status, questions: JSON.stringify(pending.item.questions) }),
+    );
+    if (run.status !== (interrupt ? "interrupted" : "completed")) {
+      return yield* Effect.die(`The run ended ${run.status}.`);
+    }
+    return workspace;
+  });
+
+/** A plan proposed in plan mode, then implemented in the default mode. */
+const recordProposedPlan = (harness: Harness) =>
+  Effect.gen(function* () {
+    const { workspace, planned, plan, fileAfterPlan, implemented } = yield* runProposedPlanScenario(
+      harness,
+      CODEX_PROPOSED_PLAN_SCENARIO,
+    );
+    yield* Effect.logInfo("The turns ended.").pipe(
+      Effect.annotateLogs({
+        planned: planned.status,
+        plan: JSON.stringify(plan.markdown),
+        implemented: implemented.status,
+      }),
+    );
+    if (planned.status !== "completed" || implemented.status !== "completed" || fileAfterPlan) {
+      return yield* Effect.die(
+        `The runs ended ${planned.status} and ${implemented.status}; file written while planning: ${fileAfterPlan}.`,
+      );
+    }
+    return workspace;
+  });
+
+/** A turn that keeps a todo list. */
+const recordTodoList = (harness: Harness) =>
+  Effect.gen(function* () {
+    const { workspace, run } = yield* runTodoListScenario(harness, CODEX_TODO_LIST_SCENARIO);
+    const projection = yield* harness.orchestrator.getThreadProjection(TODO_LIST_IDS.threadId);
+    const lists = projection._tag === "Some" ? projection.value.plans : [];
+    yield* Effect.logInfo("The turn ended.").pipe(
+      Effect.annotateLogs({ run: run.status, plans: JSON.stringify(lists) }),
+    );
+    if (run.status !== "completed" || lists.length === 0) {
+      return yield* Effect.die(`The run ended ${run.status} with ${lists.length} todo lists.`);
+    }
+    return workspace;
+  });
+
 /** Each scenario: how it is recorded, and what the header says about it. */
 const SCENARIOS = {
+  [TODO_LIST_SCENARIO_NAME]: {
+    record: recordTodoList,
+    metadata: { model: CODEX_TODO_LIST_SCENARIO.model, prompt: CODEX_TODO_LIST_SCENARIO.prompt },
+  },
+  [PROPOSED_PLAN_SCENARIO_NAME]: {
+    record: recordProposedPlan,
+    metadata: {
+      model: CODEX_PROPOSED_PLAN_SCENARIO.model,
+      prompt: CODEX_PROPOSED_PLAN_SCENARIO.planPrompt,
+      interactionModes: ["plan", "default"],
+    },
+  },
+  [QUESTION_ANSWER_SCENARIO_NAME]: {
+    record: (harness: Harness) => recordQuestion(harness, false),
+    metadata: {
+      model: CODEX_QUESTION_SCENARIO.model,
+      prompt: CODEX_QUESTION_SCENARIO.prompt,
+      answer: CODEX_QUESTION_SCENARIO.answer,
+      interactionMode: CODEX_QUESTION_SCENARIO.interactionMode,
+    },
+  },
+  [QUESTION_INTERRUPT_SCENARIO_NAME]: {
+    record: (harness: Harness) => recordQuestion(harness, true),
+    metadata: {
+      model: CODEX_QUESTION_SCENARIO.model,
+      prompt: CODEX_QUESTION_SCENARIO.prompt,
+      interactionMode: CODEX_QUESTION_SCENARIO.interactionMode,
+      interruptAfter: "user_input pending",
+    },
+  },
+  approval_accept: supervisedEntry("approval_accept"),
+  approval_decline: supervisedEntry("approval_decline"),
+  approval_cancel: supervisedEntry("approval_cancel"),
+  approval_interrupt: supervisedEntry("approval_interrupt"),
+  auto_accept_edits: sessionApprovalEntry(SESSION_APPROVAL_SCENARIOS.codex.auto_accept_edits),
+  session_command: sessionApprovalEntry(SESSION_APPROVAL_SCENARIOS.codex.session_command),
+  session_edits: sessionApprovalEntry(SESSION_APPROVAL_SCENARIOS.codex.session_edits),
+  [CODEX_QUEUED_TURN_SCENARIO.scenario]: {
+    record: recordQueuedTurn,
+    metadata: {
+      model: CODEX_QUEUED_TURN_SCENARIO.model,
+      prompts: [1, 2, 5].map(queuedTurnPrompt),
+      queuedOptions: CODEX_QUEUED_TURN_SCENARIO.queuedOptions,
+    },
+  },
+  [CODEX_MESSAGE_STEERING_SCENARIO.scenario]: {
+    record: recordMessageSteering,
+    metadata: {
+      model: CODEX_MESSAGE_STEERING_SCENARIO.model,
+      prompts: CODEX_MESSAGE_STEERING_SCENARIO.prompts,
+      steerAfter: "command_execution running",
+      lateSteer: "sent while the turn's end is held back from the server",
+    },
+  },
+  [CODEX_TRAITS_CHANGE_SCENARIO.scenario]: {
+    record: recordTraitsChange,
+    metadata: {
+      model: CODEX_TRAITS_CHANGE_SCENARIO.model,
+      turns: CODEX_TRAITS_CHANGE_SCENARIO.turns,
+    },
+  },
+  [CODEX_AUTO_MODE_SCENARIO.scenario]: {
+    record: recordAutoMode,
+    metadata: {
+      model: CODEX_AUTO_MODE_SCENARIO.model,
+      prompts: [CODEX_AUTO_MODE_SCENARIO.writePrompt, CODEX_AUTO_MODE_SCENARIO.nextPrompt],
+      runtimeModes: ["auto", "full-access"],
+    },
+  },
   [CODEX_FILE_CREATE_SCENARIO.scenario]: {
     record: recordFileCreate,
     metadata: {
@@ -129,38 +427,23 @@ const SCENARIOS = {
   },
 };
 
-/** Scenarios with a Codex fixture that this recorder cannot make. */
-const HAND_MADE_SCENARIOS: ReadonlyArray<string> = [
-  QUESTION_ANSWER_SCENARIO_NAME,
-  QUESTION_INTERRUPT_SCENARIO_NAME,
-];
-
-const HAND_MADE_REASON =
-  `${HAND_MADE_SCENARIOS.join(" and ")} are hand-made Codex fixtures, not recordings: ` +
-  "Codex 0.163.0 refuses request_user_input outside plan mode, and Playstead runs no plan mode, " +
-  "so a real Codex never asks. Edit question_answer.codex.ndjson and " +
-  "question_interrupt.codex.ndjson by hand; their headers say how they were made.";
-
 const HELP = [
   "Records a Codex app-server replay through Playstead's adapter.",
   "",
   `  node apps/server/scripts/record-codex-replay.ts [${Object.keys(SCENARIOS).join(" | ")}]`,
   "",
-  `The default is ${CODEX_FILE_CREATE_SCENARIO.scenario}. ${HAND_MADE_REASON}`,
+  `The default is ${CODEX_FILE_CREATE_SCENARIO.scenario}.`,
 ].join("\n");
 
 const program = Effect.gen(function* () {
   const scenarioName = process.argv[2] ?? CODEX_FILE_CREATE_SCENARIO.scenario;
   if (scenarioName === "--help" || scenarioName === "-h") return yield* Console.log(HELP);
-  if (HAND_MADE_SCENARIOS.includes(scenarioName)) {
-    return yield* Effect.die(`Cannot record ${scenarioName}. ${HAND_MADE_REASON}`);
-  }
   const scenario = Object.hasOwn(SCENARIOS, scenarioName)
     ? SCENARIOS[scenarioName as keyof typeof SCENARIOS]
     : undefined;
   if (scenario === undefined) {
     return yield* Effect.die(
-      `No scenario is called ${scenarioName}. The scenarios are ${Object.keys(SCENARIOS).join(", ")}; ${HAND_MADE_REASON}`,
+      `No scenario is called ${scenarioName}. The scenarios are ${Object.keys(SCENARIOS).join(", ")}.`,
     );
   }
   const version = yield* codexVersion;

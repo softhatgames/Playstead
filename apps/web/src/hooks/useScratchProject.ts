@@ -6,6 +6,7 @@ import { useCallback } from "react";
 
 import {
   readPrimaryConnectionState,
+  readPrimaryServerSettings,
   requestPrimary,
   usePrimaryConnectionState,
   waitForPrimaryState,
@@ -67,7 +68,10 @@ export function useScratchProject() {
     const projectId = await openScratchProject();
     if (projectId === null) return;
     openProject(projectId);
-    await navigate({ to: "/draft/$draftId", params: { draftId: createDraft(projectId) } });
+    await navigate({
+      to: "/draft/$draftId",
+      params: { draftId: createDraft(projectId, readPrimaryServerSettings()) },
+    });
   }, [navigate]);
 
   return { scratchWorkspaceRoot, startScratchThread };

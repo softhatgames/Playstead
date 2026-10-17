@@ -30,6 +30,7 @@ const sendAndAwait = (harness: Harness, turn: 1 | 2, text: string) =>
   Effect.gen(function* () {
     const sent = yield* harness.orchestrator.dispatch({
       type: "message.dispatch",
+      dispatchMode: { type: "start_immediately" },
       commandId: CommandId.make(`command:restart-resume:message:${turn}`),
       threadId: RESTART_RESUME_IDS.threadId,
       messageId: MessageId.make(`message:restart-resume:${turn}`),
@@ -59,6 +60,7 @@ export const runFirstTurn = (harness: Harness) =>
       projectId: RESTART_RESUME_IDS.projectId,
       title: "New thread",
       modelSelection: { instanceId: "claudeAgent", model: RESTART_RESUME_SCENARIO.model },
+      runtimeMode: "full-access",
     });
     const run = yield* sendAndAwait(harness, 1, RESTART_RESUME_SCENARIO.firstPrompt);
     return { workspace: folder, run };

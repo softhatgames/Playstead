@@ -39,9 +39,10 @@ const isUnfinished = (status: string) =>
 /**
  * The events that settle what a thread's projection says is still at work
  * when no provider can be (T3 Code's `reconcileProjection` in
- * `ProviderRuntimeRecoveryService.ts` at 2577baf, without queued runs,
- * subagents, background work or the restart continuation, which Playstead
- * does not have). A question still waiting on the person can no longer be
+ * `ProviderRuntimeRecoveryService.ts` at 2577baf, without subagents,
+ * background work or the restart continuation, which Playstead does not
+ * have). Queued runs keep their order and are held, so nothing starts
+ * until the person resumes the queue. A question still waiting on the person can no longer be
  * answered: it is `expired` at startup and `cancelled` at shutdown. An
  * active run and everything under it is cancelled, a streaming message
  * stops streaming, an active provider thread is idle and every provider
@@ -146,6 +147,16 @@ const reconcileEvents = (
       occurredAt: now,
       type: "provider-session.updated",
       payload: { ...session, status: "stopped", updatedAt: now, lastError: null },
+    });
+  }
+  for (const run of projection.runs) {
+    if (run.status !== "queued" || run.queueHeld === true) continue;
+    events.push({
+      threadId,
+      runId: run.id,
+      occurredAt: now,
+      type: "run.updated",
+      payload: { ...run, queueHeld: true },
     });
   }
   for (const run of runs) {

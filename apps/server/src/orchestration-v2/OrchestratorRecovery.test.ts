@@ -1,13 +1,9 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import { CommandId, MessageId } from "@playstead/contracts/baseSchemas";
-import {
-  decodeProviderReplayNdjson,
-  materializeReplayWorkspace,
-} from "@playstead/provider-testing/replayTranscript";
+import { materializeReplayWorkspace } from "@playstead/provider-testing/replayTranscript";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
-import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Stream from "effect/Stream";
@@ -16,6 +12,7 @@ import { makeTestServerConfig } from "../testUtils/testServer.ts";
 import type { ClaudeAgentSdkQueryRunner } from "./Adapters/ClaudeAdapterV2.ts";
 import { makeClaudeReplay } from "./Adapters/ClaudeAdapterV2.testkit.ts";
 import { makeOrchestrationHarness } from "./testkit/OrchestratorHarness.ts";
+import { readRecording } from "./testkit/ProviderReplay.ts";
 import {
   FILE_CREATE_IDS,
   FILE_CREATE_SCENARIO,
@@ -34,19 +31,6 @@ import {
  * are built again over the same SQLite file with startup recovery.
  */
 
-const readRecording = (name: string) =>
-  Effect.gen(function* () {
-    const fs = yield* FileSystem.FileSystem;
-    const path = yield* Path.Path;
-    const recordingPath = path.join(
-      path.dirname(yield* path.fromFileUrl(new URL(import.meta.url))),
-      "testkit",
-      "fixtures",
-      name,
-    );
-    return yield* decodeProviderReplayNdjson(yield* fs.readFileString(recordingPath));
-  });
-
 /** A provider that must not be reached: the restarted server only takes the message. */
 const unreachableClaude: ClaudeAgentSdkQueryRunner["Service"] = {
   allocateSessionId: Effect.die("Claude was not expected to start."),
@@ -55,7 +39,7 @@ const unreachableClaude: ClaudeAgentSdkQueryRunner["Service"] = {
 
 /** Claude's whole final reply, the message the replay holds back below. */
 const FINAL_REPLY =
-  'Created `hello-claude.txt` in the current folder with the line "Hello from Claude in Playstead!" using the Write tool.';
+  'Created `hello-claude.txt` in the working directory with the line "Hello from Claude in Playstead!"';
 
 const isFinalReply = (frame: unknown) =>
   JSON.stringify(frame).includes(`"type":"text","text":${JSON.stringify(FINAL_REPLY)}`);
@@ -149,6 +133,7 @@ describe("Survive a restart", () => {
 
           const next = yield* restarted.orchestrator.dispatch({
             type: "message.dispatch",
+            dispatchMode: { type: "start_immediately" },
             commandId: CommandId.make("command:file-create:after-restart"),
             threadId: FILE_CREATE_IDS.threadId,
             messageId: MessageId.make("message:file-create:after-restart"),
@@ -283,6 +268,7 @@ describe("Survive a restart", () => {
 
           yield* restarted.orchestrator.dispatch({
             type: "message.dispatch",
+            dispatchMode: { type: "start_immediately" },
             commandId: CommandId.make("command:file-create:after-hang"),
             threadId: FILE_CREATE_IDS.threadId,
             messageId: MessageId.make("message:file-create:after-hang"),

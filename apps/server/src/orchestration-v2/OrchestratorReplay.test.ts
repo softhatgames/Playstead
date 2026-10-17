@@ -2,18 +2,12 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import { CommandId, MessageId } from "@playstead/contracts/baseSchemas";
 import { OrchestrationDispatchCommandError } from "@playstead/contracts/orchestrationV2";
-import {
-  decodeProviderReplayNdjson,
-  materializeReplayWorkspace,
-  type ProviderReplayEntry,
-} from "@playstead/provider-testing/replayTranscript";
+import type { ProviderReplayEntry } from "@playstead/provider-testing/replayTranscript";
 import * as Effect from "effect/Effect";
-import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 
-import { makeClaudeReplay } from "./Adapters/ClaudeAdapterV2.testkit.ts";
-import { makeOrchestrationHarness } from "./testkit/OrchestratorHarness.ts";
+import { replayClaude } from "./testkit/ProviderReplay.ts";
 import {
   FILE_CREATE_IDS,
   FILE_CREATE_SCENARIO,
@@ -32,39 +26,16 @@ const replayFileCreate = (
   followedBy: ReadonlyArray<ProviderReplayEntry> = [],
   beforeTurn: ReadonlyArray<ProviderReplayEntry> = [],
 ) =>
-  Effect.gen(function* () {
-    const fs = yield* FileSystem.FileSystem;
-    const path = yield* Path.Path;
-    const recordingPath = path.join(
-      path.dirname(yield* path.fromFileUrl(new URL(import.meta.url))),
-      "testkit",
-      "fixtures",
-      "file_create.claude.ndjson",
-    );
-    const recorded = yield* decodeProviderReplayNdjson(yield* fs.readFileString(recordingPath));
-    // The workspace is the harness's own folder, known only once it exists.
-    let replay: Effect.Success<ReturnType<typeof makeClaudeReplay>> | undefined;
-    const harness = yield* makeOrchestrationHarness({
-      claudeRunner: {
-        allocateSessionId: Effect.suspend(() => replay!.runner.allocateSessionId),
-        open: (input) => Effect.suspend(() => replay!.runner.open(input)),
-      },
-    });
-    replay = yield* makeClaudeReplay(
-      yield* materializeReplayWorkspace(
-        {
-          ...recorded,
-          entries: [
-            ...recorded.entries.slice(0, 2),
-            ...beforeTurn,
-            ...recorded.entries.slice(2),
-            ...followedBy,
-          ],
-        },
-        path.join(harness.home, "empty-game"),
-      ),
-    );
-    return { harness, replay: replay! };
+  replayClaude("file_create.claude.ndjson", {
+    edit: (recorded) => ({
+      ...recorded,
+      entries: [
+        ...recorded.entries.slice(0, 2),
+        ...beforeTurn,
+        ...recorded.entries.slice(2),
+        ...followedBy,
+      ],
+    }),
   });
 
 describe("Chat with Claude in a thread", () => {
@@ -113,7 +84,8 @@ describe("Chat with Claude in a thread", () => {
         // Claude Code's own turn after a background command finished, as
         // Claude 2.1.301 sent it (seen by hand): its frames carry no
         // prompt's uuid, and it ends with a result of its own.
-        const sessionId = "c4aedb90-2046-46ac-b9bb-bfc68d7d8381";
+        // The recording's session.
+        const sessionId = "bf6441b1-40e8-458b-84fb-27e654cf2f5c";
         const ownTurn = "The background `sleep 15` finished with exit code 0.";
         const { harness, replay } = yield* replayFileCreate(
           [],
@@ -159,43 +131,6 @@ describe("Chat with Claude in a thread", () => {
       }).pipe(Effect.scoped),
     );
 
-    it.effect("refuses a message while the thread's run is active", () =>
-      Effect.gen(function* () {
-        const { harness, replay } = yield* replayFileCreate();
-        const sendAgain = {
-          type: "message.dispatch",
-          commandId: CommandId.make("command:file-create:too-soon"),
-          threadId: FILE_CREATE_IDS.threadId,
-          messageId: MessageId.make("message:file-create:too-soon"),
-          text: "And another file, please.",
-        } as const;
-
-        // Sent while the first run is still starting: the effect worker has
-        // not started the turn yet. T3 Code would queue it.
-        const { run, interjected } = yield* runFileCreateScenario(
-          harness,
-          Effect.flip(harness.orchestrator.dispatch(sendAgain)),
-        );
-
-        assert.instanceOf(interjected, OrchestrationDispatchCommandError);
-        assert.match(interjected.message, /is still working on run .+\. Wait for it to finish/);
-        // The same command sent again gets its first answer, not a new decision.
-        const again = yield* Effect.flip(harness.orchestrator.dispatch(sendAgain));
-        assert.strictEqual(again.message, interjected.message);
-        const projection = Option.getOrThrow(
-          yield* harness.orchestrator.getThreadProjection(FILE_CREATE_IDS.threadId),
-        );
-        assert.deepStrictEqual(
-          projection.messages
-            .filter((message) => message.role === "user")
-            .map((message) => message.id),
-          [FILE_CREATE_IDS.messageId],
-        );
-        yield* replay.assertComplete;
-        assert.strictEqual(run.status, "completed");
-      }).pipe(Effect.scoped),
-    );
-
     it.effect("after a model change, the next turn asks Claude for the new model", () =>
       Effect.gen(function* () {
         const followUp = "Now say hello in one word.";
@@ -206,6 +141,15 @@ describe("Chat with Claude in a thread", () => {
           {
             type: "expect_outbound",
             frame: { type: "query.set_model", model: "claude-sonnet-5-5" },
+          },
+          // Sonnet's default effort is high, Haiku's medium: the new model's
+          // effort is applied live with it, as T3 Code applies a selection.
+          {
+            type: "expect_outbound",
+            frame: {
+              type: "query.apply_flag_settings",
+              settings: { effortLevel: "high", fastMode: null, ultracode: null },
+            },
           },
           {
             type: "expect_outbound",
@@ -231,6 +175,7 @@ describe("Chat with Claude in a thread", () => {
         });
         const sent = yield* harness.orchestrator.dispatch({
           type: "message.dispatch",
+          dispatchMode: { type: "start_immediately" },
           commandId: CommandId.make("command:file-create:follow-up"),
           threadId: FILE_CREATE_IDS.threadId,
           messageId: MessageId.make("message:file-create:2"),

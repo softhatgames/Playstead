@@ -133,6 +133,7 @@ describe("project RPC methods", () => {
           yield* connection.request((client) =>
             client["orchestration.dispatchCommand"]({
               type: "thread.create",
+              runtimeMode: "full-access",
               commandId: CommandId.make("command:create-thread"),
               threadId,
               projectId,

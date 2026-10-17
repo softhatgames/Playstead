@@ -22,12 +22,13 @@ import {
  * `makeReplayQueryRunner` and `recordClaudeAgentSdkReplayTranscript`).
  *
  * A recording is the frames the adapter sent (`query.open` with the options
- * it decides, then each `query.set_model`, `prompt.offer` and
- * `query.interrupt`) and every message Claude Code sent back, in order. A
+ * it decides, then each `query.set_model`, `query.apply_flag_settings`,
+ * `query.set_permission_mode`, `prompt.offer` and `query.interrupt`) and every message Claude Code sent back, in order. A
  * replay compares each frame the adapter sends with the next recorded one,
  * strictly, and plays Claude's messages up to the next frame it expects.
  * Claude Code's calls to the adapter's `canUseTool` are recorded as
- * `permission.request` (inbound, where the call came) and what the adapter
+ * `permission.request` (inbound, where the call came, with what Claude Code
+ * said about the call) and what the adapter
  * answered as `permission.response`, as T3 Code's replay keeps them; the
  * replay calls the adapter's real callback and compares its answer with
  * the response recorded for the same tool use, wherever it lies, since an
@@ -276,6 +277,7 @@ export const makeClaudeReplay = Effect.fn("makeClaudeReplay")(function* (
               canUseTool === undefined
                 ? Promise.reject(new Error("The adapter passed no canUseTool."))
                 : canUseTool(frame.toolName, frame.input, {
+                    ...frame.options,
                     signal: controller.signal,
                     toolUseID: frame.toolUseID,
                     requestId: frame.requestId,
@@ -315,6 +317,14 @@ export const makeClaudeReplay = Effect.fn("makeClaudeReplay")(function* (
             expectOutbound({ type: "prompt.offer", message }).pipe(Effect.mapError(asRunnerError)),
           setModel: (model: string) =>
             expectOutbound({ type: "query.set_model", model }).pipe(Effect.mapError(asRunnerError)),
+          applyFlagSettings: (settings: unknown) =>
+            expectOutbound({ type: "query.apply_flag_settings", settings }).pipe(
+              Effect.mapError(asRunnerError),
+            ),
+          setPermissionMode: (mode: string) =>
+            expectOutbound({ type: "query.set_permission_mode", mode }).pipe(
+              Effect.mapError(asRunnerError),
+            ),
           interrupt: expectOutbound({ type: "query.interrupt" }).pipe(
             Effect.andThen(
               Effect.sync(() => {
@@ -347,6 +357,22 @@ export const makeClaudeReplay = Effect.fn("makeClaudeReplay")(function* (
   return { runner, assertComplete, awaitHeld: Deferred.await(held) } satisfies ClaudeReplay;
 });
 
+/**
+ * What Claude Code tells `canUseTool` about the call besides its ids, which
+ * the adapter reads for an approval's prompt and session rules.
+ */
+const PERMISSION_REQUEST_OPTIONS = [
+  "title",
+  "displayName",
+  "description",
+  "decisionReason",
+  "blockedPath",
+  "suggestions",
+] as const;
+type PermissionRequestOptions = Partial<
+  Pick<Parameters<CanUseTool>[2], (typeof PERMISSION_REQUEST_OPTIONS)[number]>
+>;
+
 /** Claude Code asking the adapter's `canUseTool` about a tool, as a recording keeps it. */
 interface PermissionRequestFrame {
   readonly type: "permission.request";
@@ -354,7 +380,20 @@ interface PermissionRequestFrame {
   readonly input: Record<string, unknown>;
   readonly toolUseID: string;
   readonly requestId: string;
+  /** Absent from recordings made before approvals. */
+  readonly options?: PermissionRequestOptions;
 }
+
+const permissionRequestOptions = (
+  options: Parameters<CanUseTool>[2],
+): PermissionRequestOptions | undefined => {
+  const kept = Object.fromEntries(
+    PERMISSION_REQUEST_OPTIONS.flatMap((key) =>
+      options[key] === undefined ? [] : [[key, options[key]]],
+    ),
+  );
+  return Object.keys(kept).length === 0 ? undefined : kept;
+};
 
 const isFrame = (frame: unknown, type: string): frame is object =>
   typeof frame === "object" && frame !== null && Reflect.get(frame, "type") === type;
@@ -393,6 +432,7 @@ export const makeRecordingQueryRunner = (inner: ClaudeAgentSdkQueryRunner["Servi
                     input: toolInput,
                     toolUseID: callbackOptions.toolUseID,
                     requestId: callbackOptions.requestId,
+                    options: permissionRequestOptions(callbackOptions),
                   }),
                 });
                 const result = await canUseTool(toolName, toolInput, callbackOptions);
@@ -436,6 +476,26 @@ export const makeRecordingQueryRunner = (inner: ClaudeAgentSdkQueryRunner["Servi
                 }),
               ),
               session.setModel(model),
+            ),
+          applyFlagSettings: (settings: Parameters<typeof session.applyFlagSettings>[0]) =>
+            Effect.andThen(
+              Effect.sync(() =>
+                entries.push({
+                  type: "expect_outbound",
+                  frame: asJson({ type: "query.apply_flag_settings", settings }),
+                }),
+              ),
+              session.applyFlagSettings(settings),
+            ),
+          setPermissionMode: (mode: Parameters<typeof session.setPermissionMode>[0]) =>
+            Effect.andThen(
+              Effect.sync(() =>
+                entries.push({
+                  type: "expect_outbound",
+                  frame: { type: "query.set_permission_mode", mode },
+                }),
+              ),
+              session.setPermissionMode(mode),
             ),
           interrupt: Effect.andThen(
             Effect.sync(() =>

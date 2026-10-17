@@ -26,6 +26,9 @@ import {
   ProjectEnsureScratchResult,
   ProjectMutation,
   ProjectMutationError,
+  ProjectWriteFileError,
+  ProjectWriteFileInput,
+  ProjectWriteFileResult,
 } from "./project.ts";
 import { ProviderInstanceId, ProviderInstanceMutation } from "./providerInstance.ts";
 import {
@@ -47,6 +50,7 @@ export const WS_METHODS = {
   serverUpdateSettings: "server.updateSettings",
   subscribeServerConfig: "subscribeServerConfig",
   subscribeServerLifecycle: "subscribeServerLifecycle",
+  projectsWriteFile: "projects.writeFile",
   projectsMutate: "projects.mutate",
   projectsEnsureScratch: "projects.ensureScratch",
   filesystemBrowse: "filesystem.browse",
@@ -101,6 +105,13 @@ const WsProjectsEnsureScratchRpc = Rpc.make(WS_METHODS.projectsEnsureScratch, {
   payload: Schema.Struct({}),
   success: ProjectEnsureScratchResult,
   error: ProjectEnsureScratchError,
+});
+
+/** Writes a file inside a project's folder, as **Save to workspace** does with a plan. */
+const WsProjectsWriteFileRpc = Rpc.make(WS_METHODS.projectsWriteFile, {
+  payload: ProjectWriteFileInput,
+  success: ProjectWriteFileResult,
+  error: ProjectWriteFileError,
 });
 
 /** The folders under a partly typed path, for Add project's autocompletion. */
@@ -164,6 +175,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsSubscribeServerLifecycleRpc,
   WsProjectsMutateRpc,
   WsProjectsEnsureScratchRpc,
+  WsProjectsWriteFileRpc,
   WsFilesystemBrowseRpc,
   WsOrchestrationSubscribeShellRpc,
   WsOrchestrationGetArchivedShellSnapshotRpc,

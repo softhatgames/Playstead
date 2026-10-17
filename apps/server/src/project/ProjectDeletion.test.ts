@@ -68,7 +68,7 @@ const readRecording = (name: string) =>
 
 /** Claude's whole final reply in the file-create recording, held back so its turn is still working. */
 const FINAL_REPLY =
-  'Created `hello-claude.txt` in the current folder with the line "Hello from Claude in Playstead!" using the Write tool.';
+  'Created `hello-claude.txt` in the working directory with the line "Hello from Claude in Playstead!"';
 
 const isFinalReply = (frame: unknown) =>
   JSON.stringify(frame).includes(`"type":"text","text":${JSON.stringify(FINAL_REPLY)}`);
@@ -79,6 +79,7 @@ const dispatch = (harness: Harness, command: OrchestrationV2Command) =>
 const createThread = (harness: Harness, projectId: ProjectId, threadId: ThreadId) =>
   dispatch(harness, {
     type: "thread.create",
+    runtimeMode: "full-access",
     commandId: CommandId.make(`command:create:${threadId}`),
     threadId,
     projectId,

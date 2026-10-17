@@ -7,7 +7,7 @@ import {
 
 import type { NewDomainEvent } from "./EventSink.ts";
 import { detachProviderSessions } from "./ProviderSessionDetach.ts";
-import type { ThreadCommandDecision } from "./ThreadCommands.ts";
+import type { ThreadCommandDecision } from "./ThreadCommandDecision.ts";
 
 const isUnfinished = (status: string) =>
   status === "pending" || status === "running" || status === "waiting";
@@ -19,8 +19,8 @@ const isUnfinished = (status: string) =>
  * kept. Every active or queued run is
  * cancelled with its unfinished attempts and nodes; each run's own event
  * comes first, as T3 Code writes them, so nothing reads the run active
- * again. A question still pending is cancelled and can no longer be
- * answered. Each live provider session is detached and stopped, the
+ * again; a queued run also leaves the queue. An approval or question still
+ * pending is cancelled and can no longer be answered. Each live provider session is detached and stopped, the
  * effects the thread still had waiting are cancelled, and a title being
  * generated is dropped. There are no
  * terminals, previews, attachments or subagents to clean up.
@@ -56,7 +56,7 @@ export function planThreadDeletion(input: {
       threadId,
       runId: run.id,
       occurredAt: now,
-      payload: { ...run, status: "cancelled", completedAt: now },
+      payload: { ...run, status: "cancelled", queuePosition: null, completedAt: now },
     });
   }
   for (const attempt of projection.attempts) {

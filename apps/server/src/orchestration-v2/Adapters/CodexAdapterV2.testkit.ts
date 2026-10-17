@@ -1,5 +1,6 @@
 // @effect-diagnostics preferSchemaOverJson:off -- Recorded frames are plain JSON lines.
 import * as CodexClient from "@playstead/effect-codex-app-server/client";
+import { CodexAppServerSpawnError } from "@playstead/effect-codex-app-server/errors";
 import * as CodexAppServerReplay from "@playstead/effect-codex-app-server/replay";
 import type {
   ProviderReplayEntry,
@@ -34,7 +35,11 @@ export interface CodexReplay {
   readonly assertComplete: Effect.Effect<void, CodexAppServerReplay.CodexAppServerReplayError>;
 }
 
-/** One session's app-server from the recording; a second session finds none. */
+/**
+ * One session's app-server from the recording. A second session cannot start
+ * one, as if `codex` were missing: its run fails, so a test goes on to
+ * `assertComplete`, which says why the first session ended.
+ */
 export const makeCodexReplay = Effect.fn("makeCodexReplay")(function* (
   transcript: ProviderReplayTranscript,
 ) {
@@ -51,7 +56,14 @@ export const makeCodexReplay = Effect.fn("makeCodexReplay")(function* (
   const clients = CodexAppServerClientFactory.of({
     open: () =>
       Effect.suspend(() => {
-        if (opened) return Effect.die("The Codex recording holds one app-server.");
+        if (opened) {
+          return Effect.fail(
+            new CodexAppServerSpawnError({
+              command: "codex app-server",
+              cause: "The Codex recording holds one app-server.",
+            }),
+          );
+        }
         opened = true;
         return CodexAppServerReplay.makeReplayClient(driver);
       }),

@@ -77,4 +77,7 @@ export type ProviderTurnId = typeof ProviderTurnId.Type;
 export const RuntimeRequestId = makeEntityId("RuntimeRequestId");
 export type RuntimeRequestId = typeof RuntimeRequestId.Type;
 
+export const PlanId = makeEntityId("PlanId");
+export type PlanId = typeof PlanId.Type;
+
 export const PositiveInt = Schema.Int.check(Schema.isGreaterThanOrEqualTo(1));

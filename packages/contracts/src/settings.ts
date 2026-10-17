@@ -1,7 +1,7 @@
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
-import { ModelSelection } from "./orchestrationV2.ts";
+import { DEFAULT_RUNTIME_MODE, ModelSelection, RuntimeMode } from "./orchestrationV2.ts";
 import {
   type ProviderDriverKind,
   ProviderInstanceConfig,
@@ -56,11 +56,14 @@ export const DEFAULT_SIDEBAR_AUTO_SETTLE_AFTER_DAYS = 3;
  *   entry uses its driver's default;
  * - `textGenerationModelSelection`, the provider and model that write
  *   thread titles (**Settings → General → Text generation**);
+ * - `defaultRuntimeMode`, the permissions new threads start with (**Settings
+ *   → General → New threads → Permissions**);
  * - `sidebarAutoSettleAfterDays`, the days without activity before a thread
  *   settles by itself, or null for never (**Settings → General →
  *   Organization**).
  *
- * A file saved before a setting existed decodes to T3 Code's default.
+ * A file saved before a setting existed decodes to T3 Code's default (Full
+ * access for the permissions).
  */
 export const ServerSettings = Schema.Struct({
   providerInstances: Schema.Struct({
@@ -69,6 +72,9 @@ export const ServerSettings = Schema.Struct({
   }),
   textGenerationModelSelection: ModelSelection.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_TEXT_GENERATION_MODEL_SELECTION)),
+  ),
+  defaultRuntimeMode: RuntimeMode.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_RUNTIME_MODE)),
   ),
   sidebarAutoSettleAfterDays: Schema.NullOr(SidebarAutoSettleAfterDays).pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_SIDEBAR_AUTO_SETTLE_AFTER_DAYS)),
@@ -79,12 +85,14 @@ export type ServerSettings = typeof ServerSettings.Type;
 export const DEFAULT_SERVER_SETTINGS: ServerSettings = {
   providerInstances: {},
   textGenerationModelSelection: DEFAULT_TEXT_GENERATION_MODEL_SELECTION,
+  defaultRuntimeMode: DEFAULT_RUNTIME_MODE,
   sidebarAutoSettleAfterDays: DEFAULT_SIDEBAR_AUTO_SETTLE_AFTER_DAYS,
 };
 
 /** The settings a change sets; the rest keep their values (T3 Code's `ServerSettingsPatch`). */
 export const ServerSettingsPatch = Schema.Struct({
   textGenerationModelSelection: Schema.optionalKey(ModelSelection),
+  defaultRuntimeMode: Schema.optionalKey(RuntimeMode),
   sidebarAutoSettleAfterDays: Schema.optionalKey(Schema.NullOr(SidebarAutoSettleAfterDays)),
 });
 export type ServerSettingsPatch = typeof ServerSettingsPatch.Type;

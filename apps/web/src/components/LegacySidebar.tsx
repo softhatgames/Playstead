@@ -27,7 +27,7 @@ import { type MouseEvent, type ReactNode, useEffect, useMemo, useRef, useState }
 import { updateClientSettings, useClientSettings } from "../clientSettings.ts";
 import { copyTextToClipboard } from "../clipboard.ts";
 import { openCommandPalette } from "../commandPaletteBus.ts";
-import { usePrimaryConnectionState } from "../connection/runtime.ts";
+import { readPrimaryServerSettings, usePrimaryConnectionState } from "../connection/runtime.ts";
 import { createDraft } from "../drafts.ts";
 import { useBulkThreadMenu } from "../hooks/useBulkThreadMenu.ts";
 import { type ProjectActionTarget, removeProjectFromTree } from "../hooks/useProjectActions.ts";
@@ -103,7 +103,10 @@ export function LegacySidebar() {
 
   const startThread = (projectId: ProjectId) => {
     openProject(projectId);
-    void navigate({ to: "/draft/$draftId", params: { draftId: createDraft(projectId) } });
+    void navigate({
+      to: "/draft/$draftId",
+      params: { draftId: createDraft(projectId, readPrimaryServerSettings()) },
+    });
   };
 
   const [renaming, setRenaming] = useState<ProjectActionTarget | null>(null);

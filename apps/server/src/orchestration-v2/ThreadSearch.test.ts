@@ -58,7 +58,7 @@ const makeHarness = (options?: Parameters<typeof makeClaudeReplay>[1]) =>
 type Harness = Effect.Success<ReturnType<typeof makeHarness>>["harness"];
 
 const REPLY =
-  'Created `hello-claude.txt` in the current folder with the line "Hello from Claude in Playstead!" using the Write tool.';
+  'Created `hello-claude.txt` in the working directory with the line "Hello from Claude in Playstead!"';
 
 const search = (harness: Harness, query: string, limit?: number) =>
   Effect.map(
@@ -81,7 +81,7 @@ describe("Search threads", () => {
     it.effect("a reply still being written is not searched", () =>
       Effect.gen(function* () {
         const { harness, replay } = yield* makeHarness({
-          holdBefore: (frame) => JSON.stringify(frame).includes('"text":" using the Write tool."'),
+          holdBefore: (frame) => JSON.stringify(frame).includes('"text":" Playstead!\\""'),
         });
         const { sent } = yield* sendFileCreateMessage(harness);
         yield* harness.worker.drain;
@@ -94,7 +94,7 @@ describe("Search threads", () => {
               stored.event.type === "message.updated" &&
               stored.event.payload.role === "assistant" &&
               stored.event.payload.streaming &&
-              stored.event.payload.text.includes("current folder with the line"),
+              stored.event.payload.text.includes("working directory with the line"),
           ),
           Stream.runHead,
         );
@@ -124,6 +124,7 @@ describe("Search threads", () => {
           // second message from the person.
           yield* harness.orchestrator.dispatch({
             type: "message.dispatch",
+            dispatchMode: { type: "start_immediately" },
             commandId: CommandId.make("command:file-create:message:2"),
             threadId: FILE_CREATE_IDS.threadId,
             messageId: MessageId.make("message:file-create:2"),
@@ -240,6 +241,7 @@ const sendUserMessages = (harness: Harness, name: string, texts: ReadonlyArray<s
     const threadId = ThreadId.make(`thread:${name}`);
     yield* harness.orchestrator.dispatch({
       type: "thread.create",
+      runtimeMode: "full-access",
       commandId: CommandId.make(`command:${name}:thread`),
       threadId,
       projectId: FILE_CREATE_IDS.projectId,
@@ -249,6 +251,7 @@ const sendUserMessages = (harness: Harness, name: string, texts: ReadonlyArray<s
     for (const [index, text] of texts.entries()) {
       yield* harness.orchestrator.dispatch({
         type: "message.dispatch",
+        dispatchMode: { type: "start_immediately" },
         commandId: CommandId.make(`command:${name}:message:${index}`),
         threadId,
         messageId: MessageId.make(`message:${name}:${index}`),

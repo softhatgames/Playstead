@@ -1,10 +1,16 @@
-import { type ClientSettings, DEFAULT_CLIENT_SETTINGS } from "@playstead/contracts/ipc";
+import { ACTIVE_TURN_COMPOSER_ACTIONS } from "@playstead/client-runtime/state/composerDispatch";
+import {
+  type ClientSettings,
+  DEFAULT_CLIENT_SETTINGS,
+  type FollowUpBehavior,
+} from "@playstead/contracts/ipc";
 import type { ModelSelection } from "@playstead/contracts/orchestrationV2";
 import {
   DEFAULT_SERVER_SETTINGS,
   DEFAULT_SIDEBAR_AUTO_SETTLE_AFTER_DAYS,
   MAX_SIDEBAR_AUTO_SETTLE_AFTER_DAYS,
   MIN_SIDEBAR_AUTO_SETTLE_AFTER_DAYS,
+  type ServerSettingsPatch,
 } from "@playstead/contracts/settings";
 import { type ReactNode, useEffect, useState } from "react";
 
@@ -13,18 +19,34 @@ import { requestPrimary, usePrimaryConnectionState } from "../../connection/runt
 import { failureToast } from "../../toast.ts";
 import { deriveModelPickerEntries } from "../chat/composer.logic.ts";
 import { ProviderModelPicker } from "../chat/ProviderModelPicker.tsx";
+import { RuntimeModePicker } from "../chat/RuntimeModePicker.tsx";
 import { ChevronRightIcon } from "../icons.tsx";
 import { parseAutoSettleDays } from "./autoSettleSettings.logic.ts";
 import { resolveTextGenerationSelection } from "./textGenerationSettings.logic.ts";
 
+/** Saves part of the server's settings through `server.updateSettings`. */
+const saveServerSettings = (patch: ServerSettingsPatch, failureTitle = "Failed to save settings") =>
+  requestPrimary((client) => client["server.updateSettings"]({ patch })).catch((error: unknown) =>
+    failureToast(failureTitle, error),
+  );
+
 /**
- * **Settings → General**, with only the rows Playstead has so far (T3 Code's
- * `GeneralSettingsPanel` in `apps/web/src/components/settings/SettingsPanels.tsx`
- * at 2577baf): **Organization**'s Working section (beta) and automatic
- * settlement, the **Confirmations** section's archive and delete rows,
- * **Text generation** (the provider and model that write thread titles),
- * and **Sidebar (legacy)** under the folded **Legacy features**. The rest of
- * General waits for slice 5.
+ * **Settings → General**, with only the rows Playstead has so far, in T3
+ * Code's order (`GeneralSettingsPanel` in
+ * `apps/web/src/components/settings/SettingsPanels.tsx` at 2577baf):
+ *
+ * - **New threads**: **Permissions** (T3 Code's `ProjectDefaultsSettings.tsx`;
+ *   projects can't override them yet, so the description leaves out "Projects
+ *   can override them.");
+ * - **Organization**: Working section (beta) and automatic settlement;
+ * - **Behavior**: **Follow-up behavior**, Queue or Steer, with T3 Code's
+ *   description for its default send shortcut (Playstead has no other);
+ * - **Confirmations**: archive and delete;
+ * - **Text generation**: the provider and model that write thread titles;
+ * - the folded **Legacy features**: **Plan mode (legacy)** and **Sidebar
+ *   (legacy)**, both off by default.
+ *
+ * The rest of General waits for its features and slice 5.
  */
 export function GeneralSettingsPanel() {
   const settings = useClientSettings();
@@ -36,59 +58,75 @@ export function GeneralSettingsPanel() {
   return (
     <div className="flex flex-col gap-6">
       <h1 className="text-xl font-semibold">General</h1>
-      <section aria-labelledby="settings-organization" className="flex flex-col gap-2">
-        <h2
-          id="settings-organization"
-          className="text-sm font-medium text-neutral-600 dark:text-neutral-300"
-        >
-          Organization
-        </h2>
-        <div className="divide-y divide-neutral-200 rounded-lg border border-neutral-200 dark:divide-neutral-800 dark:border-neutral-800">
-          <SettingsSwitchRow
-            id="working-shelf"
-            title="Working section (beta)"
-            description="Fold working and monitoring threads into a Working section. They return to the top of the inbox when they need you."
-            ariaLabel="Working section (beta)"
-            checked={settings.sidebarWorkingShelfEnabled}
-            isDefault={
-              settings.sidebarWorkingShelfEnabled ===
-              DEFAULT_CLIENT_SETTINGS.sidebarWorkingShelfEnabled
-            }
-            onChange={(sidebarWorkingShelfEnabled) => save({ sidebarWorkingShelfEnabled })}
-          />
-          <AutoSettleRows />
-        </div>
-      </section>
-      <section aria-labelledby="settings-confirmations" className="flex flex-col gap-2">
-        <h2
-          id="settings-confirmations"
-          className="text-sm font-medium text-neutral-600 dark:text-neutral-300"
-        >
-          Confirmations
-        </h2>
-        <div className="divide-y divide-neutral-200 rounded-lg border border-neutral-200 dark:divide-neutral-800 dark:border-neutral-800">
-          <SettingsSwitchRow
-            id="archive-confirmation"
-            title="Archive confirmation"
-            description="Ask before archiving a thread."
-            ariaLabel="Confirm thread archiving"
-            checked={settings.confirmThreadArchive}
-            isDefault={
-              settings.confirmThreadArchive === DEFAULT_CLIENT_SETTINGS.confirmThreadArchive
-            }
-            onChange={(confirmThreadArchive) => save({ confirmThreadArchive })}
-          />
-          <SettingsSwitchRow
-            id="delete-confirmation"
-            title="Delete confirmation"
-            description="Ask before deleting a thread and its chat history."
-            ariaLabel="Confirm thread deletion"
-            checked={settings.confirmThreadDelete}
-            isDefault={settings.confirmThreadDelete === DEFAULT_CLIENT_SETTINGS.confirmThreadDelete}
-            onChange={(confirmThreadDelete) => save({ confirmThreadDelete })}
-          />
-        </div>
-      </section>
+      <NewThreadsSection />
+      <SettingsSection id="settings-organization" title="Organization">
+        <SettingsSwitchRow
+          id="working-shelf"
+          title="Working section (beta)"
+          description="Fold working and monitoring threads into a Working section. They return to the top of the inbox when they need you."
+          ariaLabel="Working section (beta)"
+          checked={settings.sidebarWorkingShelfEnabled}
+          isDefault={
+            settings.sidebarWorkingShelfEnabled ===
+            DEFAULT_CLIENT_SETTINGS.sidebarWorkingShelfEnabled
+          }
+          onChange={(sidebarWorkingShelfEnabled) => save({ sidebarWorkingShelfEnabled })}
+        />
+        <AutoSettleRows />
+      </SettingsSection>
+      <SettingsSection id="settings-behavior" title="Behavior">
+        <SettingsRow
+          id="follow-up-behavior"
+          title="Follow-up behavior"
+          description={`Queue follow-ups while the agent runs or steer the current run. Press ${
+            /mac/i.test(navigator.platform) ? "⌘" : "Ctrl"
+          } + Enter to do the opposite for one message.`}
+          reset={{
+            label: "follow-up behavior",
+            isDefault: settings.followUpBehavior === DEFAULT_CLIENT_SETTINGS.followUpBehavior,
+            onReset: () => save({ followUpBehavior: DEFAULT_CLIENT_SETTINGS.followUpBehavior }),
+          }}
+          control={
+            <select
+              aria-label="Follow-up behavior"
+              value={settings.followUpBehavior}
+              onChange={(event) => {
+                const value = ACTIVE_TURN_COMPOSER_ACTIONS.find(
+                  (action) => action === event.target.value,
+                );
+                if (value !== undefined) void save({ followUpBehavior: value });
+              }}
+              className="rounded-md border border-neutral-200 bg-white px-2 py-1 text-sm dark:border-neutral-700 dark:bg-neutral-900"
+            >
+              {ACTIVE_TURN_COMPOSER_ACTIONS.map((action) => (
+                <option key={action} value={action}>
+                  {FOLLOW_UP_LABELS[action]}
+                </option>
+              ))}
+            </select>
+          }
+        />
+      </SettingsSection>
+      <SettingsSection id="settings-confirmations" title="Confirmations">
+        <SettingsSwitchRow
+          id="archive-confirmation"
+          title="Archive confirmation"
+          description="Ask before archiving a thread."
+          ariaLabel="Confirm thread archiving"
+          checked={settings.confirmThreadArchive}
+          isDefault={settings.confirmThreadArchive === DEFAULT_CLIENT_SETTINGS.confirmThreadArchive}
+          onChange={(confirmThreadArchive) => save({ confirmThreadArchive })}
+        />
+        <SettingsSwitchRow
+          id="delete-confirmation"
+          title="Delete confirmation"
+          description="Ask before deleting a thread and its chat history."
+          ariaLabel="Confirm thread deletion"
+          checked={settings.confirmThreadDelete}
+          isDefault={settings.confirmThreadDelete === DEFAULT_CLIENT_SETTINGS.confirmThreadDelete}
+          onChange={(confirmThreadDelete) => save({ confirmThreadDelete })}
+        />
+      </SettingsSection>
       <TextGenerationSection />
       <details className="group flex flex-col gap-2">
         <summary className="flex cursor-pointer list-none items-center gap-2 text-sm text-neutral-600 hover:text-neutral-900 dark:text-neutral-300 dark:hover:text-neutral-100">
@@ -96,6 +134,15 @@ export function GeneralSettingsPanel() {
           <ChevronRightIcon className="size-4 transition-transform group-open:rotate-90 motion-reduce:transition-none" />
         </summary>
         <div className="mt-2 divide-y divide-neutral-200 rounded-lg border border-neutral-200 dark:divide-neutral-800 dark:border-neutral-800">
+          <SettingsSwitchRow
+            id="legacy-plan-mode"
+            title="Plan mode (legacy)"
+            description="Restore Build/Plan, /plan, /default, and Shift+Tab. Off uses build mode."
+            ariaLabel="Plan mode (legacy)"
+            checked={settings.planModeEnabled}
+            isDefault={settings.planModeEnabled === DEFAULT_CLIENT_SETTINGS.planModeEnabled}
+            onChange={(planModeEnabled) => save({ planModeEnabled })}
+          />
           <SettingsSwitchRow
             id="legacy-sidebar"
             title="Sidebar (legacy)"
@@ -113,21 +160,61 @@ export function GeneralSettingsPanel() {
   );
 }
 
+const FOLLOW_UP_LABELS: Record<FollowUpBehavior, string> = { queue: "Queue", steer: "Steer" };
+
+/**
+ * **New threads** (T3 Code's `ProjectDefaultsSettings` on General): the
+ * permissions a new thread starts with, a server setting.
+ */
+function NewThreadsSection() {
+  const settings = usePrimaryConnectionState()?.config?.settings;
+  const [permissionsOpen, setPermissionsOpen] = useState(false);
+  return (
+    <SettingsSection id="settings-new-threads" title="New threads">
+      {settings === undefined ? (
+        <p className="px-4 py-3 text-sm text-neutral-500 dark:text-neutral-400">
+          Connecting to the server…
+        </p>
+      ) : (
+        <SettingsRow
+          id="default-permissions"
+          title="Permissions"
+          description="Default permissions for new threads."
+          reset={{
+            label: "default permissions",
+            isDefault: settings.defaultRuntimeMode === DEFAULT_SERVER_SETTINGS.defaultRuntimeMode,
+            onReset: () =>
+              void saveServerSettings({
+                defaultRuntimeMode: DEFAULT_SERVER_SETTINGS.defaultRuntimeMode,
+              }),
+          }}
+          control={
+            <RuntimeModePicker
+              variant="setting"
+              mode={settings.defaultRuntimeMode}
+              open={permissionsOpen}
+              onOpenChange={setPermissionsOpen}
+              onSelect={(defaultRuntimeMode) => void saveServerSettings({ defaultRuntimeMode })}
+            />
+          }
+        />
+      )}
+    </SettingsSection>
+  );
+}
+
 /**
  * Automatic settlement's rows (T3 Code's **Auto-settle inactive threads** and
  * **Days of inactivity before auto-settle** in `SettingsPanels.tsx`): the
  * switch turns `sidebarAutoSettleAfterDays` off (null) or back to 3 days,
- * and while it is on the days field sets it. A server setting, saved through
- * `server.updateSettings`. T3 Code's merge and pull-request rows have no
- * place in Playstead.
+ * and while it is on the days field sets it. A server setting. T3 Code's
+ * merge and pull-request rows have no place in Playstead.
  */
 function AutoSettleRows() {
   const config = usePrimaryConnectionState()?.config;
   const afterDays = config?.settings.sidebarAutoSettleAfterDays;
   const save = (sidebarAutoSettleAfterDays: number | null) =>
-    requestPrimary((client) =>
-      client["server.updateSettings"]({ patch: { sidebarAutoSettleAfterDays } }),
-    ).catch((error: unknown) => failureToast("Failed to save settings", error));
+    saveServerSettings({ sidebarAutoSettleAfterDays });
   if (afterDays === undefined) return null;
   return (
     <>
@@ -203,16 +290,13 @@ const sameSelection = (left: ModelSelection, right: ModelSelection) =>
  * **Text generation** (T3 Code's section of that name in
  * `SettingsPanels.tsx`): the model picker over the installed providers,
  * standing on the fallback when the chosen provider cannot run, and
- * **Reset** while the setting is off T3 Code's default. A server setting,
- * saved through `server.updateSettings`. Choosing reasoning effort and the
- * other options waits for the traits picker (slice 1).
+ * **Reset** while the setting is off T3 Code's default. A server setting.
+ * Choosing reasoning effort and the other options is not offered here yet.
  */
 function TextGenerationSection() {
   const config = usePrimaryConnectionState()?.config;
   const save = (textGenerationModelSelection: ModelSelection) =>
-    requestPrimary((client) =>
-      client["server.updateSettings"]({ patch: { textGenerationModelSelection } }),
-    ).catch((error: unknown) => failureToast("Text generation model not saved", error));
+    saveServerSettings({ textGenerationModelSelection }, "Text generation model not saved");
   const entries = config === undefined ? [] : deriveModelPickerEntries(config.providers, undefined);
   const saved = config?.settings.textGenerationModelSelection;
   const selection =
@@ -224,32 +308,18 @@ function TextGenerationSection() {
     sameSelection(saved, DEFAULT_SERVER_SETTINGS.textGenerationModelSelection);
 
   return (
-    <section aria-labelledby="settings-text-generation" className="flex flex-col gap-2">
-      <h2
-        id="settings-text-generation"
-        className="text-sm font-medium text-neutral-600 dark:text-neutral-300"
-      >
-        Text generation
-      </h2>
-      <div className="rounded-lg border border-neutral-200 dark:border-neutral-800">
-        <div id="text-generation-model" className="flex items-center gap-4 px-4 py-3">
-          <div className="min-w-0 flex-1">
-            <div className="text-sm font-medium">Text generation model</div>
-            <div className="text-xs text-neutral-500 dark:text-neutral-400">
-              Used for thread titles.
-            </div>
-          </div>
-          {isDefault ? null : (
-            <button
-              type="button"
-              aria-label="Reset text generation model to default"
-              onClick={() => void save(DEFAULT_SERVER_SETTINGS.textGenerationModelSelection)}
-              className="text-xs text-neutral-500 hover:underline dark:text-neutral-400"
-            >
-              Reset
-            </button>
-          )}
-          {config === undefined ? (
+    <SettingsSection id="settings-text-generation" title="Text generation">
+      <SettingsRow
+        id="text-generation-model"
+        title="Text generation model"
+        description="Used for thread titles."
+        reset={{
+          label: "text generation model",
+          isDefault,
+          onReset: () => void save(DEFAULT_SERVER_SETTINGS.textGenerationModelSelection),
+        }}
+        control={
+          config === undefined ? (
             <span className="text-sm text-neutral-500 dark:text-neutral-400">
               Connecting to the server…
             </span>
@@ -266,16 +336,71 @@ function TextGenerationSection() {
               ariaLabel="Text generation model"
               onSelect={(next) => void save(resolveTextGenerationSelection(next, config.providers))}
             />
-          )}
-        </div>
+          )
+        }
+      />
+    </SettingsSection>
+  );
+}
+
+/** A titled group of rows (T3 Code's `SettingsSection`). */
+function SettingsSection(props: {
+  readonly id: string;
+  readonly title: string;
+  readonly children: ReactNode;
+}) {
+  return (
+    <section aria-labelledby={props.id} className="flex flex-col gap-2">
+      <h2 id={props.id} className="text-sm font-medium text-neutral-600 dark:text-neutral-300">
+        {props.title}
+      </h2>
+      <div className="divide-y divide-neutral-200 rounded-lg border border-neutral-200 dark:divide-neutral-800 dark:border-neutral-800">
+        {props.children}
       </div>
     </section>
   );
 }
 
-/** A row with a switch, and **Reset** while it is off its default (T3 Code's `SettingsRow`). */
-function SettingsSwitchRow(props: {
+/**
+ * A setting's row: its title, description and control, and **Reset** while
+ * it is off its default (T3 Code's `SettingsRow` and `SettingResetButton`).
+ */
+function SettingsRow(props: {
   /** Where the command palette's settings search opens the page. */
+  readonly id: string;
+  readonly title: string;
+  readonly description: ReactNode;
+  readonly reset?: {
+    readonly label: string;
+    readonly isDefault: boolean;
+    readonly onReset: () => void;
+  };
+  readonly control: ReactNode;
+}) {
+  return (
+    <div id={props.id} className="flex items-center gap-4 px-4 py-3">
+      <div className="min-w-0 flex-1">
+        <div className="text-sm font-medium">{props.title}</div>
+        <div className="text-xs text-neutral-500 dark:text-neutral-400">{props.description}</div>
+      </div>
+      {props.reset === undefined || props.reset.isDefault ? null : (
+        <button
+          type="button"
+          aria-label={`Reset ${props.reset.label} to default`}
+          title="Reset to default"
+          onClick={props.reset.onReset}
+          className="text-xs text-neutral-500 hover:underline dark:text-neutral-400"
+        >
+          Reset
+        </button>
+      )}
+      {props.control}
+    </div>
+  );
+}
+
+/** A row with a switch, and **Reset** while it is off its default. */
+function SettingsSwitchRow(props: {
   readonly id: string;
   readonly title: string;
   readonly description: ReactNode;
@@ -285,25 +410,23 @@ function SettingsSwitchRow(props: {
   readonly onChange: (checked: boolean) => void;
 }) {
   return (
-    <div id={props.id} className="flex items-center gap-4 px-4 py-3">
-      <div className="min-w-0 flex-1">
-        <div className="text-sm font-medium">{props.title}</div>
-        <div className="text-xs text-neutral-500 dark:text-neutral-400">{props.description}</div>
-      </div>
-      {props.isDefault ? null : (
-        <button
-          type="button"
-          onClick={() => props.onChange(!props.checked)}
-          className="text-xs text-neutral-500 hover:underline dark:text-neutral-400"
-        >
-          Reset
-        </button>
-      )}
-      <Switch ariaLabel={props.ariaLabel} checked={props.checked} onChange={props.onChange} />
-    </div>
+    <SettingsRow
+      id={props.id}
+      title={props.title}
+      description={props.description}
+      reset={{
+        label: props.title,
+        isDefault: props.isDefault,
+        onReset: () => props.onChange(!props.checked),
+      }}
+      control={
+        <Switch ariaLabel={props.ariaLabel} checked={props.checked} onChange={props.onChange} />
+      }
+    />
   );
 }
 
+/** An on/off setting (T3 Code's `Switch`). */
 function Switch(props: {
   readonly ariaLabel: string;
   readonly checked: boolean;

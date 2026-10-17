@@ -46,6 +46,7 @@ export const layer = Layer.mergeAll(EventSink.layer, ManagedProjectFolders.layer
  */
 export const layerCore = Layer.mergeAll(EffectWorker.layer, ThreadSettlementService.layer).pipe(
   Layer.provide(ThreadTitleRegenerationService.layer),
+  // A steer that comes too late dispatches its message again.
   Layer.provideMerge(Orchestrator.layer),
   Layer.provide(ProviderTurnStartService.layer),
   Layer.provide(Layer.mergeAll(RunExecutionService.layer, ProviderSessionManager.layer)),

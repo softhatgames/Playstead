@@ -41,17 +41,30 @@ const SidebarThreadPreviewCount = Schema.Int.check(
 );
 
 /**
+ * What Enter does while a run is active (T3 Code's `followUpBehavior` in
+ * `packages/contracts/src/settings.ts` at 2577baf): queue the message
+ * behind the run, or steer the run with it. Queue is the default, as T3
+ * Code's code has it (its composer document says steer).
+ */
+export const FollowUpBehavior = Schema.Literals(["queue", "steer"]);
+export type FollowUpBehavior = typeof FollowUpBehavior.Type;
+
+/**
  * The interface's settings that live with the client rather than the server
  * (T3 Code's `ClientSettingsSchema`, `packages/contracts/src/settings.ts` at
  * 2577baf): in the desktop app's `client-settings.json`, in a browser's
  * localStorage. Each arrives with the feature that uses it, with T3 Code's
- * default, which a file written before it decodes to.
+ * default, which a file written before it decodes to. The fields are in T3
+ * Code's order.
  */
 export const ClientSettings = Schema.Struct({
   /** Ask before archiving a thread. */
   confirmThreadArchive: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   /** Ask before deleting a thread. */
   confirmThreadDelete: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  /** **Plan mode (legacy)**: the Plan/Build toggle, `/plan`, `/default` and Shift+Tab. */
+  planModeEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  followUpBehavior: FollowUpBehavior.pipe(Schema.withDecodingDefault(Effect.succeed("queue"))),
   /** Show the project tree (**Sidebar (legacy)**) instead of the inbox sidebar. */
   legacySidebarEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   /** Fold working threads into the inbox sidebar's **Working** section (beta). */

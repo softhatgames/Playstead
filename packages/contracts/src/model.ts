@@ -12,7 +12,42 @@ import { TrimmedNonEmptyString } from "./baseSchemas.ts";
  * absent.
  */
 
-const ProviderOptionSelection = Schema.Struct({
+export const ProviderOptionChoice = Schema.Struct({
+  id: TrimmedNonEmptyString,
+  label: TrimmedNonEmptyString,
+  description: Schema.optionalKey(TrimmedNonEmptyString),
+  isDefault: Schema.optionalKey(Schema.Boolean),
+});
+export type ProviderOptionChoice = typeof ProviderOptionChoice.Type;
+
+const ProviderOptionDescriptorBase = {
+  id: TrimmedNonEmptyString,
+  label: TrimmedNonEmptyString,
+  description: Schema.optionalKey(TrimmedNonEmptyString),
+} as const;
+
+/** One choice among several; `promptInjectedValues` are chosen by writing them in the prompt (Ultrathink). */
+const SelectProviderOptionDescriptor = Schema.Struct({
+  ...ProviderOptionDescriptorBase,
+  type: Schema.Literal("select"),
+  options: Schema.Array(ProviderOptionChoice),
+  currentValue: Schema.optionalKey(TrimmedNonEmptyString),
+  promptInjectedValues: Schema.optionalKey(Schema.Array(TrimmedNonEmptyString)),
+});
+
+const BooleanProviderOptionDescriptor = Schema.Struct({
+  ...ProviderOptionDescriptorBase,
+  type: Schema.Literal("boolean"),
+  currentValue: Schema.optionalKey(Schema.Boolean),
+});
+
+export const ProviderOptionDescriptor = Schema.Union([
+  SelectProviderOptionDescriptor,
+  BooleanProviderOptionDescriptor,
+]);
+export type ProviderOptionDescriptor = typeof ProviderOptionDescriptor.Type;
+
+export const ProviderOptionSelection = Schema.Struct({
   id: TrimmedNonEmptyString,
   value: Schema.Union([TrimmedNonEmptyString, Schema.Boolean]),
 });
@@ -20,3 +55,9 @@ export type ProviderOptionSelection = typeof ProviderOptionSelection.Type;
 
 export const ProviderOptionSelections = Schema.Array(ProviderOptionSelection);
 export type ProviderOptionSelections = typeof ProviderOptionSelections.Type;
+
+/** What a model offers (T3 Code's `ModelCapabilities`). */
+export const ModelCapabilities = Schema.Struct({
+  optionDescriptors: Schema.optionalKey(Schema.Array(ProviderOptionDescriptor)),
+});
+export type ModelCapabilities = typeof ModelCapabilities.Type;

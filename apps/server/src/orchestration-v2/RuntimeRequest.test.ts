@@ -2,19 +2,12 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import { CommandId, RuntimeRequestId } from "@playstead/contracts/baseSchemas";
 import { OrchestrationDispatchCommandError } from "@playstead/contracts/orchestrationV2";
-import {
-  decodeProviderReplayNdjson,
-  materializeReplayWorkspace,
-} from "@playstead/provider-testing/replayTranscript";
 import * as Effect from "effect/Effect";
-import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
-import * as Path from "effect/Path";
 
-import { makeClaudeReplay } from "./Adapters/ClaudeAdapterV2.testkit.ts";
-import { makeCodexReplay } from "./Adapters/CodexAdapterV2.testkit.ts";
 import { makeTestServerConfig } from "../testUtils/testServer.ts";
 import { makeOrchestrationHarness } from "./testkit/OrchestratorHarness.ts";
+import { replayClaude, replayProvider } from "./testkit/ProviderReplay.ts";
 import {
   answerQuestion,
   awaitPendingQuestion,
@@ -25,55 +18,6 @@ import {
   runQuestionInterruptScenario,
   sendQuestionMessage,
 } from "./testkit/fixtures/questionAnswer.ts";
-
-const readRecording = (name: string) =>
-  Effect.gen(function* () {
-    const fs = yield* FileSystem.FileSystem;
-    const path = yield* Path.Path;
-    const file = path.join(
-      path.dirname(yield* path.fromFileUrl(new URL(import.meta.url))),
-      "testkit",
-      "fixtures",
-      name,
-    );
-    return yield* decodeProviderReplayNdjson(yield* fs.readFileString(file));
-  });
-
-type HarnessInput = Parameters<typeof makeOrchestrationHarness>[0];
-
-/** Seam 1 with the provider's transport replaying a recording made in the harness's folder. */
-const replayed = (
-  provider: "Claude" | "Codex",
-  name: string,
-  options: Pick<HarnessInput, "config" | "recoverOnStartup"> = {},
-) =>
-  Effect.gen(function* () {
-    const path = yield* Path.Path;
-    const recorded = yield* readRecording(name);
-    if (provider === "Claude") {
-      let replay: Effect.Success<ReturnType<typeof makeClaudeReplay>> | undefined;
-      const harness = yield* makeOrchestrationHarness({
-        ...options,
-        claudeRunner: {
-          allocateSessionId: Effect.suspend(() => replay!.runner.allocateSessionId),
-          open: (input) => Effect.suspend(() => replay!.runner.open(input)),
-        },
-      });
-      replay = yield* makeClaudeReplay(
-        yield* materializeReplayWorkspace(recorded, path.join(harness.home, "empty-game")),
-      );
-      return { harness, assertComplete: replay.assertComplete, recorded };
-    }
-    let replay: Effect.Success<ReturnType<typeof makeCodexReplay>> | undefined;
-    const harness = yield* makeOrchestrationHarness({
-      ...options,
-      codexClients: { open: (input) => Effect.suspend(() => replay!.clients.open(input)) },
-    });
-    replay = yield* makeCodexReplay(
-      yield* materializeReplayWorkspace(recorded, path.join(harness.home, "empty-game")),
-    );
-    return { harness, assertComplete: replay.assertComplete, recorded };
-  });
 
 const projectionOf = (harness: Effect.Success<ReturnType<typeof makeOrchestrationHarness>>) =>
   Effect.map(harness.orchestrator.getThreadProjection(QUESTION_IDS.threadId), Option.getOrThrow);
@@ -90,8 +34,8 @@ describe("Answer a provider's question", () => {
         `${provider.name}: the provider asks, the answer goes through runtime-request.respond, and the run completes`,
         () =>
           Effect.gen(function* () {
-            const { harness, assertComplete } = yield* replayed(
-              provider.name,
+            const { harness, assertComplete } = yield* replayProvider(
+              provider.file,
               `question_answer.${provider.file}.ndjson`,
             );
 
@@ -138,8 +82,8 @@ describe("Answer a provider's question", () => {
         `${provider.name}: interrupting a turn waiting on a question ends it interrupted and clears the question`,
         () =>
           Effect.gen(function* () {
-            const { harness, assertComplete } = yield* replayed(
-              provider.name,
+            const { harness, assertComplete } = yield* replayProvider(
+              provider.file,
               `question_interrupt.${provider.file}.ndjson`,
             );
 
@@ -173,6 +117,7 @@ describe("Answer a provider's question", () => {
             assert.strictEqual(late.message, `Runtime request ${pending.request.id} is cancelled.`);
             const next = yield* harness.orchestrator.dispatch({
               type: "message.dispatch",
+              dispatchMode: { type: "start_immediately" },
               commandId: CommandId.make("command:question:message:2"),
               threadId: QUESTION_IDS.threadId,
               messageId: QUESTION_IDS.nextMessageId,
@@ -187,7 +132,7 @@ describe("Answer a provider's question", () => {
       "an answer is refused for a question nobody asked, or that leaves a question unanswered",
       () =>
         Effect.gen(function* () {
-          const { harness } = yield* replayed("Claude", "question_answer.claude.ndjson");
+          const { harness } = yield* replayClaude("question_answer.claude.ndjson");
           const { sent } = yield* sendQuestionMessage(harness, CLAUDE_QUESTION_SCENARIO);
           const pending = yield* awaitPendingQuestion(harness, sent.sequence);
           const respond = (attempt: string, requestId: RuntimeRequestId, answer: string) =>
@@ -223,13 +168,14 @@ describe("Answer a provider's question", () => {
         Effect.gen(function* () {
           // The first server stops (is left behind) while Claude waits on the answer.
           const config = yield* makeTestServerConfig();
-          const first = yield* replayed("Claude", "question_answer.claude.ndjson", { config });
+          const first = yield* replayClaude("question_answer.claude.ndjson", {
+            harness: { config },
+          });
           const { sent } = yield* sendQuestionMessage(first.harness, CLAUDE_QUESTION_SCENARIO);
           const pending = yield* awaitPendingQuestion(first.harness, sent.sequence);
 
-          const { harness } = yield* replayed("Claude", "question_answer.claude.ndjson", {
-            config,
-            recoverOnStartup: true,
+          const { harness } = yield* replayClaude("question_answer.claude.ndjson", {
+            harness: { config, recoverOnStartup: true },
           });
           const projection = yield* projectionOf(harness);
           const request = projection.runtimeRequests.find(

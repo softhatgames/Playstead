@@ -11,11 +11,13 @@ import type {
 import type {
   ModelSelection,
   OrchestrationV2ExecutionNode,
+  OrchestrationV2PlanArtifact,
   OrchestrationV2ProviderFailure,
   OrchestrationV2ProviderSession,
   OrchestrationV2ProviderThread,
   OrchestrationV2RuntimeRequest,
   OrchestrationV2TurnItem,
+  ProviderApprovalDecision,
   ProviderInteractionMode,
   ProviderUserInputAnswers,
   RuntimeMode,
@@ -32,11 +34,11 @@ import type * as Stream from "effect/Stream";
  * provider's protocol stays behind its adapter; the orchestration core sees
  * only sessions, turns and the events below.
  *
- * Trimmed to starting and interrupting turns and answering the provider's
- * questions. Steering, rollback, fork and approvals are absent.
+ * Trimmed to starting, steering and interrupting turns and answering the
+ * provider's approvals and questions. Rollback and fork are absent.
  */
 
-/** Every thread runs in Full access with the default interaction mode, in its project's folder. */
+/** A turn runs in its thread's runtime and interaction modes, in its project's folder. */
 export interface ProviderAdapterV2RuntimePolicy {
   readonly runtimeMode: RuntimeMode;
   readonly interactionMode: ProviderInteractionMode;
@@ -69,6 +71,13 @@ export interface ProviderAdapterV2TurnInput {
   readonly runtimePolicy: ProviderAdapterV2RuntimePolicy;
 }
 
+/** A message for the turn that is running (T3 Code's `ProviderAdapterV2SteerInput`). */
+export interface ProviderAdapterV2SteerInput {
+  readonly providerThread: OrchestrationV2ProviderThread;
+  readonly providerTurnId: ProviderTurnId;
+  readonly message: { readonly messageId: MessageId; readonly text: string };
+}
+
 /**
  * What an adapter reports while a turn runs. Items and nodes carry the run's
  * ids; the event sink gives each new item its ordinal. A turn ends with
@@ -77,11 +86,13 @@ export interface ProviderAdapterV2TurnInput {
 export type ProviderAdapterV2Event =
   | { readonly type: "node.updated"; readonly node: OrchestrationV2ExecutionNode }
   | { readonly type: "turn_item.updated"; readonly turnItem: OrchestrationV2TurnItem }
-  /** A question the provider waits on; its node and item come first. */
+  /** An approval or a question the provider waits on; its node and item come first. */
   | {
       readonly type: "runtime_request.updated";
       readonly runtimeRequest: OrchestrationV2RuntimeRequest;
     }
+  /** A plan the provider proposed or its todo list, with the node and item that show it. */
+  | { readonly type: "plan.updated"; readonly plan: OrchestrationV2PlanArtifact }
   | {
       readonly type: "turn.terminal";
       readonly providerTurnId: ProviderTurnId;
@@ -104,6 +115,7 @@ export class ProviderAdapterV2Error extends Schema.TaggedError<ProviderAdapterV2
       "ensure-thread",
       "start-turn",
       "interrupt-turn",
+      "steer-turn",
       "respond-to-runtime-request",
     ]),
     detail: Schema.String,
@@ -143,21 +155,33 @@ export interface ProviderAdapterV2SessionRuntime {
    * still ends with its `turn.terminal`, normally `interrupted`; when the
    * provider sends none within `INTERRUPT_TERMINAL_TIMEOUT`, the adapter ends
    * the turn interrupted itself, so the session can run the next one. Does
-   * nothing when the turn has already ended. A question the turn waits on
-   * is released without an answer, so the provider can stop; T3 Code's
-   * adapters leave it waiting.
+   * nothing when the turn has already ended. An approval or a question the
+   * turn waits on is released without an answer, so the provider can stop;
+   * T3 Code's adapters leave it waiting.
    */
   readonly interruptTurn: (input: {
     readonly providerThread: OrchestrationV2ProviderThread;
     readonly providerTurnId: ProviderTurnId;
   }) => Effect.Effect<void, ProviderAdapterV2Error>;
   /**
-   * Gives the provider the person's answers to a question it asked (T3
-   * Code's `respondToRuntimeRequest`). Fails when no such question waits.
+   * Sends the person's message into the running turn (T3 Code's
+   * `steerTurn`), which goes on with it; the turn still ends with one
+   * `turn.terminal`. Fails when that turn is no longer the session's
+   * running turn.
+   */
+  readonly steerTurn: (
+    input: ProviderAdapterV2SteerInput,
+  ) => Effect.Effect<void, ProviderAdapterV2Error>;
+  /**
+   * Gives the provider the person's answer to a request it made (T3 Code's
+   * `respondToRuntimeRequest`): a decision for an approval, answers for a
+   * question. Fails when no such request waits, or the answer is the wrong
+   * kind for it.
    */
   readonly respondToRuntimeRequest: (input: {
     readonly requestId: RuntimeRequestId;
-    readonly answers: ProviderUserInputAnswers;
+    readonly decision?: ProviderApprovalDecision;
+    readonly answers?: ProviderUserInputAnswers;
   }) => Effect.Effect<void, ProviderAdapterV2Error>;
 }
 
@@ -167,9 +191,29 @@ export interface ProviderAdapterV2SessionRuntime {
  */
 export const INTERRUPT_TERMINAL_TIMEOUT = "10 seconds";
 
+/**
+ * What an adapter's sessions can do (T3 Code's
+ * `OrchestrationV2ProviderCapabilities`, trimmed). A session that cannot
+ * switch runtime mode in session is closed and opened again, continuing the
+ * provider's conversation, when a turn starts in another runtime or
+ * interaction mode than the session opened with: Claude's plan mode is a
+ * permission mode too. An adapter that supports queued messages lets the
+ * orchestrator queue a message sent while a run is active, and start it as
+ * a turn of its own once that run ends; one that supports active steering
+ * takes a message into the turn it is running.
+ */
+export interface ProviderAdapterV2Capabilities {
+  readonly sessions: { readonly supportsRuntimeModeSwitchInSession: boolean };
+  readonly turns: {
+    readonly supportsQueuedMessages: boolean;
+    readonly supportsActiveSteering: boolean;
+  };
+}
+
 export interface ProviderAdapterV2 {
   readonly instanceId: ProviderInstanceId;
   readonly driver: ProviderDriverKind;
+  readonly capabilities: ProviderAdapterV2Capabilities;
   readonly openSession: (
     input: ProviderAdapterV2OpenSessionInput,
   ) => Effect.Effect<ProviderAdapterV2SessionRuntime, ProviderAdapterV2Error, Scope.Scope>;

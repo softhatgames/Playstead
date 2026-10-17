@@ -37,6 +37,8 @@ const SHELL_THREAD_EVENT_TYPES: ReadonlySet<string> = new Set([
   "thread.snoozed",
   "thread.unsnoozed",
   "thread.auto-settle-set",
+  "thread.runtime-mode-updated",
+  "thread.interaction-mode-updated",
   "run.created",
   "run.updated",
   // A question raised or answered: the sidebar shows it, and it wakes a snooze.

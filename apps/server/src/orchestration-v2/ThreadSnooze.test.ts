@@ -213,6 +213,7 @@ describe("Snooze a thread", () => {
           yield* harness.orchestrator
             .dispatch({
               type: "message.dispatch",
+              dispatchMode: { type: "start_immediately" },
               commandId: CommandId.make("command:message-2"),
               threadId,
               messageId: MessageId.make("message:file-create:2"),

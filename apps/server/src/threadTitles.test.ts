@@ -135,6 +135,7 @@ describe("generated titles over RPC", () => {
           );
           yield* dispatch({
             type: "thread.create",
+            runtimeMode: "full-access",
             commandId: CommandId.make("command:create"),
             threadId,
             projectId,
@@ -143,6 +144,7 @@ describe("generated titles over RPC", () => {
           });
           yield* dispatch({
             type: "message.dispatch",
+            dispatchMode: { type: "start_immediately" },
             commandId: CommandId.make("command:message"),
             threadId,
             messageId: MessageId.make("message:moon:1"),
@@ -195,6 +197,7 @@ describe("generated titles over RPC", () => {
         assert.deepStrictEqual(settings, {
           providerInstances: {},
           textGenerationModelSelection: claudeHaiku,
+          defaultRuntimeMode: "full-access",
           sidebarAutoSettleAfterDays: 3,
         });
         yield* awaitConnectionState(
@@ -230,6 +233,7 @@ describe("generated titles over RPC", () => {
         assert.deepStrictEqual(state.config?.settings, {
           providerInstances: { codex: { driver: "codex", config: { binaryPath: "my-codex" } } },
           textGenerationModelSelection: DEFAULT_TEXT_GENERATION_MODEL_SELECTION,
+          defaultRuntimeMode: "full-access",
           sidebarAutoSettleAfterDays: 3,
         });
       }).pipe(Effect.scoped),

@@ -12,6 +12,7 @@ import {
   threadRuntimeCanArchive,
 } from "../components/threadActionMenu.logic.ts";
 import {
+  readPrimaryServerSettings,
   readPrimaryShellThreads,
   requestPrimary,
   usePrimaryConnectionState,
@@ -338,7 +339,7 @@ export function useThreadActions() {
       if (viewing) {
         await navigate({
           to: "/draft/$draftId",
-          params: { draftId: createDraft(thread.projectId) },
+          params: { draftId: createDraft(thread.projectId, readPrimaryServerSettings()) },
         });
       }
     },

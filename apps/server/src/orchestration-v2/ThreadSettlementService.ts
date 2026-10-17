@@ -1,5 +1,8 @@
 import { CommandId, type ThreadId } from "@playstead/contracts/baseSchemas";
-import type { OrchestrationV2AppThread } from "@playstead/contracts/orchestrationV2";
+import {
+  type OrchestrationV2AppThread,
+  TERMINAL_RUN_STATUSES,
+} from "@playstead/contracts/orchestrationV2";
 import type { ServerSettings } from "@playstead/contracts/settings";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
@@ -184,13 +187,6 @@ export class ThreadSettlementService extends Context.Service<
 
 const settlementSettingsKey = (settings: ServerSettings) =>
   JSON.stringify([settings.sidebarAutoSettleAfterDays]);
-
-const TERMINAL_RUN_STATUSES: ReadonlySet<string> = new Set([
-  "completed",
-  "interrupted",
-  "failed",
-  "cancelled",
-]);
 
 const make = Effect.gen(function* () {
   const orchestrator = yield* Orchestrator.OrchestratorV2;

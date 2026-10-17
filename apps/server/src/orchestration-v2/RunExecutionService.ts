@@ -1,4 +1,5 @@
 import {
+  type MessageId,
   type ProviderSessionId,
   type ProviderTurnId,
   type RunId,
@@ -17,6 +18,7 @@ import {
   type OrchestrationV2RunAttempt,
   type OrchestrationV2ThreadProjection,
   type OrchestrationV2TurnItem,
+  type ProviderApprovalDecision,
   type ProviderUserInputAnswers,
 } from "@playstead/contracts/orchestrationV2";
 import type {
@@ -38,7 +40,7 @@ import * as Stream from "effect/Stream";
 import type { EventSinkWriteError } from "./EventSink.ts";
 import * as EventSink from "./EventSink.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
-import { interruptRequestItemId, interruptResultItem } from "./ThreadCommands.ts";
+import { interruptRequestItemId, interruptResultItem } from "./RunInterrupt.ts";
 
 /** The run's records as the turn started them; the final events update these. */
 export interface RootRunRecords {
@@ -70,6 +72,8 @@ const ingestProviderEvent = (
       return itemEvents(event.turnItem, base, now);
     case "runtime_request.updated":
       return [{ ...base, type: "runtime-request.updated", payload: event.runtimeRequest }];
+    case "plan.updated":
+      return [{ ...base, type: "plan.updated", payload: event.plan }];
   }
 };
 
@@ -106,13 +110,20 @@ const UNFINISHED_ITEM_STATUSES: ReadonlySet<OrchestrationV2TurnItem["status"]> =
   "waiting",
 ]);
 
+/** The item that shows a runtime request: its approval or its questions. */
+const isRequestItem = (
+  item: OrchestrationV2TurnItem,
+): item is Extract<OrchestrationV2TurnItem, { type: "approval_request" | "user_input_request" }> =>
+  item.type === "approval_request" || item.type === "user_input_request";
+
 /**
- * The questions a turn leaves unanswered when it ends, however it ends:
- * each pending runtime request is cancelled, with its node and item, so the
- * pending user-input panel clears (T3 Code's `dismissNativeUserInputs` in
- * `ProviderEventIngestor.ts` at 2577baf).
+ * The approvals and questions a turn leaves unanswered when it ends,
+ * however it ends: each pending runtime request is cancelled, with its node
+ * and item, so the pending approval and user-input panels clear (T3 Code's
+ * `dismissNativeUserInputs` in `ProviderEventIngestor.ts` at 2577baf, which
+ * does it for questions only).
  */
-const unansweredQuestionSettlement = (
+const unansweredRequestSettlement = (
   projection: OrchestrationV2ThreadProjection,
   run: OrchestrationV2Run,
   providerTurnId: ProviderTurnId | null,
@@ -123,7 +134,7 @@ const unansweredQuestionSettlement = (
     if (request.status !== "pending" || request.providerTurnId !== providerTurnId) return [];
     const node = projection.nodes.find((candidate) => candidate.id === request.nodeId);
     const items = projection.turnItems.filter(
-      (item) => item.type === "user_input_request" && item.requestId === request.id,
+      (item) => isRequestItem(item) && item.requestId === request.id,
     );
     return [
       {
@@ -153,8 +164,8 @@ const unansweredQuestionSettlement = (
 };
 
 /**
- * What an interrupted run leaves settled, read from its projection: a
- * question it waits on is cancelled, every other item still open ends
+ * What an interrupted run leaves settled, read from its projection: an
+ * approval or a question it waits on is cancelled, every other item still open ends
  * interrupted, a streaming reply stops, and an interrupt the person asked
  * for gets its result item (T3 Code writes it when the turn's terminal
  * pairs a `run_interrupt_request`, in `RunExecutionService.ts`
@@ -167,13 +178,15 @@ const interruptedRunSettlement = (
   now: string,
 ): ReadonlyArray<EventSink.NewDomainEvent> => {
   const base = { threadId: run.threadId, runId: run.id, occurredAt: now };
-  const questions = unansweredQuestionSettlement(projection, run, providerTurnId, now);
+  const requests = unansweredRequestSettlement(projection, run, providerTurnId, now);
   const open = projection.turnItems.flatMap((item) => {
     if (item.runId !== run.id || !UNFINISHED_ITEM_STATUSES.has(item.status)) return [];
-    if (item.type === "user_input_request") return [];
+    if (isRequestItem(item)) return [];
     const ended = { ...item, status: "interrupted" as const, completedAt: now, updatedAt: now };
     return itemEvents(
-      ended.type === "assistant_message" ? { ...ended, streaming: false } : ended,
+      ended.type === "assistant_message" || ended.type === "proposed_plan"
+        ? { ...ended, streaming: false }
+        : ended,
       base,
       now,
     );
@@ -193,7 +206,7 @@ const interruptedRunSettlement = (
         },
       ]
     : [];
-  return [...questions, ...open, ...result];
+  return [...requests, ...open, ...result];
 };
 
 /**
@@ -369,15 +382,30 @@ export class RunExecutionServiceV2 extends Context.Service<
       readonly providerTurnId: ProviderTurnId;
     }) => Effect.Effect<void, EventSinkWriteError | ProjectionStore.ProjectionStoreV2Error>;
     /**
+     * The effect worker's `provider-turn.steer` (T3 Code's
+     * `ProviderTurnControlServiceV2.steer`): gives the run's live session
+     * the steering message for the turn it is running. Fails when that turn
+     * has ended, saying whether it completed, so the message can start a
+     * turn of its own.
+     */
+    readonly steerRun: (input: {
+      readonly threadId: ThreadId;
+      readonly runId: RunId;
+      readonly providerSessionId: ProviderSessionId;
+      readonly providerTurnId: ProviderTurnId;
+      readonly messageId: MessageId;
+    }) => Effect.Effect<void, ProviderTurnSteerError | ProjectionStore.ProjectionStoreV2Error>;
+    /**
      * The effect worker's `runtime-request.respond` (T3 Code's
      * `RuntimeRequestServiceV2.respond`): gives the run's live session the
-     * person's answers. Fails when the session that asked is gone.
+     * person's decision or answers. Fails when the session that asked is gone.
      */
     readonly respondToRuntimeRequest: (input: {
       readonly runId: RunId;
       readonly providerSessionId: ProviderSessionId;
       readonly requestId: RuntimeRequestId;
-      readonly answers: ProviderUserInputAnswers;
+      readonly decision?: ProviderApprovalDecision;
+      readonly answers?: ProviderUserInputAnswers;
     }) => Effect.Effect<void, ProviderAdapterV2Error | RuntimeRequestResponseError>;
   }
 >()("@playstead/server/orchestration-v2/RunExecutionService/RunExecutionServiceV2") {}
@@ -386,6 +414,20 @@ export class RunExecutionServiceV2 extends Context.Service<
 export class RuntimeRequestResponseError extends Schema.TaggedError<RuntimeRequestResponseError>()(
   "RuntimeRequestResponseError",
   { requestId: Schema.String, detail: Schema.String },
+) {
+  override get message(): string {
+    return this.detail;
+  }
+}
+
+/**
+ * The steering message did not reach the turn (T3 Code's
+ * `ProviderTurnControlError` for `steer`). `turnCompleted` says the turn
+ * had already completed, so the message should start a turn of its own.
+ */
+export class ProviderTurnSteerError extends Schema.TaggedError<ProviderTurnSteerError>()(
+  "ProviderTurnSteerError",
+  { runId: Schema.String, turnCompleted: Schema.Boolean, detail: Schema.String },
 ) {
   override get message(): string {
     return this.detail;
@@ -418,7 +460,7 @@ const make = Effect.gen(function* () {
         onSome: (projection) =>
           status === "interrupted"
             ? interruptedRunSettlement(projection, records.run, records.providerTurn.id, now)
-            : unansweredQuestionSettlement(projection, records.run, records.providerTurn.id, now),
+            : unansweredRequestSettlement(projection, records.run, records.providerTurn.id, now),
       });
       yield* whileActive(records.run.id, [
         ...settlement,
@@ -552,7 +594,8 @@ const make = Effect.gen(function* () {
     readonly runId: RunId;
     readonly providerSessionId: ProviderSessionId;
     readonly requestId: RuntimeRequestId;
-    readonly answers: ProviderUserInputAnswers;
+    readonly decision?: ProviderApprovalDecision;
+    readonly answers?: ProviderUserInputAnswers;
   }) =>
     Effect.suspend(
       (): Effect.Effect<void, ProviderAdapterV2Error | RuntimeRequestResponseError> => {
@@ -570,12 +613,70 @@ const make = Effect.gen(function* () {
         }
         return running.session.respondToRuntimeRequest({
           requestId: input.requestId,
-          answers: input.answers,
+          ...(input.decision === undefined ? {} : { decision: input.decision }),
+          ...(input.answers === undefined ? {} : { answers: input.answers }),
         });
       },
     );
 
-  return RunExecutionServiceV2.of({ startRootRun, interruptRun, respondToRuntimeRequest });
+  /** The steer's provider turn as the projection has it now, and its message. */
+  const steerContext = (input: {
+    readonly threadId: ThreadId;
+    readonly providerTurnId: ProviderTurnId;
+    readonly messageId: MessageId;
+  }) =>
+    Effect.map(projections.getThread(input.threadId), (projection) => ({
+      providerTurn: Option.getOrUndefined(projection)?.providerTurns.find(
+        (turn) => turn.id === input.providerTurnId,
+      ),
+      message: Option.getOrUndefined(projection)?.messages.find(
+        (candidate) => candidate.id === input.messageId,
+      ),
+    }));
+
+  const steerRun: RunExecutionServiceV2["Service"]["steerRun"] = (input) =>
+    Effect.gen(function* () {
+      const steerError = (turnCompleted: boolean, detail: string) =>
+        new ProviderTurnSteerError({ runId: input.runId, turnCompleted, detail });
+      const { providerTurn, message } = yield* steerContext(input);
+      if (providerTurn === undefined || message === undefined) {
+        return yield* steerError(false, "The steering message or its provider turn is missing.");
+      }
+      if (providerTurn.status !== "running") {
+        return yield* steerError(
+          providerTurn.status === "completed",
+          "The provider turn ended before the steering message was delivered.",
+        );
+      }
+      const running = live.get(input.runId);
+      if (running === undefined || running.session.providerSession.id !== input.providerSessionId) {
+        return yield* steerError(
+          false,
+          `Provider session ${input.providerSessionId} is not active.`,
+        );
+      }
+      yield* running.session
+        .steerTurn({
+          providerThread: running.records.providerThread,
+          providerTurnId: input.providerTurnId,
+          message: { messageId: message.id, text: message.text },
+        })
+        .pipe(
+          // The turn may have ended while the message was on its way.
+          Effect.catch((error) =>
+            Effect.flatMap(steerContext(input), (current) =>
+              Effect.fail(steerError(current.providerTurn?.status === "completed", error.message)),
+            ),
+          ),
+        );
+    });
+
+  return RunExecutionServiceV2.of({
+    startRootRun,
+    interruptRun,
+    steerRun,
+    respondToRuntimeRequest,
+  });
 });
 
 export const layer = Layer.effect(RunExecutionServiceV2, make);

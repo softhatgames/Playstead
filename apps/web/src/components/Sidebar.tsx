@@ -39,7 +39,7 @@ import {
 
 import { useClientSettings } from "../clientSettings.ts";
 import { openCommandPalette } from "../commandPaletteBus.ts";
-import { usePrimaryConnectionState } from "../connection/runtime.ts";
+import { readPrimaryServerSettings, usePrimaryConnectionState } from "../connection/runtime.ts";
 import { useThreadSearch } from "../connection/useThreadSearch.ts";
 import { createDraft } from "../drafts.ts";
 import { useBulkThreadMenu } from "../hooks/useBulkThreadMenu.ts";
@@ -433,7 +433,7 @@ export function Sidebar() {
         void (next === null
           ? navigate({
               to: "/draft/$draftId",
-              params: { draftId: createDraft(thread.projectId) },
+              params: { draftId: createDraft(thread.projectId, readPrimaryServerSettings()) },
             })
           : navigate({ to: "/threads/$threadId", params: { threadId: next as ThreadId } }));
       };

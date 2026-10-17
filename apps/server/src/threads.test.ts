@@ -91,6 +91,7 @@ describe("archive and delete over RPC", () => {
           for (const threadId of [kept, shelved]) {
             yield* dispatch({
               type: "thread.create",
+              runtimeMode: "full-access",
               commandId: CommandId.make(`command:create:${threadId}`),
               threadId,
               projectId,
@@ -187,6 +188,7 @@ describe("archive and delete over RPC", () => {
           );
           yield* dispatch({
             type: "thread.create",
+            runtimeMode: "full-access",
             commandId: CommandId.make("command:create"),
             threadId,
             projectId,
@@ -283,6 +285,7 @@ describe("archive and delete over RPC", () => {
           );
           yield* dispatch({
             type: "thread.create",
+            runtimeMode: "full-access",
             commandId: CommandId.make("command:create"),
             threadId,
             projectId,
@@ -291,6 +294,7 @@ describe("archive and delete over RPC", () => {
           });
           yield* dispatch({
             type: "message.dispatch",
+            dispatchMode: { type: "start_immediately" },
             commandId: CommandId.make("command:message"),
             threadId,
             messageId: MessageId.make("message:searched:1"),

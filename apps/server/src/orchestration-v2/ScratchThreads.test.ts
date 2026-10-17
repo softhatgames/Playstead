@@ -46,6 +46,7 @@ const modelSelection = {
 };
 const sendFirstMessage = {
   type: "message.dispatch",
+  dispatchMode: { type: "start_immediately" },
   commandId: CommandId.make("command:scratch:message"),
   threadId,
   messageId: MessageId.make("message:scratch:1"),
@@ -87,6 +88,7 @@ describe("Threads without a project", () => {
         const { projectId } = yield* harness.projects.ensureScratchProject;
         yield* harness.orchestrator.dispatch({
           type: "thread.create",
+          runtimeMode: "full-access",
           commandId: CommandId.make("command:scratch:thread"),
           threadId,
           projectId,
@@ -145,6 +147,7 @@ describe("Threads without a project", () => {
         });
         yield* harness.orchestrator.dispatch({
           type: "thread.create",
+          runtimeMode: "full-access",
           commandId: CommandId.make("command:space-game:thread"),
           threadId,
           projectId: ProjectId.make("project:space-game"),

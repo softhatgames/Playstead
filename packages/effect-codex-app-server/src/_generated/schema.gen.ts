@@ -881,6 +881,11 @@ export const V2ReasoningSummary = Schema.Union(
     "A summary of the reasoning performed by the model. This can be useful for debugging and understanding the model's reasoning process. See https://platform.openai.com/docs/guides/reasoning?api-mode=responses#reasoning-summaries",
   identifier: "V2ReasoningSummary",
 });
+export type V2ModeKind = "plan" | "default";
+export const V2ModeKind = Schema.Literals(["plan", "default"]).annotate({
+  description: "Initial collaboration mode to use when the TUI starts.",
+  identifier: "V2ModeKind",
+});
 export type V2TurnInterruptParams = { readonly threadId: string; readonly turnId: string };
 export const V2TurnInterruptParams = Schema.Struct({
   threadId: Schema.String,
@@ -2068,11 +2073,6 @@ export const V2ActivePermissionProfile = Schema.Struct({
       "Identifier from `default_permissions` or the implicit built-in default, such as `:workspace` or a user-defined `[permissions.<id>]` profile.",
   }),
 }).annotate({ identifier: "V2ActivePermissionProfile" });
-export type V2ModeKind = "plan" | "default";
-export const V2ModeKind = Schema.Literals(["plan", "default"]).annotate({
-  description: "Initial collaboration mode to use when the TUI starts.",
-  identifier: "V2ModeKind",
-});
 export type V2TokenUsageBreakdown = {
   readonly cacheWriteInputTokens?: number;
   readonly cachedInputTokens: number;
@@ -10236,6 +10236,7 @@ export type V2TurnStartParams = {
   readonly threadId: string;
   readonly toolOutput?: V2TurnToolOutput | null;
   readonly turnTrigger?: string | null;
+  readonly collaborationMode?: V2CollaborationMode | null;
 };
 export const V2TurnStartParams = Schema.Struct({
   approvalPolicy: Schema.optionalKey(
@@ -10349,6 +10350,12 @@ export const V2TurnStartParams = Schema.Struct({
       }),
       Schema.Null,
     ]),
+  ),
+  collaborationMode: Schema.optionalKey(
+    Schema.Union([V2CollaborationMode, Schema.Null]).annotate({
+      description:
+        'EXPERIMENTAL - Set a pre-set collaboration mode. Takes precedence over model, reasoning_effort, and developer instructions if set.\n\nFor `collaboration_mode.settings.developer_instructions`, `null` means "use the built-in instructions for the selected mode".',
+    }),
   ),
 }).annotate({ title: "TurnStartParams", identifier: "V2TurnStartParams" });
 export type V2Turn = {

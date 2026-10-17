@@ -3,7 +3,7 @@ import { useNavigate, useParams } from "@tanstack/react-router";
 import { useCallback, useMemo } from "react";
 
 import { useClientSettings } from "../clientSettings.ts";
-import { usePrimaryConnectionState } from "../connection/runtime.ts";
+import { readPrimaryServerSettings, usePrimaryConnectionState } from "../connection/runtime.ts";
 import { createDraft, useDraft } from "../drafts.ts";
 import { buildSidebarProjectGroups } from "../components/Sidebar.inbox.logic.ts";
 import { resolveNewThreadProjectId } from "../components/threadNavigation.logic.ts";
@@ -49,7 +49,10 @@ export function useNewThread(options?: { readonly scopedProjectIds?: ReadonlySet
   const startInProject = useCallback(
     (projectId: ProjectId) => {
       openProject(projectId);
-      return navigate({ to: "/draft/$draftId", params: { draftId: createDraft(projectId) } });
+      return navigate({
+        to: "/draft/$draftId",
+        params: { draftId: createDraft(projectId, readPrimaryServerSettings()) },
+      });
     },
     [navigate],
   );

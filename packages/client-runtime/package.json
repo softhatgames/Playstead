@@ -20,6 +20,14 @@
       "types": "./src/state/archivedThreads.ts",
       "import": "./src/state/archivedThreads.ts"
     },
+    "./state/composerDispatch": {
+      "types": "./src/state/composerDispatch.ts",
+      "import": "./src/state/composerDispatch.ts"
+    },
+    "./state/threadWorkflows": {
+      "types": "./src/state/threadWorkflows.ts",
+      "import": "./src/state/threadWorkflows.ts"
+    },
     "./state/filesystem": {
       "types": "./src/state/filesystem.ts",
       "import": "./src/state/filesystem.ts"
