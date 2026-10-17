@@ -12,13 +12,20 @@ import { runtimeModeConfig, runtimeModeOptions } from "./runtimeModeConfig.ts";
  * the mode is sent before the next message. The composer opens it on
  * `mod+shift+a`. Arrow keys move through the list, Enter chooses, Escape
  * closes.
+ *
+ * The `setting` variant is **Settings → General → New threads →
+ * Permissions**' select (T3 Code's `ProjectDefaultsSettings.tsx`): labelled
+ * "Default permissions", opening below.
  */
 export function RuntimeModePicker(props: {
   readonly mode: RuntimeMode;
   readonly open: boolean;
   readonly onOpenChange: (open: boolean) => void;
   readonly onSelect: (mode: RuntimeMode) => void;
+  readonly variant?: "composer" | "setting";
 }) {
+  const setting = props.variant === "setting";
+  const label = setting ? "Default permissions" : "Runtime mode";
   const container = useRef<HTMLDivElement | null>(null);
   const list = useRef<HTMLDivElement | null>(null);
   const current = runtimeModeConfig[props.mode];
@@ -53,13 +60,17 @@ export function RuntimeModePicker(props: {
     <div ref={container} className="relative">
       <button
         type="button"
-        aria-label="Runtime mode"
+        aria-label={label}
         aria-haspopup="listbox"
         aria-expanded={props.open}
-        data-composer-shortcut="composer.mode"
+        {...(setting ? {} : { "data-composer-shortcut": "composer.mode" })}
         title={current.description}
         onClick={() => onOpenChange(!props.open)}
-        className="flex items-center gap-1 rounded-md px-2 py-1 text-xs text-neutral-600 hover:bg-neutral-100 dark:text-neutral-300 dark:hover:bg-neutral-800"
+        className={
+          setting
+            ? "flex items-center gap-1.5 rounded-md border border-neutral-300 px-2 py-1 text-sm hover:bg-neutral-100 dark:border-neutral-700 dark:hover:bg-neutral-900"
+            : "flex items-center gap-1 rounded-md px-2 py-1 text-xs text-neutral-600 hover:bg-neutral-100 dark:text-neutral-300 dark:hover:bg-neutral-800"
+        }
       >
         <CurrentIcon className="size-3.5" />
         <span>{current.label}</span>
@@ -69,9 +80,9 @@ export function RuntimeModePicker(props: {
         <div
           ref={list}
           role="listbox"
-          aria-label="Runtime mode"
+          aria-label={label}
           onKeyDown={onListKeyDown}
-          className="absolute bottom-full left-0 z-20 mb-1 min-w-64 rounded-lg border border-neutral-200 bg-white p-1 shadow-lg dark:border-neutral-800 dark:bg-neutral-900"
+          className={`absolute z-20 ${setting ? "top-full right-0 mt-1" : "bottom-full left-0 mb-1"} min-w-64 rounded-lg border border-neutral-200 bg-white p-1 shadow-lg dark:border-neutral-800 dark:bg-neutral-900`}
         >
           {runtimeModeOptions.map((mode) => {
             const option = runtimeModeConfig[mode];

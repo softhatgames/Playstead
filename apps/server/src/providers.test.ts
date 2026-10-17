@@ -92,6 +92,7 @@ describe("provider RPC methods", () => {
 
         const settings = yield* connection.request((client) =>
           client["server.updateSettings"]({
+            patch: {},
             providerInstanceMutation: {
               operation: "upsert",
               instanceId: "codex",
@@ -101,6 +102,7 @@ describe("provider RPC methods", () => {
         );
         assert.deepStrictEqual(settings, {
           providerInstances: { codex: { driver: "codex", config: { binaryPath: ownCodex } } },
+          defaultRuntimeMode: "full-access",
         });
 
         const updated = yield* awaitConnectionState(
@@ -125,6 +127,7 @@ describe("provider RPC methods", () => {
         const result = yield* connection
           .request((client) =>
             client["server.updateSettings"]({
+              patch: {},
               providerInstanceMutation: {
                 operation: "upsert",
                 instanceId: "codex",

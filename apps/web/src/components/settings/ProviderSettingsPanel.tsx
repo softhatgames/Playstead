@@ -40,6 +40,7 @@ export function ProviderSettingsPanel() {
   const saveBinaryPath = (instanceId: ProviderInstanceId, binaryPath: string) =>
     requestPrimary((client) =>
       client["server.updateSettings"]({
+        patch: {},
         providerInstanceMutation: {
           operation: "upsert",
           instanceId,

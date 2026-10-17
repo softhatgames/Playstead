@@ -25,7 +25,7 @@ import {
   ServerLifecycleStreamEvent,
   ServerProviderUpdatedPayload,
 } from "./server.ts";
-import { ServerSettings, ServerSettingsError } from "./settings.ts";
+import { ServerSettings, ServerSettingsError, ServerSettingsPatch } from "./settings.ts";
 
 export const WS_METHODS = {
   serverGetConfig: "server.getConfig",
@@ -48,9 +48,15 @@ const WsServerRefreshProvidersRpc = Rpc.make(WS_METHODS.serverRefreshProviders, 
   success: ServerProviderUpdatedPayload,
 });
 
-/** Sets a provider instance's **Binary path**; the instance is checked again with it. */
+/**
+ * Changes settings: the patch's, and with a mutation a provider instance's
+ * **Binary path**, after which the instance is checked again with it.
+ */
 const WsServerUpdateSettingsRpc = Rpc.make(WS_METHODS.serverUpdateSettings, {
-  payload: Schema.Struct({ providerInstanceMutation: ProviderInstanceMutation }),
+  payload: Schema.Struct({
+    patch: ServerSettingsPatch,
+    providerInstanceMutation: Schema.optionalKey(ProviderInstanceMutation),
+  }),
   success: ServerSettings,
   error: ServerSettingsError,
 });
