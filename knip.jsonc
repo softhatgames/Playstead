@@ -1,0 +1,47 @@
+{
+  "$schema": "https://unpkg.com/knip@6/schema.json",
+  // Exported types are part of the contracts even before they have consumers.
+  "rules": { "types": "off", "nsTypes": "off" },
+  // Named in tsconfig plugins; @effect/tsgo patches it into the compiler.
+  "ignoreDependencies": ["@effect/language-service"],
+  // Effect's vendored source has its own workspace, which this repository never installs.
+  "ignore": [".repos/**"],
+  "workspaces": {
+    ".": {
+      // Keep the vendored Effect source out of the root project.
+      "project": ["*.{js,mjs,cjs,ts,mts,cts}"],
+    },
+    "apps/server": {
+      // Run by the development runner and the desktop app; the recorders by hand.
+      "entry": ["src/bin.ts!", "scripts/record-claude-replay.ts", "scripts/record-codex-replay.ts"],
+    },
+    "apps/desktop": {
+      // Electron's main process and the window's preload, bundled by vp pack;
+      // the launcher scripts run from the dev task and the smoke:desktop script.
+      "entry": [
+        "src/main.ts!",
+        "src/preload.ts!",
+        "scripts/dev-electron.ts",
+        "scripts/smoke-test.ts",
+      ],
+    },
+    "scripts": {
+      // Run directly by the root sync:repos, dev* and icons:* scripts.
+      "entry": ["sync-reference-repos.ts", "dev-runner.ts", "export-icons.ts"],
+    },
+    "oxlint-plugin-playstead": {
+      // Loaded by oxlint through jsPlugins in the root vite.config.ts.
+      "entry": ["index.ts"],
+    },
+    "packages/*": {
+      // These workspace packages are private to this monorepo.
+      "includeEntryExports": true,
+    },
+    "packages/effect-codex-app-server": {
+      "includeEntryExports": true,
+      // Run by its generate script. The generated protocol is kept whole, as T3 Code keeps it.
+      "entry": ["scripts/generate.ts"],
+      "ignoreIssues": { "src/_generated/**": ["exports", "types"] },
+    },
+  },
+}

@@ -1,0 +1,31 @@
+{
+  "name": "@playstead/server",
+  "version": "0.1.0",
+  "private": true,
+  "description": "The server: RPC, orchestration, persistence and providers.",
+  "type": "module",
+  "scripts": {
+    "dev": "node --watch src/bin.ts",
+    "typecheck": "tsc-rs --noEmit",
+    "test": "vp test run",
+    "record:claude-replay": "node scripts/record-claude-replay.ts",
+    "record:codex-replay": "node scripts/record-codex-replay.ts"
+  },
+  "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "catalog:",
+    "@effect/platform-node": "catalog:",
+    "@effect/sql-sqlite-node": "catalog:",
+    "@playstead/contracts": "workspace:*",
+    "@playstead/effect-codex-app-server": "workspace:*",
+    "@playstead/provider-core": "workspace:*",
+    "@playstead/shared": "workspace:*",
+    "effect": "catalog:"
+  },
+  "devDependencies": {
+    "@effect/vitest": "catalog:",
+    "@playstead/client-runtime": "workspace:*",
+    "@playstead/provider-testing": "workspace:*",
+    "@types/node": "catalog:",
+    "vite-plus": "catalog:"
+  }
+}

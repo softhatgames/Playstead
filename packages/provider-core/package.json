@@ -1,0 +1,37 @@
+{
+  "name": "@playstead/provider-core",
+  "private": true,
+  "description": "The driver, adapter and host interfaces that providers implement.",
+  "type": "module",
+  "exports": {
+    "./server/ProviderAdapter": {
+      "types": "./src/server/ProviderAdapter.ts",
+      "import": "./src/server/ProviderAdapter.ts"
+    },
+    "./server/driver": {
+      "types": "./src/server/driver.ts",
+      "import": "./src/server/driver.ts"
+    },
+    "./server/managedProvider": {
+      "types": "./src/server/managedProvider.ts",
+      "import": "./src/server/managedProvider.ts"
+    },
+    "./server/snapshotProbe": {
+      "types": "./src/server/snapshotProbe.ts",
+      "import": "./src/server/snapshotProbe.ts"
+    }
+  },
+  "scripts": {
+    "typecheck": "tsc-rs --noEmit",
+    "test": "vp test run --config ../../vite.config.ts --dir ."
+  },
+  "dependencies": {
+    "@playstead/contracts": "workspace:*",
+    "effect": "catalog:"
+  },
+  "devDependencies": {
+    "@effect/vitest": "catalog:",
+    "@types/node": "catalog:",
+    "vite-plus": "catalog:"
+  }
+}

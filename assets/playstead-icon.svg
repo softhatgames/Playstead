@@ -1,0 +1,41 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <!-- Playstead's icon: a CRT whose phosphor glows with a pixel play button, optically centred. Chosen in softhatgames/playstead#3. -->
+  <defs>
+    <linearGradient id="ps-tile" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#1F6A4F"/>
+      <stop offset="1" stop-color="#0E3A2B"/>
+    </linearGradient>
+    <linearGradient id="ps-bevel" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#FFFFFF" stop-opacity=".22"/>
+      <stop offset=".35" stop-color="#FFFFFF" stop-opacity="0"/>
+    </linearGradient>
+    <radialGradient id="ps-screen" cx=".5" cy=".5" r=".65">
+      <stop offset="0" stop-color="#0C3A29"/>
+      <stop offset="1" stop-color="#03160E"/>
+    </radialGradient>
+    <radialGradient id="ps-glare" cx=".3" cy=".1" r=".6">
+      <stop offset="0" stop-color="#FFFFFF" stop-opacity=".16"/>
+      <stop offset="1" stop-color="#FFFFFF" stop-opacity="0"/>
+    </radialGradient>
+    <pattern id="ps-scan" width="12" height="12" patternUnits="userSpaceOnUse">
+      <rect width="12" height="4" fill="#000000" fill-opacity=".22"/>
+    </pattern>
+    <filter id="ps-glow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="18"/>
+    </filter>
+    <clipPath id="ps-glass">
+      <rect x="40" y="56" width="432" height="400" rx="80"/>
+    </clipPath>
+  </defs>
+
+  <rect width="512" height="512" rx="112" fill="url(#ps-tile)"/>
+  <rect x="4" y="4" width="504" height="504" rx="108" fill="none" stroke="url(#ps-bevel)" stroke-width="8"/>
+
+  <g clip-path="url(#ps-glass)">
+    <rect x="40" y="56" width="432" height="400" fill="url(#ps-screen)"/>
+    <path transform="translate(11 0)" d="M192 96H224V128H256V160H288V192H320V224H352V288H320V320H288V352H256V384H224V416H192Z" fill="#8CFF6B" filter="url(#ps-glow)" opacity=".85"/>
+    <path transform="translate(11 0)" d="M192 96H224V128H256V160H288V192H320V224H352V288H320V320H288V352H256V384H224V416H192Z" fill="#8CFF6B" shape-rendering="crispEdges"/>
+    <rect x="40" y="56" width="432" height="400" fill="url(#ps-scan)"/>
+    <rect x="40" y="56" width="432" height="400" fill="url(#ps-glare)"/>
+  </g>
+</svg>

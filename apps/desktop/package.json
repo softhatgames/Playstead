@@ -1,0 +1,24 @@
+{
+  "name": "@playstead/desktop",
+  "version": "0.1.0",
+  "private": true,
+  "description": "The Electron app: it starts the server, shows the interface and adds desktop features through its bridge.",
+  "type": "module",
+  "main": "dist-electron/main.cjs",
+  "scripts": {
+    "typecheck": "tsc-rs --noEmit",
+    "test": "vp test run"
+  },
+  "dependencies": {
+    "@effect/platform-node": "catalog:",
+    "@playstead/contracts": "workspace:*",
+    "@playstead/shared": "workspace:*",
+    "effect": "catalog:",
+    "electron": "catalog:"
+  },
+  "devDependencies": {
+    "@effect/vitest": "catalog:",
+    "@types/node": "catalog:",
+    "vite-plus": "catalog:"
+  }
+}

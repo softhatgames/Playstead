@@ -1,7 +1,15 @@
 node_modules/
 dist/
+dist-electron/
+*.tsbuildinfo
+*.log
 .env
 .env.*
 !.env.example
 coverage/
 .DS_Store
+# A worktree's own Playstead home in development.
+.playstead/
+.pnpm-store/
+# The development app's Electron bundle on macOS, named and iconed as Playstead (Dev).
+.electron-runtime/

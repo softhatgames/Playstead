@@ -1,0 +1,74 @@
+packages:
+  - apps/*
+  - oxlint-plugin-playstead
+  - packages/*
+  - scripts
+
+# pnpm 11: true lets a dependency run its install scripts.
+allowBuilds:
+  # As in T3 Code. Electron 44 fetches its binary on first use (`install-electron`), with checksums.
+  electron: true
+  tsc-rs: true
+
+catalog:
+  # T3 Code's locked version at 2577baf.
+  "@anthropic-ai/claude-agent-sdk": 0.3.276
+  "@effect/openapi-generator": 4.0.5
+  "@effect/platform-node": 4.0.5
+  "@effect/sql-sqlite-node": 4.0.5
+  "@effect/tsgo": 0.51.1
+  "@effect/vitest": 4.0.5
+  "@resvg/resvg-js": 2.6.2
+  "@tailwindcss/vite": 4.3.3
+  "@types/node": 24.12.4
+  effect: 4.0.5
+  electron: 44.4.5
+  tailwindcss: 4.3.3
+  typescript: 7.0.2
+  vite-plus: 1.0.0
+  yaml: ^2.9.0
+
+minimumReleaseAgeExclude:
+  - "@anthropic-ai/claude-agent-sdk@0.3.276"
+  - tsc-rs
+  - "@tsc-rs/*"
+  - "@effect/openapi-generator@4.0.5"
+  - "@effect/platform-node@4.0.5"
+  - "@effect/platform-node-shared@4.0.5"
+  - "@effect/sql-sqlite-node@4.0.5"
+  - "@effect/vitest@4.0.5"
+  - effect@4.0.5
+
+overrides:
+  # As in T3 Code: the SDK always receives the person's own Claude executable, so its bundled binaries are never installed.
+  "@anthropic-ai/claude-agent-sdk>@anthropic-ai/claude-agent-sdk-darwin-arm64": "-"
+  "@anthropic-ai/claude-agent-sdk>@anthropic-ai/claude-agent-sdk-darwin-x64": "-"
+  "@anthropic-ai/claude-agent-sdk>@anthropic-ai/claude-agent-sdk-linux-arm64": "-"
+  "@anthropic-ai/claude-agent-sdk>@anthropic-ai/claude-agent-sdk-linux-arm64-musl": "-"
+  "@anthropic-ai/claude-agent-sdk>@anthropic-ai/claude-agent-sdk-linux-x64": "-"
+  "@anthropic-ai/claude-agent-sdk>@anthropic-ai/claude-agent-sdk-linux-x64-musl": "-"
+  "@anthropic-ai/claude-agent-sdk>@anthropic-ai/claude-agent-sdk-win32-arm64": "-"
+  "@anthropic-ai/claude-agent-sdk>@anthropic-ai/claude-agent-sdk-win32-x64": "-"
+  "@effect/platform-node": "catalog:"
+  "@effect/vitest": "catalog:"
+  # Vite+ brings the test runner; the patch below points @effect/vitest at it.
+  "@effect/vitest>vitest": "-"
+  "@types/node": "catalog:"
+  effect: "catalog:"
+  # Every vite in the tree is the Vite+ core.
+  vite: npm:@voidzero-dev/vite-plus-core@1.0.0
+  vite-plus: "catalog:"
+
+packageExtensions:
+  "@effect/vitest@*":
+    dependencies:
+      vite-plus: "catalog:"
+
+patchedDependencies:
+  "@effect/vitest@4.0.5": patches/@effect__vitest@4.0.5.patch
+
+peerDependencyRules:
+  allowAny:
+    - vite
+  allowedVersions:
+    vite: "*"

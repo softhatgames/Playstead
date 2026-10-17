@@ -1,0 +1,120 @@
+import {
+  ConnectionTransientError,
+  type ConnectionState,
+  type LocalConnection,
+  type LocalConnectionTarget,
+  makeLocalConnection,
+  type WsRpcClient,
+} from "@playstead/client-runtime/connection";
+import { PRIMARY_LOCAL_ENVIRONMENT_ID } from "@playstead/contracts/ipc";
+import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+import * as ManagedRuntime from "effect/ManagedRuntime";
+import * as Stream from "effect/Stream";
+import * as FetchHttpClient from "effect/http/FetchHttpClient";
+import * as Socket from "effect/socket/Socket";
+import { useSyncExternalStore } from "react";
+
+import { desktopBridge } from "../env.ts";
+
+/** The page's Effect runtime: HTTP through fetch, sockets through the browser's WebSocket. */
+export const runtime = ManagedRuntime.make(
+  Layer.mergeAll(FetchHttpClient.layer, Socket.layerWebSocketConstructorGlobal),
+);
+
+let current: ConnectionState | undefined;
+let connection: LocalConnection | undefined;
+const listeners = new Set<() => void>();
+let started = false;
+
+/**
+ * In the desktop window, the desktop app's own server with the bearer token
+ * the app hands over (T3 Code's `resolveDesktopPrimaryTarget`,
+ * `apps/web/src/environments/primary/target.ts`). In a browser, the server the
+ * page was loaded from, signed in by its session cookie.
+ */
+const resolvePrimaryTarget = (): LocalConnectionTarget => {
+  const bridge = desktopBridge;
+  const primary = bridge
+    ?.getLocalEnvironmentBootstraps()
+    .find((bootstrap) => bootstrap.id === PRIMARY_LOCAL_ENVIRONMENT_ID);
+  if (bridge === undefined || primary === undefined) {
+    return { httpBaseUrl: window.location.origin, credential: { _tag: "BrowserCookie" } };
+  }
+  return {
+    httpBaseUrl: primary.httpBaseUrl,
+    credential: {
+      _tag: "Bearer",
+      token: Effect.tryPromise({
+        try: () => bridge.getLocalEnvironmentBearerToken(),
+        catch: (cause) =>
+          new ConnectionTransientError({
+            detail: `No bearer token from the desktop app: ${String(cause)}`,
+          }),
+      }),
+    },
+  };
+};
+
+/** The page's one connection to its server; the client runtime reconnects. */
+function startPrimaryConnection() {
+  if (started) return;
+  started = true;
+  void runtime.runPromise(
+    Effect.scoped(
+      Effect.gen(function* () {
+        const opened = yield* makeLocalConnection(resolvePrimaryTarget());
+        connection = opened;
+        yield* Stream.runForEach(opened.changes, (state) =>
+          Effect.sync(() => {
+            current = state;
+            for (const listener of listeners) listener();
+          }),
+        );
+      }),
+    ),
+  );
+}
+
+const subscribe = (listener: () => void) => {
+  listeners.add(listener);
+  return () => listeners.delete(listener);
+};
+
+/** Calls the server over the page's connection. */
+export function requestPrimary<A, E>(
+  call: (client: WsRpcClient) => Effect.Effect<A, E>,
+): Promise<A> {
+  if (connection === undefined) return Promise.reject(new Error("Not connected to the server."));
+  return runtime.runPromise(connection.request(call));
+}
+
+/**
+ * Runs a stream over the page's connection and hands each item to `onItem`
+ * until the returned function stops it. It ends, without retrying, when the
+ * connection drops; callers open it again once the connection is back.
+ */
+export function runPrimaryStream<A, E>(
+  call: (client: WsRpcClient) => Stream.Stream<A, E>,
+  onItem: (item: A) => void,
+  onEnd: (error: E | ConnectionTransientError | undefined) => void,
+): () => void {
+  if (connection === undefined) {
+    onEnd(new ConnectionTransientError({ detail: "Not connected to the server." }));
+    return () => {};
+  }
+  const fiber = runtime.runFork(
+    connection.stream(call).pipe(
+      Stream.runForEach((item) => Effect.sync(() => onItem(item))),
+      Effect.match({ onFailure: (error) => onEnd(error), onSuccess: () => onEnd(undefined) }),
+    ),
+  );
+  return () => {
+    fiber.interruptUnsafe();
+  };
+}
+
+export function usePrimaryConnectionState(): ConnectionState | undefined {
+  startPrimaryConnection();
+  return useSyncExternalStore(subscribe, () => current);
+}

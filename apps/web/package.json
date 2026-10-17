@@ -1,0 +1,31 @@
+{
+  "name": "@playstead/web",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vp dev",
+    "build": "vp build",
+    "typecheck": "tsc-rs --noEmit",
+    "test": "vp test run --passWithNoTests"
+  },
+  "dependencies": {
+    "@playstead/client-runtime": "workspace:*",
+    "@playstead/contracts": "workspace:*",
+    "@playstead/shared": "workspace:*",
+    "@tanstack/react-router": "1.170.10",
+    "effect": "catalog:",
+    "react": "19.2.6",
+    "react-dom": "19.2.6"
+  },
+  "devDependencies": {
+    "@effect/vitest": "catalog:",
+    "@tailwindcss/vite": "catalog:",
+    "@tanstack/router-plugin": "1.168.13",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.2.3",
+    "@vitejs/plugin-react": "6.1.2",
+    "tailwindcss": "catalog:",
+    "vite-plus": "catalog:"
+  }
+}
