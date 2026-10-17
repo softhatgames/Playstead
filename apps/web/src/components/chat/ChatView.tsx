@@ -242,6 +242,7 @@ export function ChatView(
             projectId: projection.thread.projectId,
             title: projection.thread.title,
             status: latestRun?.status ?? "idle",
+            titleRegeneration: projection.thread.titleRegeneration ?? null,
             pinnedAt: projection.thread.pinnedAt,
             pinOrderKey: projection.thread.pinOrderKey,
             settledOverride: projection.thread.settledOverride,

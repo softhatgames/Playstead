@@ -262,7 +262,7 @@ function TreeThreadRow(props: {
     );
   };
 
-  const rowClass = `group relative flex items-center gap-2 rounded-md px-2 py-1 text-sm ${
+  const rowClass = `${thread.titleRegeneration ? "opacity-55" : ""} group relative flex items-center gap-2 rounded-md px-2 py-1 text-sm ${
     current
       ? "bg-neutral-200 dark:bg-neutral-800"
       : selected

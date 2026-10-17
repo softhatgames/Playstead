@@ -130,6 +130,7 @@ const toThreadShell = (
     latestRunRequestedAt: latest?.requestedAt ?? null,
     latestRunCompletedAt: latest?.completedAt ?? null,
     lastVisitedAt: thread.lastVisitedAt,
+    titleRegeneration: thread.titleRegeneration ?? null,
     settledOverride: thread.settledOverride,
     settledAt: thread.settledAt,
     unsettledAt: thread.unsettledAt,

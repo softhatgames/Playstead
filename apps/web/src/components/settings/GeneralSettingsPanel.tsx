@@ -1,3 +1,4 @@
+import { TextGenerationSettings } from "./TextGenerationSettings.tsx";
 import { type ClientSettings, DEFAULT_CLIENT_SETTINGS } from "@playstead/contracts/ipc";
 import type { ReactNode } from "react";
 
@@ -24,6 +25,7 @@ export function GeneralSettingsPanel() {
   return (
     <div className="flex flex-col gap-6">
       <h1 className="text-xl font-semibold">General</h1>
+      <TextGenerationSettings />
       <section aria-labelledby="settings-organization" className="flex flex-col gap-2">
         <h2
           id="settings-organization"

@@ -26,11 +26,20 @@ const outline = (items: ReturnType<typeof buildThreadActionMenuItems>) =>
   ]);
 
 describe("buildThreadActionMenuItems", () => {
+  it("disables regeneration while keeping rename available during generation", () => {
+    const items = buildThreadActionMenuItems({ ...idle, isTitleRegenerating: true });
+    assert.deepStrictEqual(
+      items.find((item) => item.id === "regenerate-title"),
+      { id: "regenerate-title", label: "Regenerating…", disabled: true },
+    );
+    assert.notStrictEqual(items.find((item) => item.id === "rename")?.disabled, true);
+  });
   it("offers T3 Code's items in its order: pin, settle, rename, mark unread, copy, archive, then delete", () => {
     assert.deepStrictEqual(outline(buildThreadActionMenuItems(idle)), [
       ["pin", "Pin thread", false, false, false, []],
       ["settle", "Settle thread", false, false, false, []],
       ["rename", "Rename thread", false, false, true, []],
+      ["regenerate-title", "Regenerate title", false, false, false, []],
       ["mark-unread", "Mark unread", false, false, false, []],
       [
         "copy",
@@ -55,7 +64,7 @@ describe("buildThreadActionMenuItems", () => {
           ...idle,
           projectFilter: { label: "space-game", isActive },
         }),
-      ).slice(3, 5);
+      ).filter((item) => item[0] === "mark-unread" || item[0] === "filter-by-project");
     assert.deepStrictEqual(filterItem(false), [
       ["mark-unread", "Mark unread", false, false, false, []],
       ["filter-by-project", "Filter by space-game", false, false, false, []],

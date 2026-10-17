@@ -535,7 +535,7 @@ function InboxThreadRow(props: {
     : selected
       ? "bg-sky-100 dark:bg-sky-950"
       : "hover:bg-neutral-100 dark:hover:bg-neutral-900";
-  const rowClass = `group relative flex w-full items-center gap-2 rounded-md px-2.5 text-left text-sm ${
+  const rowClass = `${thread.titleRegeneration ? "opacity-55" : ""} group relative flex w-full items-center gap-2 rounded-md px-2.5 text-left text-sm ${
     settled ? "h-8 text-neutral-500 dark:text-neutral-400" : "min-h-9 py-1.5"
   } ${surface}`;
 

@@ -65,8 +65,10 @@ const layerWsRpc = WsRpcGroup.toLayer(
       [WS_METHODS.serverGetConfig]: () => getConfig,
       [WS_METHODS.serverRefreshProviders]: ({ instanceId }) =>
         Effect.map(providers.refresh(instanceId), (list) => ({ providers: list })),
-      [WS_METHODS.serverUpdateSettings]: ({ providerInstanceMutation }) =>
-        settings.updateProviderInstance(providerInstanceMutation),
+      [WS_METHODS.serverUpdateSettings]: (input) =>
+        "providerInstanceMutation" in input
+          ? settings.updateProviderInstance(input.providerInstanceMutation)
+          : settings.updateTextGeneration(input.textGenerationModelSelection),
       // Both change streams start with their current value, which the
       // snapshot already carries.
       [WS_METHODS.subscribeServerConfig]: () =>

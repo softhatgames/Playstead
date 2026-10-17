@@ -1,3 +1,4 @@
+import { DEFAULT_TEXT_GENERATION_MODELS } from "@playstead/contracts/settings";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NodeSocket from "@effect/platform-node/NodeSocket";
 import {
@@ -100,6 +101,7 @@ describe("provider RPC methods", () => {
           }),
         );
         assert.deepStrictEqual(settings, {
+          textGenerationModelSelection: DEFAULT_TEXT_GENERATION_MODELS.codex,
           providerInstances: { codex: { driver: "codex", config: { binaryPath: ownCodex } } },
         });
 

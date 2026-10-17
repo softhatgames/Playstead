@@ -1,3 +1,4 @@
+import { ModelSelection } from "./orchestrationV2.ts";
 import * as Schema from "effect/Schema";
 import * as Rpc from "effect/rpc/Rpc";
 import * as RpcGroup from "effect/rpc/RpcGroup";
@@ -58,7 +59,10 @@ const WsServerRefreshProvidersRpc = Rpc.make(WS_METHODS.serverRefreshProviders, 
 
 /** Sets a provider instance's **Binary path**; the instance is checked again with it. */
 const WsServerUpdateSettingsRpc = Rpc.make(WS_METHODS.serverUpdateSettings, {
-  payload: Schema.Struct({ providerInstanceMutation: ProviderInstanceMutation }),
+  payload: Schema.Union([
+    Schema.Struct({ providerInstanceMutation: ProviderInstanceMutation }),
+    Schema.Struct({ textGenerationModelSelection: ModelSelection }),
+  ]),
   success: ServerSettings,
   error: ServerSettingsError,
 });
