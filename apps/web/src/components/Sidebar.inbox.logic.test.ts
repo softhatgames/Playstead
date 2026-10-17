@@ -52,6 +52,9 @@ const thread = (
   pinnedAt: null,
   pinOrderKey: null,
   activeOrderKey: null,
+  snoozedUntil: null,
+  snoozedAt: null,
+  hasPendingUserInput: false,
   autoSettleDisabledAt: null,
   titleRegeneration: null,
   ...overrides,
@@ -76,6 +79,7 @@ const sections = (
     pinned: ids(built.pinned),
     active: ids(built.active),
     working: ids(built.working),
+    snoozed: ids(built.snoozed),
     settled: ids(built.settled),
   };
 };
@@ -89,7 +93,39 @@ describe("sidebar sections", () => {
         thread("s", { settledOverride: "settled", settledAt: at(2) }),
         thread("u", { settledOverride: "active", unsettledAt: at(3) }),
       ]),
-      { pinned: ["p"], active: ["u", "a"], working: [], settled: ["s"] },
+      { pinned: ["p"], active: ["u", "a"], working: [], snoozed: [], settled: ["s"] },
+    );
+  });
+
+  it("keeps a snoozed thread in Snoozed, even a settled one, until it wakes, the earliest wake first", () => {
+    const snoozedAt = at(1);
+    assert.deepStrictEqual(
+      sections(
+        [
+          thread("late", { snoozedUntil: at(9), snoozedAt }),
+          thread("soon", { snoozedUntil: at(5), snoozedAt }),
+          thread("settled", { settledOverride: "settled", snoozedUntil: at(7), snoozedAt }),
+          // Its time has passed: awake, with no event.
+          thread("woke", { snoozedUntil: at(2), snoozedAt }),
+          // Its run completed after the snooze: awake early.
+          thread("finished", {
+            snoozedUntil: at(9),
+            snoozedAt,
+            status: "completed",
+            latestRunCompletedAt: at(2),
+          }),
+          // A question waits on the person: awake early.
+          thread("asking", { snoozedUntil: at(9), snoozedAt, hasPendingUserInput: true }),
+        ],
+        { now: at(3) },
+      ),
+      {
+        pinned: [],
+        active: ["asking", "finished", "woke"],
+        working: [],
+        snoozed: ["soon", "settled", "late"],
+        settled: [],
+      },
     );
   });
 
@@ -256,6 +292,45 @@ describe("the bulk menu", () => {
         ["mark-unread", "Mark unread (3)", false, false],
         ["delete", "Delete (3)", false, true],
       ],
+    );
+  });
+
+  it("offers Snooze with its presets and Custom… after Settle, only when every thread can be snoozed", () => {
+    const menu = (
+      snooze: Exclude<
+        Parameters<typeof buildMultiSelectThreadContextMenuItems>[0]["snooze"],
+        undefined
+      >,
+    ) =>
+      buildMultiSelectThreadContextMenuItems({
+        variant: "inbox",
+        count: 2,
+        pinnedCount: 0,
+        settleableCount: 2,
+        hasRunningThread: false,
+        titleRegeneration: null,
+        snooze,
+      });
+    const presets = [
+      { id: "hour", label: "In 1 hour", whenLabel: "3:00 PM", snoozedUntil: at(15) },
+      { id: "tomorrow", label: "Tomorrow", whenLabel: "9:00 AM", snoozedUntil: at(9) },
+    ] as const;
+    const items = menu({ presets });
+    assert.deepStrictEqual(outline(items).slice(0, 2), [
+      ["settle", "Settle (2)", false, false],
+      ["snooze", "Snooze (2)", false, false],
+    ]);
+    assert.deepStrictEqual(
+      items[1]!.children?.map((item) => [item.id, item.label, item.separatorBefore === true]),
+      [
+        ["snooze:hour", "In 1 hour (3:00 PM)", false],
+        ["snooze:tomorrow", "Tomorrow (9:00 AM)", false],
+        ["snooze:custom", "Custom…", true],
+      ],
+    );
+    assert.notInclude(
+      outline(menu(null)).map((item) => item[0]),
+      "snooze",
     );
   });
 

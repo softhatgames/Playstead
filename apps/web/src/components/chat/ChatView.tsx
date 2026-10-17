@@ -219,10 +219,16 @@ export function ChatView(
             pinnedAt: projection.thread.pinnedAt,
             pinOrderKey: projection.thread.pinOrderKey,
             settledOverride: projection.thread.settledOverride,
+            snoozedUntil: projection.thread.snoozedUntil,
+            snoozedAt: projection.thread.snoozedAt,
+            latestRunCompletedAt: latestRun?.completedAt ?? null,
+            hasPendingUserInput: projection.runtimeRequests.some(
+              (request) => request.status === "pending",
+            ),
             autoSettleDisabledAt: projection.thread.autoSettleDisabledAt,
             titleRegeneration: projection.thread.titleRegeneration,
           },
-    [projection, latestRun?.status],
+    [projection, latestRun?.status, latestRun?.completedAt],
   );
   useThreadShortcuts(target);
   useThreadVisits(

@@ -163,7 +163,7 @@ describe("archive and delete over RPC", () => {
     );
 
     it.effect(
-      "the sidebar shows a renamed thread's new title, its read marker after a visit, its pin and its settling",
+      "the sidebar shows a renamed thread's new title, its read marker after a visit, its pin, its settling and its snooze",
       () =>
         Effect.gen(function* () {
           const fs = yield* FileSystem.FileSystem;
@@ -233,6 +233,27 @@ describe("archive and delete over RPC", () => {
               thread.settledOverride === "settled" &&
               thread.settledAt !== null &&
               thread.pinnedAt === null,
+          );
+
+          // A snooze reaches it, and so does the wake.
+          yield* dispatch({
+            type: "thread.snooze",
+            commandId: CommandId.make("command:snooze"),
+            threadId,
+            snoozedUntil: "2099-01-01T09:00:00.000Z",
+          });
+          yield* sidebarThread(
+            (thread) =>
+              thread.snoozedUntil === "2099-01-01T09:00:00.000Z" && thread.snoozedAt !== null,
+          );
+          yield* dispatch({
+            type: "thread.unsnooze",
+            commandId: CommandId.make("command:wake"),
+            threadId,
+            reason: "user",
+          });
+          yield* sidebarThread(
+            (thread) => thread.snoozedUntil === null && thread.snoozedAt === null,
           );
         }).pipe(Effect.scoped),
     );

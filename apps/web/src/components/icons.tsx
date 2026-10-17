@@ -107,6 +107,24 @@ export function Undo2Icon({ className }: IconProps) {
   );
 }
 
+export function ClockIcon({ className }: IconProps) {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true" className={className} {...strokeProps}>
+      <circle cx="12" cy="12" r="9" />
+      <path d="M12 7v5l3 2" />
+    </svg>
+  );
+}
+
+export function AlarmClockOffIcon({ className }: IconProps) {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true" className={className} {...strokeProps}>
+      <path d="M6.9 6.9a8 8 0 0 0 11.2 11.2M19.6 15.8A8 8 0 0 0 9.2 5.4" />
+      <path d="M5 3 2 6M22 6l-3-3M6 19l-2 2M2 2l20 20" />
+    </svg>
+  );
+}
+
 export function ListFilterIcon({ className }: IconProps) {
   return (
     <svg viewBox="0 0 24 24" aria-hidden="true" className={className} {...strokeProps}>

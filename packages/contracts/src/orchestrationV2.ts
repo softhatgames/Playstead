@@ -112,6 +112,10 @@ export type OrchestrationV2TitleRegeneration = typeof OrchestrationV2TitleRegene
  * `pinnedAt`. `pinOrderKey` and `activeOrderKey` are the pinned and active
  * lists' a–z order keys, which settling clears. `autoSettleDisabledAt` is
  * set while the person has turned automatic settlement off for the thread.
+ * A snoozed thread has `snoozedUntil`, when it wakes, and `snoozedAt`, when
+ * it was snoozed; there is no timer, so it counts as snoozed while
+ * `snoozedUntil` is ahead and no run has completed since `snoozedAt`.
+ * `lastSnoozeWakeAt` is when the person last woke it, or a pin did.
  * `titleRegeneration` is set while a title is being generated.
  */
 export const OrchestrationV2AppThread = Schema.Struct({
@@ -134,6 +138,9 @@ export const OrchestrationV2AppThread = Schema.Struct({
   pinnedAt: NullOrTimeDefaultNull,
   pinOrderKey: NullOrOrderKeyDefaultNull,
   activeOrderKey: NullOrOrderKeyDefaultNull,
+  snoozedUntil: NullOrTimeDefaultNull,
+  snoozedAt: NullOrTimeDefaultNull,
+  lastSnoozeWakeAt: NullOrTimeDefaultNull,
   autoSettleDisabledAt: NullOrTimeDefaultNull,
   titleRegeneration: Schema.NullOr(OrchestrationV2TitleRegeneration).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
@@ -441,6 +448,8 @@ export const OrchestrationV2DomainEvent = Schema.Union([
   event("thread.unpinned", OrchestrationV2AppThread),
   event("thread.settled", OrchestrationV2AppThread),
   event("thread.unsettled", OrchestrationV2AppThread),
+  event("thread.snoozed", OrchestrationV2AppThread),
+  event("thread.unsnoozed", OrchestrationV2AppThread),
   event("thread.auto-settle-set", OrchestrationV2AppThread),
   event("run.created", OrchestrationV2Run),
   event("run.updated", OrchestrationV2Run),
@@ -514,6 +523,10 @@ export const OrchestrationV2ThreadShell = Schema.Struct({
   pinnedAt: Schema.NullOr(IsoDateTime),
   pinOrderKey: Schema.NullOr(TrimmedNonEmptyString),
   activeOrderKey: Schema.NullOr(TrimmedNonEmptyString),
+  snoozedUntil: Schema.NullOr(IsoDateTime),
+  snoozedAt: Schema.NullOr(IsoDateTime),
+  /** A provider waits on the person's answer (T3 Code's `hasPendingUserInput`); it wakes a snooze. */
+  hasPendingUserInput: Schema.Boolean,
   autoSettleDisabledAt: Schema.NullOr(IsoDateTime),
   /** Set while a title is being generated; the sidebar dims the title. */
   titleRegeneration: Schema.NullOr(OrchestrationV2TitleRegeneration),
@@ -633,7 +646,8 @@ export type OrchestrationV2ThreadStreamItem = typeof OrchestrationV2ThreadStream
  * `thread.visit` moves its read marker forward when the thread is viewed,
  * and `thread.mark-unread` moves it back before the latest run's completion.
  * `thread.pin` and `thread.unpin` pin and unpin it; `thread.settle` moves it
- * out of active work and `thread.unsettle` brings it back.
+ * out of active work and `thread.unsettle` brings it back. `thread.snooze`
+ * hides it until `snoozedUntil`, and `thread.unsnooze` wakes it.
  * `thread.auto-settle.set` turns automatic settlement on or off for it.
  */
 export const OrchestrationV2Command = Schema.Union([
@@ -725,6 +739,18 @@ export const OrchestrationV2Command = Schema.Union([
   }),
   Schema.Struct({
     type: Schema.Literal("thread.unsettle"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    reason: Schema.Literal("user"),
+  }),
+  Schema.Struct({
+    type: Schema.Literal("thread.snooze"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    snoozedUntil: IsoDateTime,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("thread.unsnooze"),
     commandId: CommandId,
     threadId: ThreadId,
     reason: Schema.Literal("user"),

@@ -42,15 +42,11 @@ export interface ThreadSnoozeState {
   readonly lastSnoozeWakeAt: string | null;
 }
 
-/**
- * The thread's snooze. Snooze (#38) is built beside automatic settlement;
- * until its fields `snoozedUntil`, `snoozedAt` and `lastSnoozeWakeAt` are on
- * the thread, nothing is snoozed. This is the one place that reads them.
- */
-const snoozeStateOf = (_thread: OrchestrationV2AppThread): ThreadSnoozeState => ({
-  snoozedUntil: null,
-  snoozedAt: null,
-  lastSnoozeWakeAt: null,
+/** The thread's snooze: until when, since when, and when it was last woken. */
+export const snoozeStateOf = (thread: OrchestrationV2AppThread): ThreadSnoozeState => ({
+  snoozedUntil: thread.snoozedUntil,
+  snoozedAt: thread.snoozedAt,
+  lastSnoozeWakeAt: thread.lastSnoozeWakeAt,
 });
 
 type Candidate = ProjectionStore.ProjectionSettlementCandidate;
