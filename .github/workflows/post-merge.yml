@@ -104,6 +104,27 @@ jobs:
         if: ${{ !cancelled() }}
         run: vp run build
 
+      # `vp run --filter` exits 0 when its filter matches no package, so a build
+      # that built nothing would pass. The checkout is fresh, so each file
+      # below exists only if this run's build made it.
+      - name: Build made the apps
+        if: ${{ !cancelled() }}
+        shell: bash
+        run: |
+          missing=0
+          for file in \
+            apps/web/dist/index.html \
+            apps/server/dist/bin.mjs \
+            apps/server/dist/client/index.html \
+            apps/desktop/dist-electron/main.cjs \
+            apps/desktop/dist-electron/preload.cjs; do
+            if [ ! -f "$file" ]; then
+              echo "::error::The build did not make $file."
+              missing=1
+            fi
+          done
+          exit "$missing"
+
       - name: Smoke boot
         if: ${{ !cancelled() }}
         run: vp run smoke:desktop
