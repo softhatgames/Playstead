@@ -9,6 +9,7 @@ import {
   decodeProviderReplayNdjson,
   materializeReplayWorkspace,
 } from "@playstead/provider-testing/replayTranscript";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
@@ -135,6 +136,31 @@ describe("Automatic settlement", () => {
           const settled = yield* threadOf(harness, threadId);
           assert.strictEqual(settled.settledOverride, "settled");
           assert.strictEqual(settled.settledAt, run.completedAt);
+        }).pipe(Effect.scoped),
+    );
+
+    it.effect(
+      "a snoozed thread stays until it wakes, and its inactivity counts from the wake",
+      () =>
+        Effect.gen(function* () {
+          const harness = yield* makeHarness;
+          const threadId = FILE_CREATE_IDS.threadId;
+          yield* runFileCreateScenario(harness);
+          yield* harness.settlement.start();
+          // Snoozed for five days, past the three days of inactivity.
+          yield* send(harness, {
+            type: "thread.snooze",
+            snoozedUntil: DateTime.formatIso(DateTime.makeUnsafe(5 * DAY_MS)),
+          });
+          yield* elapse(harness, 4 * DAY_MS);
+          assert.isNull((yield* threadOf(harness, threadId)).settledOverride);
+
+          // Woken on day four, it waits three more days of inactivity.
+          yield* send(harness, { type: "thread.unsnooze", reason: "user" });
+          yield* elapse(harness, 3 * DAY_MS - 2 * 60_000);
+          assert.isNull((yield* threadOf(harness, threadId)).settledOverride);
+          yield* elapse(harness, "2 minutes");
+          assert.strictEqual((yield* threadOf(harness, threadId)).settledOverride, "settled");
         }).pipe(Effect.scoped),
     );
 

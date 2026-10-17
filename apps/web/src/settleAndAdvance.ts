@@ -6,7 +6,10 @@ import type { OrchestrationV2ThreadShell } from "@playstead/contracts/orchestrat
  * does from a row (T3 Code's `apps/web/src/settleAndAdvance.ts` at 2577baf).
  */
 
-type SettleTarget = Pick<OrchestrationV2ThreadShell, "id" | "pinnedAt" | "pinOrderKey">;
+type SettleTarget = Pick<
+  OrchestrationV2ThreadShell,
+  "id" | "pinnedAt" | "pinOrderKey" | "snoozedUntil"
+>;
 type SettleAndAdvance = (thread: SettleTarget) => void;
 
 let registered: SettleAndAdvance | null = null;

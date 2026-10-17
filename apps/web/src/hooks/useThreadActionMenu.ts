@@ -1,9 +1,15 @@
+import {
+  canSnooze,
+  effectiveSnoozed,
+  resolveSnoozePresets,
+} from "@playstead/client-runtime/state/threadSettled";
 import type { ContextMenuPosition } from "@playstead/contracts/ipc";
 import { useNavigate } from "@tanstack/react-router";
 import { useCallback } from "react";
 
 import { copyTextToClipboard } from "../clipboard.ts";
 import { readClientSettings } from "../clientSettings.ts";
+import { requestCustomSnooze } from "../components/CustomSnoozeDialog.tsx";
 import { buildSidebarProjectGroups } from "../components/Sidebar.inbox.logic.ts";
 import {
   buildThreadActionMenuItems,
@@ -22,9 +28,11 @@ import {
   regenerateThreadTitle,
   setThreadAutoSettle,
   settleThread,
+  snoozeThread,
   type ThreadLifecycleTarget,
   unpinThread,
   unsettleThread,
+  unsnoozeThread,
   useThreadActions,
 } from "./useThreadActions.ts";
 
@@ -40,6 +48,9 @@ import {
  * - **Settle thread** / **Un-settle thread**; settling the thread in view
  *   moves the view on, through the inbox sidebar when it is shown, and
  *   shows Undo. A refusal, such as a thread still working, is a notice.
+ * - **Snooze** → a preset or **Custom…** (the custom snooze dialog) snoozes
+ *   it, with Undo; the inbox sidebar's row passes `onSnooze`, which moves
+ *   the view on as its Settle does. **Wake thread** wakes a snoozed one.
  * - **Rename thread** starts the caller's inline rename (`onStartRename`).
  * - **Regenerate title** has a provider write a new title; while one is
  *   being written it reads "Regenerating…" and does nothing.
@@ -62,9 +73,11 @@ export function useThreadActionMenu(
     readonly onStartRename: () => void;
     readonly projectFilter?: boolean;
     readonly variant?: "full" | "tree";
+    /** Snoozes the thread instead of in place, for the inbox sidebar to move the view on. */
+    readonly onSnooze?: (snoozedUntil: string) => void;
   },
 ) {
-  const { onStartRename, projectFilter = false, variant = "full" } = options;
+  const { onStartRename, projectFilter = false, variant = "full", onSnooze } = options;
   const { archiveThread, confirmAndDeleteThread } = useThreadActions();
   const shell = usePrimaryConnectionState()?.shell;
   const navigate = useNavigate();
@@ -84,6 +97,8 @@ export function useThreadActionMenu(
       void (async () => {
         const api = readLocalApi();
         const isRegeneratingTitle = thread.titleRegeneration !== null;
+        const now = new Date();
+        const snoozePresets = resolveSnoozePresets(now);
         const items =
           variant === "tree"
             ? legacyThreadMenuItems
@@ -92,6 +107,9 @@ export function useThreadActionMenu(
                 isRegeneratingTitle,
                 isPinned: thread.pinnedAt !== null,
                 isSettled: thread.settledOverride === "settled",
+                isSnoozed: effectiveSnoozed(thread, { now: now.toISOString() }),
+                canSnoozeNow: canSnooze(thread),
+                snoozePresets,
                 autoSettleEnabled: thread.autoSettleDisabledAt === null,
                 projectFilter:
                   group === undefined
@@ -102,6 +120,21 @@ export function useThreadActionMenu(
                       },
               });
         const chosen = await api.contextMenu.show(items, position).catch(() => null);
+        if (chosen?.startsWith("snooze:") === true) {
+          const choice =
+            chosen === "snooze:custom"
+              ? await requestCustomSnooze()
+              : snoozePresets.find((preset) => `snooze:${preset.id}` === chosen);
+          if (choice == null) return;
+          if (onSnooze !== undefined) {
+            onSnooze(choice.snoozedUntil);
+            return;
+          }
+          await snoozeThread(thread, choice.snoozedUntil).catch((error: unknown) =>
+            failureToast("Failed to snooze thread", error),
+          );
+          return;
+        }
         switch (chosen) {
           case "pin":
             await pinThread(thread.id).catch((error: unknown) =>
@@ -122,6 +155,11 @@ export function useThreadActionMenu(
           case "unsettle":
             await unsettleThread(thread.id).catch((error: unknown) =>
               failureToast("Failed to un-settle thread", error),
+            );
+            return;
+          case "unsnooze":
+            await unsnoozeThread(thread.id).catch((error: unknown) =>
+              failureToast("Failed to wake thread", error),
             );
             return;
           case "rename":
@@ -194,8 +232,10 @@ export function useThreadActionMenu(
             );
             return;
           case "copy":
+          case "snooze":
           case "auto-settle":
           case null:
+          default:
             return;
         }
       })();
@@ -204,6 +244,7 @@ export function useThreadActionMenu(
       archiveThread,
       confirmAndDeleteThread,
       navigate,
+      onSnooze,
       onStartRename,
       projectFilter,
       shell,

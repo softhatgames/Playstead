@@ -18,6 +18,7 @@ import { CodexAppServerClientFactory, makeCodexAdapter } from "../Adapters/Codex
 import * as EffectWorker from "../EffectWorker.ts";
 import * as EventStore from "../EventStore.ts";
 import * as Orchestrator from "../Orchestrator.ts";
+import * as ProjectionStore from "../ProjectionStore.ts";
 import * as ProviderAdapterRegistry from "../ProviderAdapterRegistry.ts";
 import * as ProviderRuntimeRecoveryService from "../ProviderRuntimeRecoveryService.ts";
 import * as ThreadSettlementService from "../ThreadSettlementService.ts";
@@ -112,6 +113,7 @@ export const makeOrchestrationHarness = Effect.fn("makeOrchestrationHarness")(fu
     worker: EffectWorker.OrchestrationEffectWorkerV2,
     projects: ProjectService.ProjectService,
     eventStore: EventStore.EventStoreV2,
+    projections: ProjectionStore.ProjectionStoreV2,
     recovery: ProviderRuntimeRecoveryService.ProviderRuntimeRecoveryService,
     settlement: ThreadSettlementService.ThreadSettlementService,
     settings: ServerSettings.ServerSettingsService,

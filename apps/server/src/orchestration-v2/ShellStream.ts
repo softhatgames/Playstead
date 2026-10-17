@@ -15,7 +15,10 @@ import * as ProjectService from "../project/ProjectService.ts";
 import * as EventStore from "./EventStore.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 
-/** Thread events that change what the sidebar or the archive shows: the thread itself, or its runs. */
+/**
+ * Thread events that change what the sidebar or the archive shows: the
+ * thread itself, its runs, or a question waiting on the person.
+ */
 const SHELL_THREAD_EVENT_TYPES: ReadonlySet<string> = new Set([
   "thread.created",
   "thread.metadata-updated",
@@ -29,9 +32,13 @@ const SHELL_THREAD_EVENT_TYPES: ReadonlySet<string> = new Set([
   "thread.unpinned",
   "thread.settled",
   "thread.unsettled",
+  "thread.snoozed",
+  "thread.unsnoozed",
   "thread.auto-settle-set",
   "run.created",
   "run.updated",
+  // A question raised or answered: the sidebar shows it, and it wakes a snooze.
+  "runtime-request.updated",
 ]);
 
 /**
