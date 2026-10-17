@@ -44,6 +44,12 @@ import {
   runSecondTurn,
 } from "../src/orchestration-v2/testkit/fixtures/restartResume.ts";
 import {
+  describeSessionApprovalRun,
+  runSessionApprovalScenario,
+  SESSION_APPROVAL_SCENARIOS,
+  type SessionApprovalScenario,
+} from "../src/orchestration-v2/testkit/fixtures/sessionApprovals.ts";
+import {
   CLAUDE_SUPERVISED_SCENARIO,
   runSupervisedScenario,
   SUPERVISED_ANSWERS,
@@ -75,7 +81,7 @@ import { makeTestServerConfig } from "../src/testUtils/testServer.ts";
  * adapter sends). It uses the signed-in `claude` on PATH, in a temporary
  * empty folder, and writes `src/orchestration-v2/testkit/fixtures/<scenario>.claude.ndjson`.
  *
- *   node apps/server/scripts/record-claude-replay.ts [file_create | restart_resume | turn_interrupt | question_answer | question_interrupt | auto_mode | traits_change | approval_accept | approval_decline | approval_cancel | approval_interrupt]
+ *   node apps/server/scripts/record-claude-replay.ts [file_create | restart_resume | turn_interrupt | question_answer | question_interrupt | auto_mode | traits_change | approval_accept | approval_decline | approval_cancel | approval_interrupt | auto_accept_edits | session_command | session_edits]
  *
  * `auto_mode` writes a file in Auto, then changes the thread to Full access,
  * which reopens the query with `resume`, and sends one more message.
@@ -88,6 +94,9 @@ import { makeTestServerConfig } from "../src/testUtils/testServer.ts";
  * reasoning efforts. The `approval_*` scenarios ask Claude, in
  * Supervised, to write a file, and approve, decline or cancel each approval
  * through `runtime-request.respond`, or interrupt the turn waiting on one.
+ * `auto_accept_edits`, `session_command` and `session_edits` send turns in
+ * Auto-accept edits and Supervised and answer each turn's approvals with its
+ * decision, **Always allow this session** among them.
  *
  * The header carries `claude --version` and the capture date. The frames are
  * scrubbed by `src/orchestration-v2/testkit/replayScrub.ts`, shared with the
@@ -363,6 +372,25 @@ const recordSupervised = (options: HarnessOptions, name: SupervisedScenarioName)
     return { harness, workspace };
   });
 
+/** Turns whose approvals are each answered with the turn's decision. */
+const recordSessionApprovals = (options: HarnessOptions, scenario: SessionApprovalScenario) =>
+  Effect.gen(function* () {
+    const harness = yield* makeOrchestrationHarness(options);
+    const { workspace, turns } = yield* runSessionApprovalScenario(harness, scenario);
+    yield* Effect.logInfo("The turns ended.").pipe(
+      Effect.annotateLogs(yield* describeSessionApprovalRun(workspace, scenario, turns)),
+    );
+    if (turns.some((turn) => turn.run.status !== "completed")) {
+      return yield* Effect.die("A turn did not complete.");
+    }
+    return { harness, workspace };
+  });
+
+const sessionApprovalEntry = (scenario: SessionApprovalScenario) => ({
+  record: (options: HarnessOptions) => recordSessionApprovals(options, scenario),
+  metadata: { model: scenario.model, turns: scenario.turns },
+});
+
 const supervisedEntry = (name: SupervisedScenarioName) => ({
   record: (options: HarnessOptions) => recordSupervised(options, name),
   metadata: {
@@ -379,6 +407,9 @@ const SCENARIOS = {
   approval_decline: supervisedEntry("approval_decline"),
   approval_cancel: supervisedEntry("approval_cancel"),
   approval_interrupt: supervisedEntry("approval_interrupt"),
+  auto_accept_edits: sessionApprovalEntry(SESSION_APPROVAL_SCENARIOS.claude.auto_accept_edits),
+  session_command: sessionApprovalEntry(SESSION_APPROVAL_SCENARIOS.claude.session_command),
+  session_edits: sessionApprovalEntry(SESSION_APPROVAL_SCENARIOS.claude.session_edits),
   [CLAUDE_TRAITS_CHANGE_SCENARIO.scenario]: {
     record: recordTraitsChange,
     metadata: {

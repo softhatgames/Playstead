@@ -2,6 +2,7 @@ import {
   type CanUseTool,
   type Options as ClaudeQueryOptions,
   type EffortLevel,
+  type PermissionMode,
   type PermissionResult,
   type PermissionUpdate,
   type Query,
@@ -71,8 +72,10 @@ import { resolveClaudeSdkExecutablePath } from "../../provider/Drivers/ClaudeExe
  *   mode (Supervised `default`, Auto-accept edits `acceptEdits`, Auto
  *   `auto`, Full access `bypassPermissions`). It cannot change mode in
  *   session, so a turn in another mode reopens it, resuming the same Claude
- *   session, as T3 Code does; T3 Code's `setPermissionMode` only restores
- *   a mode Claude Code changed itself, which needs plan mode.
+ *   session, as T3 Code does. `setPermissionMode` only puts back, before
+ *   the next prompt, the mode Claude Code left on its own: approving an
+ *   edit for the session moves it to `acceptEdits` (its suggestion), so in
+ *   Supervised that allowance lasts until the turn ends, as in T3 Code.
  * - Assistant text streams from the SDK's partial messages. T3 Code asks for
  *   them too but shows text only when each whole message arrives.
  * - A file write is a `file_change` item carrying the file's name and the
@@ -144,6 +147,10 @@ export interface ClaudeAgentSdkQuerySession {
   readonly applyFlagSettings: (
     settings: ClaudeFlagSettings,
   ) => Effect.Effect<void, ClaudeAgentSdkQueryRunnerError>;
+  /** Puts Claude Code back in a permission mode it left on its own. */
+  readonly setPermissionMode: (
+    mode: PermissionMode,
+  ) => Effect.Effect<void, ClaudeAgentSdkQueryRunnerError>;
   /** Asks Claude Code to stop the turn it is running. */
   readonly interrupt: Effect.Effect<void, ClaudeAgentSdkQueryRunnerError>;
 }
@@ -213,6 +220,11 @@ export const layerQueryRunner: Layer.Layer<ClaudeAgentSdkQueryRunner, never, Cry
                 Effect.tryPromise({
                   try: () => queryRuntime.applyFlagSettings(settings),
                   catch: runnerError("applyFlagSettings"),
+                }),
+              setPermissionMode: (mode) =>
+                Effect.tryPromise({
+                  try: () => queryRuntime.setPermissionMode(mode),
+                  catch: runnerError("setPermissionMode"),
                 }),
               interrupt: Effect.tryPromise({
                 try: () => queryRuntime.interrupt(),
@@ -847,6 +859,15 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (input
           runPromise(canUseToolEffect(toolName, toolInput, callbackOptions)),
       });
       const session = yield* runner.open({ options, threadId: open.threadId });
+      /**
+       * The permission mode Claude Code says it is in (T3 Code's
+       * `permissionMode` beside `openedPermissionMode`), from its `init` and
+       * `status` messages. Claude Code changes it itself when the person
+       * approves an edit for the session (its suggestion is `setMode
+       * acceptEdits`).
+       */
+      const openedPermissionMode: PermissionMode = options.permissionMode ?? "default";
+      let permissionMode = openedPermissionMode;
       const live = yield* Ref.make(true);
       /** The selection the query runs now. */
       const liveSelection = yield* Ref.make(openedSelection);
@@ -1172,6 +1193,17 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (input
       // The query's messages for as long as the session lives. When they end,
       // the session is gone, and a turn still running fails.
       yield* session.messages.pipe(
+        Stream.tap((message) =>
+          Effect.sync(() => {
+            if (
+              message.type === "system" &&
+              (message.subtype === "init" || message.subtype === "status") &&
+              message.permissionMode !== undefined
+            ) {
+              permissionMode = message.permissionMode;
+            }
+          }),
+        ),
         Stream.runForEach(handleMessage),
         Effect.catch((error) =>
           Effect.logWarning("Claude's messages ended with an error.").pipe(
@@ -1237,6 +1269,14 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (input
                   Effect.mapError(adapterError("start-turn")),
                 );
               yield* Ref.set(liveSelection, next);
+            }
+            // T3 Code's `openQuery`: Claude Code may have left the thread's
+            // mode on its own, so it goes back before the next prompt.
+            if (permissionMode !== openedPermissionMode) {
+              yield* session
+                .setPermissionMode(openedPermissionMode)
+                .pipe(Effect.mapError(adapterError("start-turn")));
+              permissionMode = openedPermissionMode;
             }
             const promptUuid = promptUuidFor(turnInput.providerTurnId);
             yield* Ref.set(activeTurn, {

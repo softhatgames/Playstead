@@ -22,6 +22,12 @@ import {
   sendSupervisedMessage,
   SUPERVISED_IDS,
 } from "./testkit/fixtures/supervisedApproval.ts";
+import {
+  runSessionApprovalScenario,
+  SESSION_APPROVAL_IDS,
+  SESSION_APPROVAL_SCENARIOS,
+  type SessionApprovalScenarioName,
+} from "./testkit/fixtures/sessionApprovals.ts";
 
 const readRecording = (name: string) =>
   Effect.gen(function* () {
@@ -306,6 +312,140 @@ describe("Approvals in Supervised", () => {
             }),
           );
           assert.strictEqual(late.message, `Runtime request ${approval.id} is expired.`);
+        }).pipe(Effect.scoped),
+    );
+  });
+});
+
+describe("Auto-accept edits and approvals for the session", () => {
+  const sessionProjection = (harness: Harness) =>
+    Effect.map(
+      harness.orchestrator.getThreadProjection(SESSION_APPROVAL_IDS.threadId),
+      Option.getOrThrow,
+    );
+
+  /** The scenario over its recording, and each turn's approvals by kind. */
+  const replaySession = (
+    provider: (typeof PROVIDERS)[number],
+    name: SessionApprovalScenarioName,
+    firstAnswer?: "acceptAlways",
+  ) =>
+    Effect.gen(function* () {
+      const { harness, assertComplete } = yield* replayed(
+        provider.name,
+        `${name}.${provider.file}.ndjson`,
+      );
+      const recorded = SESSION_APPROVAL_SCENARIOS[provider.file][name];
+      const scenario =
+        firstAnswer === undefined
+          ? recorded
+          : {
+              ...recorded,
+              turns: recorded.turns.map((turn, index) =>
+                index === 0 ? { ...turn, answer: firstAnswer } : turn,
+              ),
+            };
+      const { turns } = yield* runSessionApprovalScenario(harness, scenario);
+      yield* assertComplete;
+      for (const turn of turns) assert.strictEqual(turn.run.status, "completed");
+      return {
+        harness,
+        turns,
+        asked: turns.map((turn) => turn.approvals.map((approval) => approval.kind)),
+      };
+    });
+
+  /** The completed items of one kind in a turn's run. */
+  const completedItems = (
+    harness: Harness,
+    runId: string,
+    type: "file_change" | "command_execution",
+  ) =>
+    Effect.map(sessionProjection(harness), (projection) =>
+      projection.turnItems.filter(
+        (item) => item.runId === runId && item.type === type && item.status === "completed",
+      ),
+    );
+
+  it.layer(NodeServices.layer)((it) => {
+    for (const provider of PROVIDERS) {
+      it.effect(
+        `${provider.name}: in Auto-accept edits a file is written without asking, and a command asks`,
+        () =>
+          Effect.gen(function* () {
+            const { harness, turns, asked } = yield* replaySession(provider, "auto_accept_edits");
+
+            assert.deepStrictEqual(asked, [["command"]]);
+            const edits = yield* completedItems(harness, turns[0]!.run.id, "file_change");
+            assert.isAtLeast(edits.length, 1);
+            const projection = yield* sessionProjection(harness);
+            assert.strictEqual(projection.runtimeRequests[0]?.decision, "accept");
+            assert.strictEqual(projection.runtimeRequests[0]?.status, "resolved");
+          }).pipe(Effect.scoped),
+      );
+
+      it.effect(
+        `${provider.name}: Always allow this session stops later commands asking; after a mode change they ask until allowed again`,
+        () =>
+          Effect.gen(function* () {
+            const { harness, turns, asked } = yield* replaySession(provider, "session_command");
+
+            assert.deepStrictEqual(asked, [["command"], [], ["command"], []]);
+            // The turns that did not ask ran their commands.
+            for (const turn of [turns[1]!, turns[3]!]) {
+              const ran = yield* completedItems(harness, turn.run.id, "command_execution");
+              assert.isAtLeast(ran.length, 1);
+            }
+            const projection = yield* sessionProjection(harness);
+            assert.deepStrictEqual(
+              projection.runtimeRequests.map((request) => request.decision),
+              ["acceptForSession", "acceptForSession"],
+            );
+          }).pipe(Effect.scoped),
+      );
+
+      it.effect(
+        `${provider.name}: an approval to always allow is answered as an approval for the session`,
+        () =>
+          Effect.gen(function* () {
+            // The adapter must answer the provider exactly as it did for
+            // acceptForSession, or the replay fails at that frame.
+            const { harness, asked } = yield* replaySession(
+              provider,
+              "session_command",
+              "acceptAlways",
+            );
+
+            assert.deepStrictEqual(asked, [["command"], [], ["command"], []]);
+            const projection = yield* sessionProjection(harness);
+            assert.strictEqual(projection.runtimeRequests[0]?.decision, "acceptAlways");
+            assert.strictEqual(projection.runtimeRequests[0]?.status, "resolved");
+          }).pipe(Effect.scoped),
+      );
+    }
+
+    it.effect(
+      "Codex: an edit approved for the session lets every later edit of the session run without asking",
+      () =>
+        Effect.gen(function* () {
+          const { harness, turns, asked } = yield* replaySession(PROVIDERS[1], "session_edits");
+
+          assert.deepStrictEqual(asked, [["file-change"], []]);
+          const later = yield* completedItems(harness, turns[1]!.run.id, "file_change");
+          assert.isAtLeast(later.length, 1);
+        }).pipe(Effect.scoped),
+    );
+
+    it.effect(
+      "Claude: an edit approved for the session lets the turn's later edits run, and the next turn asks again, as T3 Code puts Claude Code back in Supervised",
+      () =>
+        Effect.gen(function* () {
+          const { harness, turns, asked } = yield* replaySession(PROVIDERS[0], "session_edits");
+
+          assert.deepStrictEqual(asked, [["file-change"], ["file-change"]]);
+          // Both files of the first turn were written, one approval for them.
+          const first = yield* completedItems(harness, turns[0]!.run.id, "file_change");
+          assert.strictEqual(first.length, 2);
         }).pipe(Effect.scoped),
     );
   });

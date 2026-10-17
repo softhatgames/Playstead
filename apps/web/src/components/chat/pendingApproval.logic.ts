@@ -90,12 +90,13 @@ export function approvalDetail(approval: PendingApproval): string {
 
 /**
  * The decisions the panel offers when the provider gives none, in T3 Code's
- * order. T3 Code also offers **Always allow this session**
- * (`acceptForSession`); it comes with the session's approvals.
+ * order (`apps/web/src/components/chat/ComposerPendingApprovalActions.tsx`
+ * at 2577baf).
  */
 const DEFAULT_APPROVAL_OPTIONS: ReadonlyArray<ProviderApprovalOption> = [
   { decision: "cancel", label: "Cancel" },
   { decision: "decline", label: "Decline" },
+  { decision: "acceptForSession", label: "Always allow this session" },
   { decision: "accept", label: "Approve" },
 ];
 

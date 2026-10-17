@@ -128,7 +128,7 @@ describe("the approval panel", () => {
     );
   });
 
-  it("keeps Approve and Decline as buttons and Cancel in the menu", () => {
+  it("keeps Approve and Decline as buttons, and Cancel and Always allow this session in the menu", () => {
     const { primary, more } = splitApprovalOptions(undefined);
     assert.deepStrictEqual(
       primary.map((option) => option.label),
@@ -136,8 +136,9 @@ describe("the approval panel", () => {
     );
     assert.deepStrictEqual(
       more.map((option) => option.label),
-      ["Cancel"],
+      ["Cancel", "Always allow this session"],
     );
+    assert.strictEqual(more[1]?.decision, "acceptForSession");
   });
 
   it("uses the provider's own labels when it gives options", () => {
