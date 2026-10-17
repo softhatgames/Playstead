@@ -1,4 +1,22 @@
 import {
+  DndContext,
+  type DragEndEvent,
+  type DragOverEvent,
+  type DragStartEvent,
+  type Modifier,
+  useSensor,
+  useSensors,
+} from "@dnd-kit/core";
+import { restrictToFirstScrollableAncestor, restrictToVerticalAxis } from "@dnd-kit/modifiers";
+import {
+  type AnimateLayoutChanges,
+  defaultAnimateLayoutChanges,
+  SortableContext,
+  useSortable,
+} from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
+import type { OrderKeyAssignment } from "@playstead/client-runtime/state/threadOrder";
+import {
   canSnooze,
   resolveSnoozePresets,
   snoozeWakeLabel,
@@ -8,9 +26,11 @@ import type { OrchestrationV2ThreadShell } from "@playstead/contracts/orchestrat
 import { Link, useNavigate, useParams } from "@tanstack/react-router";
 import {
   type KeyboardEvent as ReactKeyboardEvent,
+  type PointerEvent as ReactPointerEvent,
   type ReactNode,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -24,6 +44,9 @@ import { createDraft } from "../drafts.ts";
 import { useBulkThreadMenu } from "../hooks/useBulkThreadMenu.ts";
 import { useThreadActionMenu } from "../hooks/useThreadActionMenu.ts";
 import {
+  pinThread,
+  reorderActiveThread,
+  reorderPinnedThread,
   settleThread,
   snoozeThread,
   unpinThread,
@@ -52,6 +75,7 @@ import {
   AlarmClockOffIcon,
   CheckIcon,
   ChevronRightIcon,
+  CircleCheckIcon,
   ClockIcon,
   FolderIcon,
   FolderPlusIcon,
@@ -63,6 +87,27 @@ import {
   Undo2Icon,
 } from "./icons.tsx";
 import { isModClick } from "./LegacySidebar.tsx";
+import {
+  createSidebarCollisionDetection,
+  createSidebarSortingStrategy,
+  restrictBelowSidebarLabel,
+} from "./Sidebar.drag.ts";
+import {
+  buildSidebarListItems,
+  planSidebarThreadDrop,
+  resolveSidebarDropTarget,
+  resolveSidebarDropVerb,
+  resolveSidebarSweepKeys,
+  type SidebarDropVerb,
+  type SidebarListItem,
+  sidebarListItemId,
+  type SidebarListMarker,
+  type SidebarListSection,
+  sidebarMarkerId,
+  sidebarThreadKeyAtY,
+} from "./Sidebar.drag.logic.ts";
+import { createSidebarListMotion } from "./Sidebar.motion.ts";
+import { SidebarDragLifecycle, SidebarPointerSensor } from "./Sidebar.pointer.ts";
 import {
   buildSidebarProjectGroups,
   buildSidebarSections,
@@ -99,6 +144,106 @@ const MAX_TIMER_DELAY_MS = 2_147_483_647;
 
 // One for the page, so the Working shelf's return order survives the sidebar remounting.
 const inboxReturns = createInboxReturnTracker();
+
+/** How far a press moves before it becomes a drag, so a click still opens the thread. */
+const SIDEBAR_DRAG_DISTANCE = 6;
+/** The Pinned and Active labels' height while dragging, at the root font size. */
+const SIDEBAR_DRAG_LABEL_HEIGHT = 24;
+
+type SidebarSweepAction = "settle" | "unsettle" | "unsnooze";
+
+/**
+ * A drop on its way to the server: the dropped thread and every thread
+ * that takes a new key show as they will be, until the server's threads
+ * catch up or a command fails (T3 Code's `optimisticDrop`).
+ */
+interface OptimisticDrop {
+  readonly key: string;
+  readonly section: "pinned" | "active" | "settled";
+  readonly occurredAt: string;
+  readonly assignedKeys: ReadonlyMap<string, string>;
+  readonly done: boolean;
+}
+
+/**
+ * The thread as the drop leaves it (T3 Code's `applySidebarThreadDrop`):
+ * settled drops its pin and keys; into Pinned or Active it is un-settled,
+ * pinned or unpinned, and takes its new key; any drop wakes it.
+ */
+function applySidebarThreadDrop(
+  thread: SidebarThread,
+  section: OptimisticDrop["section"],
+  now: string,
+  orderKey?: string,
+): SidebarThread {
+  const wasSettled = thread.settledOverride === "settled";
+  // Every drop leaves the thread awake: pin, settle and wake each clear a snooze.
+  const awake = { ...thread, snoozedAt: null, snoozedUntil: null };
+  if (section === "settled") {
+    return {
+      ...awake,
+      pinnedAt: null,
+      pinOrderKey: null,
+      activeOrderKey: null,
+      settledOverride: "settled",
+      settledAt: wasSettled ? (thread.settledAt ?? now) : now,
+      unsettledAt: null,
+    };
+  }
+  const resumed = wasSettled
+    ? { ...awake, settledOverride: "active" as const, settledAt: null, unsettledAt: now }
+    : awake;
+  return {
+    ...resumed,
+    pinnedAt: section === "pinned" ? (thread.pinnedAt ?? now) : null,
+    pinOrderKey: section === "pinned" ? (orderKey ?? thread.pinOrderKey) : null,
+    ...(section === "active" && orderKey !== undefined ? { activeOrderKey: orderKey } : {}),
+  };
+}
+
+/** The threads with a drop applied: the dropped one moved, the others with their new keys. */
+function applyOptimisticDrop(
+  threads: ReadonlyArray<SidebarThread>,
+  drop: OptimisticDrop | null,
+): ReadonlyArray<SidebarThread> {
+  if (drop === null) return threads;
+  return threads.map((thread) => {
+    const orderKey = drop.assignedKeys.get(thread.id);
+    if (thread.id === drop.key) {
+      return applySidebarThreadDrop(thread, drop.section, drop.occurredAt, orderKey);
+    }
+    if (orderKey === undefined) return thread;
+    return drop.section === "pinned"
+      ? { ...thread, pinOrderKey: orderKey }
+      : { ...thread, activeOrderKey: orderKey };
+  });
+}
+
+/** Whether the server's threads now show the drop, so its projection can go. */
+function dropLanded(
+  threads: ReadonlyArray<SidebarThread>,
+  projected: ReadonlyArray<SidebarThread>,
+  drop: OptimisticDrop,
+): boolean {
+  const byId = new Map(threads.map((thread) => [thread.id as string, thread]));
+  return projected.every((thread) => {
+    if (thread.id !== drop.key && !drop.assignedKeys.has(thread.id)) return true;
+    const canonical = byId.get(thread.id);
+    return (
+      canonical === undefined ||
+      ((canonical.pinnedAt === null) === (thread.pinnedAt === null) &&
+        canonical.settledOverride === thread.settledOverride &&
+        canonical.pinOrderKey === thread.pinOrderKey &&
+        canonical.activeOrderKey === thread.activeOrderKey &&
+        canonical.snoozedUntil === thread.snoozedUntil)
+    );
+  });
+}
+
+// The list motion handles ordinary section changes; while sorting, dnd-kit's
+// transforms move the rows, and replaying the drop would animate it twice.
+const animateSidebarLayoutChanges: AnimateLayoutChanges = (args) =>
+  args.isSorting ? defaultAnimateLayoutChanges(args) : false;
 
 /** A shelf's open state, kept in the browser as T3 Code's `useLocalStorage` keeps it. */
 function useStoredBoolean(key: string, initial: boolean) {
@@ -138,8 +283,13 @@ function useStoredBoolean(key: string, initial: boolean) {
  * **Search threads** in the header replaces the list with the threads whose
  * title or messages hold the query, chosen with the arrow keys and Enter.
  *
- * Seams for the slice's later tickets: dragging between and within sections
- * (#40), and **New thread in…** from the palette (#42).
+ * Rows drag within Pinned and Active to reorder them, and between sections
+ * to pin, unpin, settle, un-settle or wake (out of Snoozed only), showing
+ * what the drop will do; pressed and dragged, a row's Settle, Un-settle or
+ * Wake button acts on every row it crosses.
+ *
+ * Seam for the slice's later tickets: **New thread in…** from the palette
+ * (#42).
  */
 export function Sidebar() {
   const state = usePrimaryConnectionState();
@@ -167,19 +317,30 @@ export function Sidebar() {
   );
   useEffect(() => clearThreadSelection(), [scopeKey]);
 
+  const [optimisticDrop, setOptimisticDrop] = useState<OptimisticDrop | null>(null);
+  const projectedThreads = useMemo(
+    () => applyOptimisticDrop(threads, optimisticDrop),
+    [threads, optimisticDrop],
+  );
+  useEffect(() => {
+    if (optimisticDrop?.done && dropLanded(threads, projectedThreads, optimisticDrop)) {
+      setOptimisticDrop(null);
+    }
+  }, [optimisticDrop, threads, projectedThreads]);
+
   // Bumped when the earliest snooze is due, so the sections are built again.
   const [snoozeWakeTick, bumpSnoozeWakeTick] = useState(0);
   const sections = useMemo(() => {
     void snoozeWakeTick;
     inboxReturns.observe(workingShelfEnabled ? threads : null, Date.now());
     return buildSidebarSections({
-      threads,
+      threads: projectedThreads,
       scopedProjectIds,
       workingShelfEnabled,
       returnedAt: inboxReturns.returnedAt,
       now: new Date().toISOString(),
     });
-  }, [threads, scopedProjectIds, workingShelfEnabled, snoozeWakeTick]);
+  }, [threads, projectedThreads, scopedProjectIds, workingShelfEnabled, snoozeWakeTick]);
   const nextWakeAt = sections.snoozed[0]?.snoozedUntil ?? null;
   useEffect(() => {
     if (nextWakeAt === null) return;
@@ -197,16 +358,29 @@ export function Sidebar() {
   useEffect(() => setSettledVisibleCount(SETTLED_TAIL_INITIAL_COUNT), [scopeKey]);
 
   // A folded shelf still shows the thread in view.
-  const shelfRows = (rows: ReadonlyArray<SidebarThread>, expanded: boolean) =>
-    expanded ? rows : rows.filter((thread) => thread.id === routeThreadId);
-  const settledPage = sections.settled.slice(0, settledVisibleCount);
-  const settledTail = sections.settled
-    .slice(settledVisibleCount)
-    .filter((thread) => thread.id === routeThreadId);
-  const visibleSettled = shelfRows([...settledPage, ...settledTail], settledExpanded);
-  const hiddenSettledCount = sections.settled.length - settledPage.length - settledTail.length;
-  const visibleWorking = shelfRows(sections.working, workingExpanded);
-  const visibleSnoozed = shelfRows(sections.snoozed, snoozedExpanded);
+  const { visibleSettled, hiddenSettledCount, visibleWorking, visibleSnoozed } = useMemo(() => {
+    const shelfRows = (rows: ReadonlyArray<SidebarThread>, expanded: boolean) =>
+      expanded ? rows : rows.filter((thread) => thread.id === routeThreadId);
+    const settledPage = sections.settled.slice(0, settledVisibleCount);
+    const settledTail = sections.settled
+      .slice(settledVisibleCount)
+      .filter((thread) => thread.id === routeThreadId);
+    return {
+      visibleSettled: shelfRows([...settledPage, ...settledTail], settledExpanded),
+      hiddenSettledCount: sections.settled.length - settledPage.length - settledTail.length,
+      visibleWorking: shelfRows(sections.working, workingExpanded),
+      visibleSnoozed: shelfRows(sections.snoozed, snoozedExpanded),
+    };
+  }, [
+    sections.settled,
+    sections.working,
+    sections.snoozed,
+    settledVisibleCount,
+    settledExpanded,
+    workingExpanded,
+    snoozedExpanded,
+    routeThreadId,
+  ]);
 
   const orderedThreads = useMemo(
     () => [
@@ -259,16 +433,24 @@ export function Sidebar() {
 
   /**
    * Settles a thread; settling the one in view moves the view on (T3 Code's
-   * `attemptSettle`). `coSettling` are settled with it.
+   * `attemptSettle`). `coSettling` are settled with it. Resolves with
+   * whether it settled; a failure shows its notice.
    */
   const attemptSettle = useCallback(
     (
       thread: Pick<SidebarThread, "id" | "projectId" | "pinnedAt" | "pinOrderKey" | "snoozedUntil">,
       coSettling?: ReadonlySet<string>,
-    ) => {
+    ): Promise<boolean> => {
       const moveOn = planForwardNavigation(thread, coSettling);
-      settleThread(thread).then(moveOn, (error: unknown) =>
-        failureToast("Failed to settle thread", error),
+      return settleThread(thread).then(
+        () => {
+          moveOn();
+          return true;
+        },
+        (error: unknown) => {
+          failureToast("Failed to settle thread", error);
+          return false;
+        },
       );
     },
     [planForwardNavigation],
@@ -333,14 +515,14 @@ export function Sidebar() {
     () =>
       registerSettleAndAdvance((target) => {
         const thread = threadsByIdRef.current.get(target.id);
-        if (thread !== undefined) attemptSettle(thread);
+        if (thread !== undefined) void attemptSettle(thread);
       }),
     [attemptSettle],
   );
   const settleThreads = useCallback(
     (targets: ReadonlyArray<SidebarThread>) => {
       const coSettling = new Set<string>(targets.map((thread) => thread.id));
-      for (const thread of targets) attemptSettle(thread, coSettling);
+      for (const thread of targets) void attemptSettle(thread, coSettling);
     },
     [attemptSettle],
   );
@@ -350,6 +532,399 @@ export function Sidebar() {
     settleThreads,
     snoozeThreads,
   });
+
+  // ---- Dragging (T3 Code's `Sidebar.tsx` DndContext, at 2577baf) ----
+
+  const sidebarListItems = useMemo(
+    () =>
+      buildSidebarListItems({
+        pinned: sections.pinned.map((thread) => thread.id),
+        active: sections.active.map((thread) => thread.id),
+        working: visibleWorking.map((thread) => thread.id),
+        snoozed: visibleSnoozed.map((thread) => thread.id),
+        settled: visibleSettled.map((thread) => thread.id),
+        hasWorking: sections.working.length > 0,
+        hasSnoozed: sections.snoozed.length > 0,
+      }),
+    [
+      sections.pinned,
+      sections.active,
+      sections.working.length,
+      sections.snoozed.length,
+      visibleWorking,
+      visibleSnoozed,
+      visibleSettled,
+    ],
+  );
+  const sortableIds = useMemo(() => sidebarListItems.map(sidebarListItemId), [sidebarListItems]);
+  const sectionById = useMemo(() => {
+    const map = new Map<string, SidebarListSection>();
+    for (const item of sidebarListItems)
+      if (item.kind === "thread") map.set(item.key, item.section);
+    for (const thread of sections.working) map.set(thread.id, "working");
+    for (const thread of sections.settled) map.set(thread.id, "settled");
+    for (const thread of sections.snoozed) map.set(thread.id, "snoozed");
+    return map;
+  }, [sidebarListItems, sections.working, sections.settled, sections.snoozed]);
+  const sectionByIdRef = useRef(sectionById);
+  sectionByIdRef.current = sectionById;
+  const projectedById = useMemo(
+    () => new Map(projectedThreads.map((thread) => [thread.id as string, thread])),
+    [projectedThreads],
+  );
+
+  const threadListRef = useRef<HTMLUListElement | null>(null);
+  const listMotionRef = useRef<ReturnType<typeof createSidebarListMotion> | null>(null);
+  const attachThreadList = useCallback((node: HTMLUListElement | null) => {
+    threadListRef.current = node;
+    listMotionRef.current?.dispose();
+    listMotionRef.current = node === null ? null : createSidebarListMotion(node);
+    listMotionRef.current?.update(false);
+  }, []);
+  const dragLabelOffsetRef = useRef(0);
+  const restrictBelowPins = useCallback<Modifier>(
+    (args) => restrictBelowSidebarLabel(args, dragLabelOffsetRef.current),
+    [],
+  );
+
+  const [dragState, setDragState] = useState<{
+    readonly activeKey: string;
+    readonly activeSection: SidebarListSection;
+    readonly occurredAt: string;
+    readonly activationY: number | null;
+    readonly targetSection: SidebarListSection | null;
+  } | null>(null);
+  const dragTargetSection = dragState?.targetSection ?? null;
+  const dragSensorRef = useRef<SidebarPointerSensor | null>(null);
+  const finishThreadDrag = useCallback((started: boolean) => {
+    dragSensorRef.current = null;
+    if (started) {
+      listMotionRef.current?.release();
+      setDragState(null);
+    }
+  }, []);
+  const attachDragSensor = useCallback((sensor: SidebarPointerSensor) => {
+    dragSensorRef.current = sensor;
+  }, []);
+  const cancelThreadDrag = useCallback(() => dragSensorRef.current?.cancel(), []);
+  const dndSensors = useSensors(
+    useSensor(SidebarPointerSensor, {
+      distance: SIDEBAR_DRAG_DISTANCE,
+      onAttach: attachDragSensor,
+      onFinish: finishThreadDrag,
+    }),
+  );
+  // A dragged thread that leaves the list (deleted, archived) ends the drag.
+  useEffect(() => {
+    if (
+      dragState !== null &&
+      !sidebarListItems.some((item) => item.kind === "thread" && item.key === dragState.activeKey)
+    ) {
+      cancelThreadDrag();
+    }
+  }, [cancelThreadDrag, dragState, sidebarListItems]);
+
+  // Rows move only when the order or a row's section changes; keying the
+  // motion on that keeps other updates from reading the layout.
+  const listOrderKey = useMemo(
+    () =>
+      sidebarListItems
+        .map((item) => (item.kind === "thread" ? `${item.key}:${item.section}` : item.marker))
+        .join("\0"),
+    [sidebarListItems],
+  );
+  const listMotionPaused = dragState !== null;
+  useLayoutEffect(() => {
+    void listOrderKey;
+    listMotionRef.current?.update(!listMotionPaused);
+  }, [listMotionPaused, listOrderKey]);
+
+  const pinnedOrder = useMemo(() => sections.pinned.map((thread) => thread.id), [sections.pinned]);
+  const activeOrder = useMemo(() => sections.active.map((thread) => thread.id), [sections.active]);
+  const { pinnedKeysById, activeKeysById } = useMemo(
+    () => ({
+      pinnedKeysById: new Map<string, string | null>(
+        threads.map((thread) => [thread.id, thread.pinOrderKey]),
+      ),
+      activeKeysById: new Map<string, string | null>(
+        threads.map((thread) => [thread.id, thread.activeOrderKey]),
+      ),
+    }),
+    [threads],
+  );
+  const planDrop = useCallback(
+    (activeKey: string, activeSection: SidebarListSection, overId: string) => {
+      const target = resolveSidebarDropTarget(sidebarListItems, activeKey, overId);
+      const source = threadsById.get(activeKey);
+      if (target === null || source === undefined) return null;
+      return {
+        target,
+        plan: planSidebarThreadDrop({
+          activeKey,
+          activeSection,
+          activePinned: source.pinnedAt !== null,
+          activeSettled: source.settledOverride === "settled",
+          target,
+          pinnedOrder,
+          pinnedKeysById,
+          activeOrder,
+          activeKeysById,
+          activeTimeOrdered: workingShelfEnabled,
+        }),
+      };
+    },
+    [
+      sidebarListItems,
+      threadsById,
+      pinnedOrder,
+      pinnedKeysById,
+      activeOrder,
+      activeKeysById,
+      workingShelfEnabled,
+    ],
+  );
+
+  const handleThreadDragStart = useCallback(
+    (event: DragStartEvent) => {
+      const activeKey = String(event.active.id);
+      const activeSection = sectionById.get(activeKey);
+      if (activeSection === undefined) return;
+      listMotionRef.current?.suspend();
+      const list = threadListRef.current;
+      const header = list?.querySelector<HTMLElement>(
+        `[data-sidebar-marker="${sidebarMarkerId("pinned-header")}"]`,
+      );
+      if (list && header) {
+        const listRect = list.getBoundingClientRect();
+        const scale = list.offsetWidth > 0 ? listRect.width / list.offsetWidth : 1;
+        dragLabelOffsetRef.current =
+          header.getBoundingClientRect().top - listRect.top + SIDEBAR_DRAG_LABEL_HEIGHT * scale;
+      } else {
+        dragLabelOffsetRef.current = 0;
+      }
+      setDragState({
+        activeKey,
+        activeSection,
+        targetSection: activeSection,
+        occurredAt: new Date().toISOString(),
+        activationY:
+          event.activatorEvent instanceof PointerEvent ? event.activatorEvent.clientY : null,
+      });
+    },
+    [sectionById],
+  );
+  const handleThreadDragOver = useCallback(
+    (event: DragOverEvent) => {
+      const target = event.over
+        ? resolveSidebarDropTarget(sidebarListItems, String(event.active.id), String(event.over.id))
+        : null;
+      setDragState((current) =>
+        current === null || current.activeKey !== String(event.active.id)
+          ? current
+          : { ...current, targetSection: target?.section ?? null },
+      );
+    },
+    [sidebarListItems],
+  );
+
+  // Settled shows the dragged thread as just settled, so newest; with the
+  // Working shelf on, Active shows it at the time it would come back.
+  const draggedSettledOrder = useMemo(() => {
+    if (dragState === null) return [];
+    const settledIds = sections.settled.map((thread) => thread.id as string);
+    return dragState.activeSection === "settled"
+      ? settledIds
+      : [dragState.activeKey, ...settledIds.filter((id) => id !== dragState.activeKey)];
+  }, [dragState, sections.settled]);
+  const draggedActiveOrder = useMemo(() => {
+    if (!workingShelfEnabled || dragState === null) return undefined;
+    const projected = threads.map((thread) =>
+      thread.id === dragState.activeKey
+        ? applySidebarThreadDrop(thread, "active", dragState.occurredAt)
+        : thread,
+    );
+    return buildSidebarSections({
+      threads: projected,
+      scopedProjectIds,
+      workingShelfEnabled,
+      returnedAt: inboxReturns.returnedAt,
+    }).active.map((thread) => thread.id as string);
+  }, [dragState, threads, scopedProjectIds, workingShelfEnabled]);
+  const sortingStrategy = useMemo(
+    () =>
+      createSidebarSortingStrategy({
+        items: sidebarListItems,
+        boundaryLabelHeight: SIDEBAR_DRAG_LABEL_HEIGHT,
+        settledOrder: draggedSettledOrder,
+        ...(draggedActiveOrder === undefined ? {} : { activeOrder: draggedActiveOrder }),
+        settledExpanded,
+        settledVisibleCount,
+        routeThreadKey: routeThreadId ?? null,
+        snoozedThreadCount: sections.snoozed.length,
+      }),
+    [
+      sidebarListItems,
+      draggedSettledOrder,
+      draggedActiveOrder,
+      settledExpanded,
+      settledVisibleCount,
+      routeThreadId,
+      sections.snoozed.length,
+    ],
+  );
+  const draggedKey = dragState?.activeKey;
+  const draggedFrom = dragState?.activeSection;
+  const dragActivationY = dragState?.activationY ?? null;
+  const collisionDetection = useMemo(() => {
+    if (draggedKey === undefined || draggedFrom === undefined) {
+      return createSidebarCollisionDetection(() => true);
+    }
+    return createSidebarCollisionDetection(
+      (id) => {
+        const planned = planDrop(draggedKey, draggedFrom, id);
+        return planned !== null && planned.plan.kind !== "none";
+      },
+      { items: sidebarListItems, activationY: dragActivationY },
+    );
+  }, [draggedKey, draggedFrom, dragActivationY, planDrop, sidebarListItems]);
+
+  const handleThreadDragEnd = useCallback(
+    (event: DragEndEvent) => {
+      const activeKey = String(event.active.id);
+      const activeSection = sectionById.get(activeKey);
+      const thread = threadsById.get(activeKey);
+      if (event.over === null || activeSection === undefined || thread === undefined) return;
+      const planned = planDrop(activeKey, activeSection, String(event.over.id));
+      if (planned === null || planned.plan.kind === "none") return;
+      const { plan, target } = planned;
+      const assignments: ReadonlyArray<OrderKeyAssignment> =
+        plan.kind === "pin"
+          ? [
+              ...(plan.orderKey === undefined ? [] : [{ id: activeKey, orderKey: plan.orderKey }]),
+              ...plan.extraAssignments,
+            ]
+          : plan.kind === "settle"
+            ? []
+            : plan.assignments;
+      const drop: OptimisticDrop = {
+        key: activeKey,
+        section: target.section,
+        occurredAt: new Date().toISOString(),
+        assignedKeys: new Map(assignments.map(({ id, orderKey }) => [id, orderKey])),
+        done: false,
+      };
+      setOptimisticDrop(drop);
+      const run = async (operation: Promise<unknown>, title: string): Promise<boolean> => {
+        try {
+          await operation;
+          return true;
+        } catch (error) {
+          failureToast(title, error);
+          return false;
+        }
+      };
+      void (async () => {
+        let landed = true;
+        switch (plan.kind) {
+          case "settle":
+            landed = await attemptSettle(thread);
+            break;
+          case "move-active":
+            landed =
+              (!plan.unpin || (await run(unpinThread(thread), "Failed to unpin thread"))) &&
+              (!plan.unsettle ||
+                (await run(unsettleThread(thread.id), "Failed to un-settle thread"))) &&
+              (!plan.unsnooze || (await run(unsnoozeThread(thread.id), "Failed to wake thread")));
+            break;
+          case "pin":
+            landed = await run(pinThread(thread.id, plan.orderKey), "Failed to pin thread");
+            break;
+          case "reorder-pinned":
+            break;
+        }
+        if (landed && plan.kind !== "settle") {
+          const writes = plan.kind === "pin" ? plan.extraAssignments : plan.assignments;
+          for (const { id, orderKey } of writes) {
+            landed =
+              plan.kind === "move-active"
+                ? await run(
+                    reorderActiveThread(id as ThreadId, orderKey),
+                    "Failed to reorder active threads",
+                  )
+                : await run(
+                    reorderPinnedThread(id as ThreadId, orderKey),
+                    "Failed to reorder pinned threads",
+                  );
+            if (!landed) break;
+          }
+        }
+        setOptimisticDrop((current) =>
+          current === drop ? (landed ? { ...drop, done: true } : null) : current,
+        );
+      })();
+    },
+    [attemptSettle, planDrop, sectionById, threadsById],
+  );
+
+  // ---- Press-and-drag Settle / Un-settle across rows (T3 Code's `startActionSweep`) ----
+
+  const [actionSweep, setActionSweep] = useState<{
+    readonly action: SidebarSweepAction;
+    readonly keys: ReadonlySet<string>;
+  } | null>(null);
+  const startActionSweep = useCallback(
+    (thread: SidebarThread, action: SidebarSweepAction, event: PointerEvent) => {
+      const originSection = sectionByIdRef.current.get(thread.id);
+      const canApply = (key: string) =>
+        threadsByIdRef.current.has(key) && sectionByIdRef.current.get(key) === originSection;
+      let targetKey: string | null = null;
+      let swept: string[] = [];
+      const sweepTo = (key: string | null) => {
+        if (key === null || key === targetKey) return;
+        targetKey = key;
+        swept = resolveSidebarSweepKeys(orderedIdsRef.current, thread.id, key, canApply);
+        setActionSweep({ action, keys: new Set(swept) });
+      };
+      dragSensorRef.current = new SidebarPointerSensor({
+        active: thread.id,
+        event,
+        options: {
+          distance: SIDEBAR_DRAG_DISTANCE,
+          onAttach: () => {},
+          onFinish: () => {
+            dragSensorRef.current = null;
+            setActionSweep(null);
+          },
+        },
+        onPending: () => {},
+        onStart: () => sweepTo(thread.id),
+        onMove: ({ y }) =>
+          sweepTo(threadListRef.current && sidebarThreadKeyAtY(threadListRef.current, y)),
+        onEnd: () => {
+          const targets = swept
+            .filter(canApply)
+            .flatMap((key) => threadsByIdRef.current.get(key) ?? []);
+          if (action === "settle") settleThreads(targets);
+          else if (action === "unsettle") {
+            for (const target of targets) {
+              unsettleThread(target.id).catch((error: unknown) =>
+                failureToast("Failed to un-settle thread", error),
+              );
+            }
+          } else {
+            for (const target of targets) {
+              unsnoozeThread(target.id).catch((error: unknown) =>
+                failureToast("Failed to wake thread", error),
+              );
+            }
+          }
+        },
+        onCancel: () => {},
+        onAbort: () => {},
+      });
+    },
+    [settleThreads],
+  );
 
   const searchInputRef = useRef<HTMLInputElement>(null);
   const [searchQuery, setSearchQuery] = useState("");
@@ -437,19 +1012,137 @@ export function Sidebar() {
     () => new Map(projects.map((project) => [project.id as string, project.title])),
     [projects],
   );
-  const renderRow = (thread: SidebarThread, section: SidebarSection) => (
-    <InboxThreadRow
+  const draggingFrom = dragState?.activeSection ?? null;
+  const renderRow = (thread: SidebarThread, section: SidebarListSection) => (
+    <SortableThreadRow
       key={thread.id}
-      thread={thread}
-      section={section}
-      current={thread.id === routeThreadId}
-      projectName={scopedGroup === null ? (projectNameById.get(thread.projectId) ?? null) : null}
-      orderedIdsRef={orderedIdsRef}
-      onSettle={attemptSettle}
-      onSnooze={attemptSnooze}
-      onBulkMenu={openBulkMenu}
-    />
+      id={thread.id}
+      // Working follows live status, so its rows stay put; so does every
+      // row while a drop is on its way.
+      disabled={section === "working" || optimisticDrop !== null}
+    >
+      {(sortable) => (
+        <InboxThreadRow
+          thread={thread}
+          section={section}
+          current={thread.id === routeThreadId}
+          projectName={
+            scopedGroup === null ? (projectNameById.get(thread.projectId) ?? null) : null
+          }
+          orderedIdsRef={orderedIdsRef}
+          sortable={sortable}
+          dropVerb={
+            dragState?.activeKey === thread.id
+              ? resolveSidebarDropVerb(dragState.activeSection, dragTargetSection)
+              : null
+          }
+          dragOverPinned={dragState?.activeKey === thread.id && dragTargetSection === "pinned"}
+          sweepAction={actionSweep?.keys.has(thread.id) ? actionSweep.action : null}
+          onSettle={attemptSettle}
+          onSnooze={attemptSnooze}
+          onActionSweepStart={startActionSweep}
+          onBulkMenu={openBulkMenu}
+        />
+      )}
+    </SortableThreadRow>
   );
+  const firstShelf =
+    sections.working.length > 0
+      ? "working-header"
+      : sections.snoozed.length > 0
+        ? "snoozed-header"
+        : "settled-header";
+  const renderMarker = (marker: SidebarListMarker): ReactNode => {
+    switch (marker) {
+      case "pinned-header":
+      case "pinned-divider":
+        return (
+          <SidebarDragBoundary
+            key={marker}
+            marker={marker}
+            label={marker === "pinned-header" ? "Pinned" : "Active"}
+            visible={draggingFrom !== null}
+            isDropTarget={dragTargetSection === (marker === "pinned-header" ? "pinned" : "active")}
+          />
+        );
+      case "active-placeholder":
+        return (
+          <SidebarSectionPlaceholder
+            key={marker}
+            marker={marker}
+            label="Active"
+            showHint={
+              draggingFrom !== null &&
+              (sections.active.length === 0 ||
+                (draggingFrom === "active" &&
+                  sections.active.length === 1 &&
+                  dragTargetSection !== null &&
+                  dragTargetSection !== "active"))
+            }
+            isDropTarget={dragTargetSection === "active"}
+          />
+        );
+      case "settled-placeholder":
+        return (
+          <SidebarSectionPlaceholder
+            key={marker}
+            marker={marker}
+            label="Settled"
+            showHint={
+              draggingFrom !== null &&
+              (visibleSettled.length === 0 ||
+                (draggingFrom === "settled" &&
+                  visibleSettled.length === 1 &&
+                  dragTargetSection !== null &&
+                  dragTargetSection !== "settled"))
+            }
+            isDropTarget={dragTargetSection === "settled"}
+          />
+        );
+      case "working-header":
+        return (
+          <ShelfHeader
+            key={marker}
+            marker={marker}
+            className={firstShelf === marker ? "mt-auto" : undefined}
+            label={workingExpanded ? "Working" : `Working (${sections.working.length})`}
+            expanded={workingExpanded}
+            onToggle={toggleWorking}
+          />
+        );
+      case "snoozed-header":
+        return (
+          <ShelfHeader
+            key={marker}
+            marker={marker}
+            className={firstShelf === marker ? "mt-auto" : undefined}
+            label={snoozedExpanded ? "Snoozed" : `Snoozed (${sections.snoozed.length})`}
+            expanded={snoozedExpanded}
+            onToggle={toggleSnoozed}
+            tone="info"
+            dragging={draggingFrom !== null}
+          />
+        );
+      case "settled-header":
+        return (
+          <ShelfHeader
+            key={marker}
+            marker={marker}
+            className={firstShelf === marker ? "mt-auto" : undefined}
+            label={settledExpanded ? "Settled" : `Settled (${sections.settled.length})`}
+            expanded={settledExpanded}
+            onToggle={toggleSettled}
+            dragging={draggingFrom !== null}
+            isDropTarget={dragTargetSection === "settled"}
+          />
+        );
+    }
+  };
+  const renderListItem = (item: SidebarListItem): ReactNode => {
+    if (item.kind === "marker") return renderMarker(item.marker);
+    const thread = projectedById.get(item.key);
+    return thread === undefined ? null : renderRow(thread, item.section);
+  };
 
   const total =
     sections.pinned.length +
@@ -544,51 +1237,46 @@ export function Sidebar() {
             )}
           </div>
         ) : (
-          <ul role="presentation" className="flex flex-1 flex-col gap-px">
-            {sections.pinned.length > 0 ? (
-              <SectionLabel label="Pinned">
-                {sections.pinned.map((thread) => renderRow(thread, "pinned"))}
-              </SectionLabel>
-            ) : null}
-            <SectionLabel label="Active">
-              {sections.active.map((thread) => renderRow(thread, "active"))}
-            </SectionLabel>
-            <li className="mt-auto" aria-hidden />
-            {sections.working.length > 0 ? (
-              <ShelfHeader
-                label={workingExpanded ? "Working" : `Working (${sections.working.length})`}
-                expanded={workingExpanded}
-                onToggle={toggleWorking}
-              />
-            ) : null}
-            {visibleWorking.map((thread) => renderRow(thread, "working"))}
-            {sections.snoozed.length > 0 ? (
-              <ShelfHeader
-                label={snoozedExpanded ? "Snoozed" : `Snoozed (${sections.snoozed.length})`}
-                expanded={snoozedExpanded}
-                onToggle={toggleSnoozed}
-                tone="info"
-              />
-            ) : null}
-            {visibleSnoozed.map((thread) => renderRow(thread, "snoozed"))}
-            <ShelfHeader
-              label={settledExpanded ? "Settled" : `Settled (${sections.settled.length})`}
-              expanded={settledExpanded}
-              onToggle={toggleSettled}
-            />
-            {visibleSettled.map((thread) => renderRow(thread, "settled"))}
-            {settledExpanded && hiddenSettledCount > 0 ? (
-              <li>
-                <button
-                  type="button"
-                  onClick={() => setSettledVisibleCount((count) => count + SETTLED_TAIL_PAGE_COUNT)}
-                  className="w-full rounded-md px-2.5 py-1.5 text-left text-sm text-neutral-500 hover:bg-neutral-100 dark:text-neutral-400 dark:hover:bg-neutral-900"
-                >
-                  Show {Math.min(hiddenSettledCount, SETTLED_TAIL_PAGE_COUNT)} more
-                </button>
-              </li>
-            ) : null}
-          </ul>
+          <DndContext
+            sensors={dndSensors}
+            collisionDetection={collisionDetection}
+            modifiers={[
+              restrictToVerticalAxis,
+              restrictBelowPins,
+              restrictToFirstScrollableAncestor,
+            ]}
+            onDragStart={handleThreadDragStart}
+            onDragOver={handleThreadDragOver}
+            onDragEnd={handleThreadDragEnd}
+          >
+            <SidebarDragLifecycle onUnmount={cancelThreadDrag} />
+            <SortableContext items={sortableIds} strategy={sortingStrategy}>
+              <ul
+                ref={attachThreadList}
+                // A presentational list keeps assistive technology reading
+                // the rows in order (T3 Code's VoiceOver note).
+                role="presentation"
+                className={`relative flex flex-1 flex-col gap-px${
+                  actionSweep === null ? "" : " **:pointer-events-none"
+                }`}
+              >
+                {sidebarListItems.map(renderListItem)}
+                {settledExpanded && hiddenSettledCount > 0 ? (
+                  <li className="list-none">
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setSettledVisibleCount((count) => count + SETTLED_TAIL_PAGE_COUNT)
+                      }
+                      className="w-full rounded-md px-2.5 py-1.5 text-left text-sm text-neutral-500 hover:bg-neutral-100 dark:text-neutral-400 dark:hover:bg-neutral-900"
+                    >
+                      Show {Math.min(hiddenSettledCount, SETTLED_TAIL_PAGE_COUNT)} more
+                    </button>
+                  </li>
+                ) : null}
+              </ul>
+            </SortableContext>
+          </DndContext>
         )}
       </nav>
     </div>
@@ -615,34 +1303,141 @@ function HeaderButton(props: {
   );
 }
 
-/**
- * A section's rows. T3 Code shows the Pinned and Active labels only while
- * dragging (#40); here they name the groups for assistive technology.
- */
-function SectionLabel(props: { readonly label: string; readonly children: ReactNode }) {
+type SortableBag = Pick<
+  ReturnType<typeof useSortable>,
+  "listeners" | "setNodeRef" | "transform" | "transition" | "isDragging"
+>;
+
+/** A thread row the sidebar can drag (T3 Code's `SortableThreadRow`). */
+function SortableThreadRow(props: {
+  readonly id: string;
+  readonly disabled: boolean;
+  readonly children: (sortable: SortableBag) => ReactNode;
+}) {
+  const { listeners, setNodeRef, transform, transition, isDragging } = useSortable({
+    id: props.id,
+    disabled: { draggable: props.disabled },
+    animateLayoutChanges: animateSidebarLayoutChanges,
+  });
+  const bag = useMemo(
+    () => ({ listeners, setNodeRef, transform, transition, isDragging }),
+    [listeners, setNodeRef, transform, transition, isDragging],
+  );
+  return props.children(bag);
+}
+
+/** A row between sections: it slides with the rows but is never dragged (T3 Code's `SortableSidebarMarker`). */
+function SortableSidebarMarker(props: {
+  readonly marker: SidebarListMarker;
+  readonly className?: string;
+  readonly children?: ReactNode;
+}) {
+  const { setNodeRef, transform, transition } = useSortable({
+    id: sidebarMarkerId(props.marker),
+    disabled: { draggable: true },
+    animateLayoutChanges: animateSidebarLayoutChanges,
+  });
   return (
-    <li className="list-none">
-      <ul aria-label={props.label} className="flex flex-col gap-px">
-        {props.children}
-      </ul>
+    <li
+      ref={setNodeRef}
+      data-sidebar-marker={sidebarMarkerId(props.marker)}
+      className={`list-none ${props.className ?? ""}`}
+      style={{
+        transform: CSS.Translate.toString(transform),
+        transition: props.marker.endsWith("-placeholder") ? "none" : transition,
+        visibility: transform?.scaleY === 0 ? "hidden" : undefined,
+      }}
+    >
+      {props.children}
     </li>
   );
 }
 
-/** A shelf's header, which folds and unfolds it (T3 Code's `SidebarSectionHeader`). */
+/**
+ * The Pinned and Active labels, shown only while dragging; they take no
+ * room until then (T3 Code's `SidebarDragBoundary`).
+ */
+function SidebarDragBoundary(props: {
+  readonly marker: "pinned-header" | "pinned-divider";
+  readonly label: string;
+  readonly visible: boolean;
+  readonly isDropTarget: boolean;
+}) {
+  return (
+    <SortableSidebarMarker
+      marker={props.marker}
+      className="pointer-events-none relative mx-0.5 -mb-px h-0"
+    >
+      {props.visible ? (
+        <div className="sidebar-drag-boundary-label absolute inset-x-2 top-1 flex h-4 items-center gap-2">
+          <span
+            className={`shrink-0 text-xs font-medium ${
+              props.isDropTarget ? "text-sky-600 dark:text-sky-400" : "text-neutral-500"
+            }`}
+          >
+            {props.label}
+          </span>
+          <span
+            aria-hidden
+            className={`h-px flex-1 ${
+              props.isDropTarget ? "bg-sky-500/50" : "bg-neutral-400/40 dark:bg-neutral-600/50"
+            }`}
+          />
+        </div>
+      ) : null}
+    </SortableSidebarMarker>
+  );
+}
+
+/** Somewhere to drop into an empty Active or Settled (T3 Code's `SidebarSectionPlaceholder`). */
+function SidebarSectionPlaceholder(props: {
+  readonly marker: "active-placeholder" | "settled-placeholder";
+  readonly label: string;
+  readonly showHint: boolean;
+  readonly isDropTarget: boolean;
+}) {
+  return (
+    <SortableSidebarMarker marker={props.marker} className="relative mx-0.5 -mb-px h-0">
+      {props.showHint ? (
+        <div
+          className={`absolute inset-x-0 top-0 flex h-9 items-center justify-center rounded-md border border-dashed text-xs ${
+            props.isDropTarget
+              ? "border-sky-500/50 bg-sky-500/5 text-sky-600 dark:text-sky-400"
+              : "border-neutral-400/40 text-neutral-500"
+          }`}
+        >
+          {props.label}
+        </div>
+      ) : null}
+    </SortableSidebarMarker>
+  );
+}
+
+/**
+ * A shelf's header, which folds and unfolds it (T3 Code's
+ * `SidebarSectionHeader`). While dragging it stands out, and takes the
+ * accent colour when the drop would land in its shelf.
+ */
 function ShelfHeader(props: {
+  readonly marker: "working-header" | "snoozed-header" | "settled-header";
   readonly label: string;
   readonly expanded: boolean;
   readonly onToggle: () => void;
+  readonly className?: string | undefined;
+  readonly dragging?: boolean;
+  readonly isDropTarget?: boolean;
   /** Snoozed's header is tinted, as T3 Code's "info" tone. */
   readonly tone?: "muted" | "info";
 }) {
-  const tone =
-    props.tone === "info"
-      ? "text-sky-700 hover:text-sky-900 dark:text-sky-400 dark:hover:text-sky-200"
-      : "text-neutral-500 hover:text-neutral-900 dark:text-neutral-400 dark:hover:text-neutral-100";
+  const tone = props.isDropTarget
+    ? "text-sky-600 dark:text-sky-400"
+    : props.dragging
+      ? "text-neutral-900 dark:text-neutral-100"
+      : props.tone === "info"
+        ? "text-sky-700 hover:text-sky-900 dark:text-sky-400 dark:hover:text-sky-200"
+        : "text-neutral-500 hover:text-neutral-900 dark:text-neutral-400 dark:hover:text-neutral-100";
   return (
-    <li className="list-none">
+    <SortableSidebarMarker marker={props.marker} className={`h-8 ${props.className ?? ""}`}>
       <button
         type="button"
         aria-expanded={props.expanded}
@@ -654,9 +1449,43 @@ function ShelfHeader(props: {
         />
         {props.label}
       </button>
-    </li>
+    </SortableSidebarMarker>
   );
 }
+
+/** What the dragged row says its drop will do (T3 Code's `dropVerbBadge`). */
+const DROP_VERB_BADGE: Record<SidebarDropVerb, ReactNode> = {
+  pin: (
+    <>
+      <PinIcon className="size-3" />
+      Pin
+    </>
+  ),
+  unpin: (
+    <>
+      <PinOffIcon className="size-3" />
+      Unpin
+    </>
+  ),
+  settle: (
+    <>
+      <CircleCheckIcon className="size-3" />
+      Settle
+    </>
+  ),
+  unsettle: (
+    <>
+      <Undo2Icon className="size-3" />
+      Un-settle
+    </>
+  ),
+  wake: (
+    <>
+      <AlarmClockOffIcon className="size-3" />
+      Wake
+    </>
+  ),
+};
 
 /**
  * The project scope menu (T3 Code's `Combobox` in the sidebar header):
@@ -796,8 +1625,10 @@ function ProjectScopeMenu(props: {
  * A row (T3 Code's `SidebarThreadRow`): a card in Pinned, Active and
  * Working, a slim row in Snoozed and Settled. A card's hover buttons snooze
  * it (presets and **Custom…**) and settle it; a snoozed row shows the time
- * left and wakes from its hover button, a settled one un-settles. A pinned
- * row's pin unpins it.
+ * left and wakes from its hover button, a settled one un-settles. Pressed
+ * and dragged across rows, Settle, Un-settle and Wake act on each. A pinned
+ * row's pin unpins it. Dragged, the row shows what the drop will do instead
+ * of its status and hover buttons.
  */
 function InboxThreadRow(props: {
   readonly thread: SidebarThread;
@@ -806,11 +1637,20 @@ function InboxThreadRow(props: {
   /** Shown when the sidebar spans several projects. */
   readonly projectName: string | null;
   readonly orderedIdsRef: { readonly current: ReadonlyArray<string> };
+  readonly sortable: SortableBag;
+  readonly dropVerb: SidebarDropVerb | null;
+  readonly dragOverPinned: boolean;
+  readonly sweepAction: SidebarSweepAction | null;
   readonly onSettle: (thread: SidebarThread) => void;
   readonly onSnooze: (thread: SidebarThread, snoozedUntil: string) => void;
+  readonly onActionSweepStart: (
+    thread: SidebarThread,
+    action: SidebarSweepAction,
+    event: PointerEvent,
+  ) => void;
   readonly onBulkMenu: (position: { x: number; y: number }) => void;
 }) {
-  const { thread, section, current, onSnooze } = props;
+  const { thread, section, current, onSnooze, sortable } = props;
   const rename = useThreadRename(thread);
   const { openMenu } = useThreadActionMenu(thread, {
     onStartRename: rename.start,
@@ -825,6 +1665,8 @@ function InboxThreadRow(props: {
   const snoozed = section === "snoozed";
   const slim = settled || snoozed;
   const pinned = thread.pinnedAt !== null;
+  const dragging = sortable.isDragging;
+  const sweeping = props.sweepAction !== null;
   const now = Date.now();
   const timeLabel =
     snoozed && thread.snoozedUntil !== null
@@ -835,7 +1677,7 @@ function InboxThreadRow(props: {
             : (thread.latestRunRequestedAt ?? thread.updatedAt),
           now,
         );
-  const showSnoozeButton = !slim && canSnooze(thread);
+  const showSnoozeButton = !slim && !dragging && !sweeping && canSnooze(thread);
 
   /** The snooze button's menu: the presets and **Custom…**, below the button. */
   const openSnoozeMenu = (button: HTMLElement) => {
@@ -854,18 +1696,29 @@ function InboxThreadRow(props: {
     })();
   };
 
-  const surface = current
-    ? "bg-neutral-200 dark:bg-neutral-800"
-    : selected
-      ? "bg-sky-100 dark:bg-sky-950"
-      : "hover:bg-neutral-100 dark:hover:bg-neutral-900";
+  const surface = dragging
+    ? "bg-neutral-200 shadow-lg dark:bg-neutral-800"
+    : current
+      ? "bg-neutral-200 dark:bg-neutral-800"
+      : selected || sweeping
+        ? "bg-sky-100 dark:bg-sky-950"
+        : "hover:bg-neutral-100 dark:hover:bg-neutral-900";
   const rowClass = `group relative flex w-full items-center gap-2 rounded-md px-2.5 text-left text-sm ${
     slim ? "h-8 text-neutral-500 dark:text-neutral-400" : "min-h-9 py-1.5"
   } ${surface}`;
+  const sortableProps = {
+    ref: sortable.setNodeRef,
+    style: {
+      transform: CSS.Translate.toString(sortable.transform),
+      transition: sortable.transition,
+      // A row the projected layout folds away hides; the dragged row never does.
+      visibility: !dragging && sortable.transform?.scaleY === 0 ? ("hidden" as const) : undefined,
+    },
+  };
 
   if (rename.input !== null) {
     return (
-      <li className="list-none">
+      <li {...sortableProps} className="list-none">
         <div className={rowClass}>
           <ThreadStatusIndicator thread={thread} />
           {rename.input}
@@ -874,11 +1727,45 @@ function InboxThreadRow(props: {
     );
   }
 
+  // Dragged, a pin stays only while the row is over Pinned without a badge.
+  const showPin = pinned && (!dragging || (props.dragOverPinned && props.dropVerb === null));
+  const badgeVerb: SidebarDropVerb | null = dragging
+    ? props.dropVerb
+    : props.sweepAction === "unsnooze"
+      ? "wake"
+      : props.sweepAction;
+  const badge =
+    badgeVerb === null ? null : (
+      <span
+        role="status"
+        className="pointer-events-none ml-auto inline-flex h-5 shrink-0 items-center gap-1 rounded-sm border border-sky-500/40 bg-sky-500/10 px-1.5 text-[11px] font-medium text-sky-700 dark:text-sky-300"
+      >
+        {DROP_VERB_BADGE[badgeVerb]}
+      </span>
+    );
+  const startSweep = (event: ReactPointerEvent) => {
+    if (!event.isPrimary || event.button !== 0) return;
+    // The sweep, not the row's drag, takes this press.
+    event.stopPropagation();
+    props.onActionSweepStart(
+      thread,
+      snoozed ? "unsnooze" : settled ? "unsettle" : "settle",
+      event.nativeEvent,
+    );
+  };
+  const hoverButtonClass =
+    "pointer-events-none absolute top-1/2 right-1 -translate-y-1/2 rounded-md p-1.5 text-neutral-500 opacity-0 group-hover:pointer-events-auto group-hover:opacity-100 focus-visible:pointer-events-auto focus-visible:opacity-100 hover:text-neutral-900 dark:text-neutral-400 dark:hover:text-neutral-100";
+
   return (
-    <li className="group relative list-none">
+    <li
+      {...sortableProps}
+      {...sortable.listeners}
+      className={`group relative list-none${dragging ? " z-20" : ""}`}
+    >
       <Link
         to="/threads/$threadId"
         params={{ threadId: thread.id }}
+        draggable={false}
         data-thread-item={thread.id}
         aria-current={current ? "page" : undefined}
         aria-selected={selected || undefined}
@@ -915,9 +1802,11 @@ function InboxThreadRow(props: {
           clearThreadSelection();
           openMenu(position);
         }}
-        className={`${rowClass} ${showSnoozeButton ? "pr-16" : "pr-9"}`}
+        className={`${rowClass} ${
+          dragging || sweeping ? "" : showSnoozeButton ? "pr-16" : "pr-9"
+        } select-none`}
       >
-        <ThreadStatusIndicator thread={thread} />
+        {dragging ? null : <ThreadStatusIndicator thread={thread} />}
         <span className="flex min-w-0 flex-1 flex-col">
           {/* Dimmed while a provider writes the title (T3 Code's `opacity-55`). */}
           <span
@@ -933,16 +1822,22 @@ function InboxThreadRow(props: {
             </span>
           ) : null}
         </span>
-        {pinned ? <span className="size-3 shrink-0" aria-hidden /> : null}
-        <span
-          className={`shrink-0 text-xs tabular-nums group-hover:opacity-0 ${
-            snoozed ? "text-sky-700 dark:text-sky-400" : "text-neutral-500 dark:text-neutral-400"
-          }`}
-        >
-          {timeLabel}
-        </span>
+        {showPin && dragging ? (
+          <PinIcon className="size-3 shrink-0 text-neutral-400" />
+        ) : showPin ? (
+          <span className="size-3 shrink-0" aria-hidden />
+        ) : null}
+        {badge ?? (
+          <span
+            className={`shrink-0 text-xs tabular-nums group-hover:opacity-0 ${
+              snoozed ? "text-sky-700 dark:text-sky-400" : "text-neutral-500 dark:text-neutral-400"
+            }`}
+          >
+            {timeLabel}
+          </span>
+        )}
       </Link>
-      {pinned ? (
+      {showPin && !dragging ? (
         <button
           type="button"
           aria-label="Unpin thread"
@@ -970,17 +1865,18 @@ function InboxThreadRow(props: {
           <ClockIcon className="size-3.5" />
         </button>
       ) : null}
-      {snoozed ? (
+      {dragging || sweeping ? null : snoozed ? (
         <button
           type="button"
           aria-label="Wake thread now"
           title="Wake thread now"
+          onPointerDown={startSweep}
           onClick={() =>
             unsnoozeThread(thread.id).catch((error: unknown) =>
               failureToast("Failed to wake thread", error),
             )
           }
-          className="pointer-events-none absolute top-1/2 right-1 -translate-y-1/2 rounded-md p-1.5 text-neutral-500 opacity-0 group-hover:pointer-events-auto group-hover:opacity-100 focus-visible:pointer-events-auto focus-visible:opacity-100 hover:text-neutral-900 dark:text-neutral-400 dark:hover:text-neutral-100"
+          className={hoverButtonClass}
         >
           <AlarmClockOffIcon className="size-3.5" />
         </button>
@@ -989,12 +1885,13 @@ function InboxThreadRow(props: {
           type="button"
           aria-label="Un-settle thread"
           title="Un-settle thread"
+          onPointerDown={startSweep}
           onClick={() =>
             unsettleThread(thread.id).catch((error: unknown) =>
               failureToast("Failed to un-settle thread", error),
             )
           }
-          className="pointer-events-none absolute top-1/2 right-1 -translate-y-1/2 rounded-md p-1.5 text-neutral-500 opacity-0 group-hover:pointer-events-auto group-hover:opacity-100 focus-visible:pointer-events-auto focus-visible:opacity-100 hover:text-neutral-900 dark:text-neutral-400 dark:hover:text-neutral-100"
+          className={hoverButtonClass}
         >
           <Undo2Icon className="size-3.5" />
         </button>
@@ -1003,8 +1900,9 @@ function InboxThreadRow(props: {
           type="button"
           aria-label="Settle thread"
           title="Settle thread"
+          onPointerDown={startSweep}
           onClick={() => props.onSettle(thread)}
-          className="pointer-events-none absolute top-1/2 right-1 -translate-y-1/2 rounded-md p-1.5 text-neutral-500 opacity-0 group-hover:pointer-events-auto group-hover:opacity-100 focus-visible:pointer-events-auto focus-visible:opacity-100 hover:text-neutral-900 dark:text-neutral-400 dark:hover:text-neutral-100"
+          className={hoverButtonClass}
         >
           <CheckIcon className="size-3.5" />
         </button>

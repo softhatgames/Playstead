@@ -203,6 +203,8 @@ export function decideThreadCommand(input: {
     case "thread.mark-unread":
     case "thread.pin":
     case "thread.unpin":
+    case "thread.pin.reorder":
+    case "thread.active.reorder":
     case "thread.settle":
     case "thread.unsettle":
     case "thread.snooze":
@@ -315,6 +317,8 @@ type ThreadMutationCommand = Extract<
       | "thread.mark-unread"
       | "thread.pin"
       | "thread.unpin"
+      | "thread.pin.reorder"
+      | "thread.active.reorder"
       | "thread.settle"
       | "thread.unsettle"
       | "thread.snooze"
@@ -340,12 +344,13 @@ const threadTitleGenerationEffect = (
 });
 
 /**
- * The commands an archived thread refuses (T3 Code's list). Reordering
- * joins it when it arrives.
+ * The commands an archived thread refuses (T3 Code's list).
  */
 const REFUSED_WHILE_ARCHIVED: ReadonlySet<ThreadMutationCommand["type"]> = new Set([
   "thread.pin",
   "thread.unpin",
+  "thread.pin.reorder",
+  "thread.active.reorder",
   "thread.settle",
   "thread.unsettle",
   "thread.snooze",
@@ -457,6 +462,17 @@ function dispatchThreadMutation(
   if (REFUSED_WHILE_ARCHIVED.has(command.type) && thread.archivedAt !== null) {
     return reject(command, `Thread ${thread.id} is archived.`);
   }
+  // Only a pinned thread has a place among the pins: refusing, rather than
+  // pinning, keeps a reorder that raced an unpin from bringing the pin back.
+  if (command.type === "thread.pin.reorder" && thread.pinnedAt === null) {
+    return reject(command, `Thread ${thread.id} is not pinned and cannot be reordered.`);
+  }
+  if (
+    command.type === "thread.active.reorder" &&
+    (thread.pinnedAt !== null || thread.settledOverride === "settled")
+  ) {
+    return reject(command, `Thread ${thread.id} is not active and cannot be reordered.`);
+  }
   if (
     command.type === "thread.model-selection.set" &&
     command.modelSelection.instanceId !== thread.providerInstanceId
@@ -540,6 +556,15 @@ function dispatchThreadMutation(
           pinOrderKey: null,
           updatedAt: thread.pinnedAt === null ? thread.updatedAt : now,
         };
+      case "thread.pin.reorder":
+        return {
+          ...thread,
+          pinOrderKey: command.orderKey,
+          updatedAt: thread.pinOrderKey === command.orderKey ? thread.updatedAt : now,
+        };
+      // Arranging Active is not activity: the thread keeps its `updatedAt`.
+      case "thread.active.reorder":
+        return { ...thread, activeOrderKey: command.orderKey };
       case "thread.settle": {
         const alreadySettled =
           thread.settledOverride === "settled" &&
@@ -615,6 +640,10 @@ function dispatchThreadMutation(
         return "thread.pinned" as const;
       case "thread.unpin":
         return "thread.unpinned" as const;
+      case "thread.pin.reorder":
+        return "thread.pin-reordered" as const;
+      case "thread.active.reorder":
+        return "thread.active-reordered" as const;
       case "thread.settle":
         return "thread.settled" as const;
       case "thread.unsettle":

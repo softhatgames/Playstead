@@ -1,3 +1,4 @@
+import { pinOrderKeyBetween } from "@playstead/client-runtime/state/threadOrder";
 import { canSnooze } from "@playstead/client-runtime/state/threadSettled";
 import { CommandId, type ThreadId } from "@playstead/contracts/baseSchemas";
 import type { OrchestrationV2ThreadShell } from "@playstead/contracts/orchestrationV2";
@@ -10,7 +11,11 @@ import {
   threadDeleteConfirmation,
   threadRuntimeCanArchive,
 } from "../components/threadActionMenu.logic.ts";
-import { requestPrimary, usePrimaryConnectionState } from "../connection/runtime.ts";
+import {
+  readPrimaryShellThreads,
+  requestPrimary,
+  usePrimaryConnectionState,
+} from "../connection/runtime.ts";
 import { createDraft } from "../drafts.ts";
 import { newId } from "../ids.ts";
 import { readLocalApi } from "../localApi.ts";
@@ -108,22 +113,60 @@ export const setThreadAutoSettle = (threadId: ThreadId, enabled: boolean) =>
   );
 
 /**
- * Pins the thread (T3 Code's `pinThread`). A pin made from the interface
- * takes no order key until #40 brings order keys, so it sorts among the
- * keyless pins; Undo of an unpin restores its old key. It takes over any
- * older unpin's Undo.
+ * A key above every pinned thread's, hidden ones included (T3 Code's
+ * `topOfPinnedRunOrderKey`), so a new pin lands on top of the arranged
+ * pins and never beneath one that is snoozed or in another project.
+ */
+function topOfPinnedOrderKey(): string | undefined {
+  let first: string | null = null;
+  for (const thread of readPrimaryShellThreads()) {
+    if (thread.pinnedAt === null || thread.pinOrderKey === null) continue;
+    if (first === null || thread.pinOrderKey < first) first = thread.pinOrderKey;
+  }
+  return pinOrderKeyBetween(null, first) ?? undefined;
+}
+
+/**
+ * Pins the thread (T3 Code's `pinThread`) at `orderKey`, or on top of the
+ * pins; Undo of an unpin passes its old key. It takes over any older
+ * unpin's Undo.
  */
 export const pinThread = (threadId: ThreadId, orderKey?: string | null) => {
+  const key = orderKey ?? topOfPinnedOrderKey();
   ThreadUndo.invalidate("pin", threadId);
   return requestPrimary((client) =>
     client["orchestration.dispatchCommand"]({
       type: "thread.pin",
       commandId: commandId(),
       threadId,
-      ...(orderKey === undefined || orderKey === null ? {} : { orderKey }),
+      ...(key === undefined ? {} : { orderKey: key }),
     }),
   );
 };
+
+/** Moves a pinned thread to `orderKey` among the pins (T3 Code's `reorderPinnedThread`). */
+export const reorderPinnedThread = (threadId: ThreadId, orderKey: string) => {
+  ThreadUndo.invalidate("pin", threadId);
+  return requestPrimary((client) =>
+    client["orchestration.dispatchCommand"]({
+      type: "thread.pin.reorder",
+      commandId: commandId(),
+      threadId,
+      orderKey,
+    }),
+  );
+};
+
+/** Moves an active thread to `orderKey` in Active (T3 Code's `reorderActiveThread`). */
+export const reorderActiveThread = (threadId: ThreadId, orderKey: string) =>
+  requestPrimary((client) =>
+    client["orchestration.dispatchCommand"]({
+      type: "thread.active.reorder",
+      commandId: commandId(),
+      threadId,
+      orderKey,
+    }),
+  );
 
 /** Unpins the thread, with **Undo** to pin it back where it was (T3 Code's `unpinThread`). */
 export async function unpinThread(

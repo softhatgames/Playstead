@@ -114,6 +114,8 @@ export function runPrimaryStream<A, E>(
   };
 }
 
+/** The sidebar shell's threads as the page last heard them, outside React. */
+export const readPrimaryShellThreads = () => current?.shell?.threads ?? [];
 /** The page's connection state now, for an action that needs the latest shell. */
 export const readPrimaryConnectionState = (): ConnectionState | undefined => current;
 

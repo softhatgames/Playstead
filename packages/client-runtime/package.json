@@ -32,6 +32,10 @@
       "types": "./src/state/thread.ts",
       "import": "./src/state/thread.ts"
     },
+    "./state/threadOrder": {
+      "types": "./src/state/threadOrder.ts",
+      "import": "./src/state/threadOrder.ts"
+    },
     "./state/threadSettled": {
       "types": "./src/state/threadSettled.ts",
       "import": "./src/state/threadSettled.ts"
