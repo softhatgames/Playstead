@@ -4,6 +4,7 @@ import { APP_DISPLAY_NAME } from "../branding.ts";
 import { useClientSettings } from "../clientSettings.ts";
 import { isCommandPaletteOpen, openCommandPalette } from "../commandPaletteBus.ts";
 import { useNewThread } from "../hooks/useNewThread.ts";
+import { useScratchProject } from "../hooks/useScratchProject.ts";
 import { undoLatestThreadAction } from "../hooks/showThreadUndoNotice.ts";
 import { isEditableTarget, keybindings, resolveShortcutCommand } from "../keybindings.ts";
 import { clearThreadSelection, readThreadSelection } from "../threadSelection.ts";
@@ -20,13 +21,27 @@ import { SidebarThreadUndoNotice } from "./sidebar/SidebarThreadUndoNotice.tsx";
  * latest thread action while no text field has focus, Escape clears a
  * multiple selection, `mod+shift+n` starts a thread in the current project
  * and `mod+n` does too, unless the inbox sidebar has several project groups:
- * then it opens **New thread in…**. All stand aside while the command
+ * then it opens **New thread in…**. `mod+alt+n` starts a thread without a
+ * project while "No project" is offered. All stand aside while the command
  * palette is open.
  */
 function useGlobalShortcuts(legacySidebarEnabled: boolean) {
   const { groups, startFromContext } = useNewThread();
-  const latest = useRef({ legacySidebarEnabled, groupCount: groups.length, startFromContext });
-  latest.current = { legacySidebarEnabled, groupCount: groups.length, startFromContext };
+  const { scratchWorkspaceRoot, startScratchThread } = useScratchProject();
+  const latest = useRef({
+    legacySidebarEnabled,
+    groupCount: groups.length,
+    startFromContext,
+    scratchWorkspaceRoot,
+    startScratchThread,
+  });
+  latest.current = {
+    legacySidebarEnabled,
+    groupCount: groups.length,
+    startFromContext,
+    scratchWorkspaceRoot,
+    startScratchThread,
+  };
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.defaultPrevented || isCommandPaletteOpen()) return;
@@ -42,6 +57,14 @@ function useGlobalShortcuts(legacySidebarEnabled: boolean) {
           return;
         }
         void startFromContext();
+        return;
+      }
+      if (command === "chat.newWithoutProject") {
+        const { scratchWorkspaceRoot, startScratchThread } = latest.current;
+        if (scratchWorkspaceRoot === null) return;
+        event.preventDefault();
+        event.stopPropagation();
+        void startScratchThread();
         return;
       }
       if (command === "sidebar.toggle") {

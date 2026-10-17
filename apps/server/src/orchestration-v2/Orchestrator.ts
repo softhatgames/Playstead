@@ -7,6 +7,7 @@ import {
   TurnItemId,
 } from "@playstead/contracts/baseSchemas";
 import {
+  ACTIVE_RUN_STATUSES,
   OrchestrationDispatchCommandError,
   type OrchestrationV2DispatchCommandResult,
   type OrchestrationV2ServerCommand,
@@ -22,6 +23,7 @@ import * as Option from "effect/Option";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 
+import * as ManagedProjectFolders from "../project/ManagedProjectFolders.ts";
 import * as CommandReceiptStore from "./CommandReceiptStore.ts";
 import * as EventSink from "./EventSink.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
@@ -74,6 +76,7 @@ const make = Effect.gen(function* () {
   const adapters = yield* ProviderAdapterRegistry.ProviderAdapterRegistryV2;
   const eventSink = yield* EventSink.EventSinkV2;
   const crypto = yield* Crypto.Crypto;
+  const folders = yield* ManagedProjectFolders.ManagedProjectFolders;
   const threadLocks = yield* KeyedLock.make<ThreadId>();
 
   const uuid = crypto.randomUUIDv4();
@@ -110,6 +113,35 @@ const make = Effect.gen(function* () {
         );
   };
 
+  /**
+   * A thread without a project gets its own folder, named from its first
+   * message, before that message is decided (T3 Code's
+   * `ThreadLaunchService.launch` asking `folderForThread` at 2577baf). A
+   * message sent again finds its receipt first, so it claims no second one.
+   */
+  const claimWorktreePath = (
+    command: OrchestrationV2ServerCommand,
+    projection: OrchestrationV2ThreadProjection | undefined,
+  ) =>
+    Effect.gen(function* () {
+      if (
+        command.type !== "message.dispatch" ||
+        projection === undefined ||
+        projection.thread.deletedAt !== null ||
+        projection.thread.worktreePath !== null ||
+        projection.messages.length > 0 ||
+        projection.runs.some((run) => ACTIVE_RUN_STATUSES.has(run.status))
+      ) {
+        return {};
+      }
+      const folder = yield* folders.folderForThread({
+        projectId: projection.thread.projectId,
+        threadId: projection.thread.id,
+        text: command.text,
+      });
+      return Option.isSome(folder) ? { worktreePath: folder.value } : {};
+    });
+
   const decideAndCommit = (command: OrchestrationV2ServerCommand) =>
     Effect.gen(function* () {
       const previous = yield* receipts.getByCommandId(command.commandId);
@@ -125,7 +157,12 @@ const make = Effect.gen(function* () {
                 yield* adapters.get(command.modelSelection.instanceId),
               ),
             }
-          : { projection, projectExists: true, instanceHasAdapter: true };
+          : {
+              projection,
+              projectExists: true,
+              instanceHasAdapter: true,
+              ...(yield* claimWorktreePath(command, projection)),
+            };
       const now = yield* DateTime.now;
       const decided = decideThreadCommand({
         command,

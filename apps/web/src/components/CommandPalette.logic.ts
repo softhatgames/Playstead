@@ -23,6 +23,7 @@ export const RECENT_THREAD_LIMIT = 12;
 /** T3 Code's lucide icons for each kind of item. */
 export type CommandPaletteIcon =
   | "new-thread"
+  | "no-project"
   | "add-project"
   | "settings"
   | "copy"
@@ -191,6 +192,32 @@ export function enumerateCommandPaletteItems(
     const { shortcutCommand: _dropped, ...rest } = item;
     return rest;
   });
+}
+
+/**
+ * **New thread in…**'s projects with **No project** among them (T3 Code's
+ * `projectThreadItems` at 2577baf): first while the thread in view has no
+ * project, else second. It keeps `chat.newWithoutProject` as its shortcut,
+ * and the projects keep their jump shortcuts.
+ */
+export function withNoProjectItem(
+  projectItems: ReadonlyArray<CommandPaletteActionItem>,
+  input: { readonly contextIsScratch: boolean; readonly run: () => Promise<void> },
+): CommandPaletteActionItem[] {
+  const index = input.contextIsScratch ? 0 : 1;
+  return [
+    ...projectItems.slice(0, index),
+    {
+      kind: "action",
+      value: "new-thread-in:no-project",
+      searchTerms: ["no project", "without project", "none"],
+      title: "No project",
+      icon: "no-project",
+      shortcutCommand: "chat.newWithoutProject",
+      run: input.run,
+    },
+    ...projectItems.slice(index),
+  ];
 }
 
 export interface CommandPaletteProject {

@@ -44,6 +44,7 @@ import { useThreadSearch } from "../connection/useThreadSearch.ts";
 import { createDraft } from "../drafts.ts";
 import { useBulkThreadMenu } from "../hooks/useBulkThreadMenu.ts";
 import { useNewThread } from "../hooks/useNewThread.ts";
+import { useIsScratchProject } from "../hooks/useScratchProject.ts";
 import { useSidebarThreadShortcuts } from "../hooks/useSidebarThreadShortcuts.ts";
 import { keybindings, shortcutLabelForCommand } from "../keybindings.ts";
 import { useThreadActionMenu } from "../hooks/useThreadActionMenu.ts";
@@ -306,6 +307,7 @@ export function Sidebar() {
   const workingShelfEnabled = settings.sidebarWorkingShelfEnabled;
   const { threadId: routeThreadId } = useParams({ strict: false });
   const navigate = useNavigate();
+  const isScratchProject = useIsScratchProject();
 
   const groups = useMemo(
     () =>
@@ -313,8 +315,9 @@ export function Sidebar() {
         projects,
         threads,
         sortOrder: settings.sidebarProjectSortOrder,
+        isScratchProject,
       }),
-    [projects, threads, settings.sidebarProjectSortOrder],
+    [projects, threads, settings.sidebarProjectSortOrder, isScratchProject],
   );
   const scopeKey = useSidebarProjectScopeKey();
   const scopedGroup = resolveSidebarProjectScope(groups, scopeKey);
@@ -1587,10 +1590,13 @@ function ProjectScopeMenu(props: {
             <ul role="listbox" aria-label="Projects">
               {shown.map((item) => {
                 const selected = (props.scopedGroup?.key ?? null) === item.key;
+                // "No project" has no project settings, as in T3 Code.
                 const group =
                   item.key === null
                     ? undefined
-                    : props.groups.find((candidate) => candidate.key === item.key);
+                    : props.groups.find(
+                        (candidate) => candidate.key === item.key && !candidate.isScratch,
+                      );
                 return (
                   <li
                     key={item.key ?? "all"}

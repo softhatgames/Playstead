@@ -5,9 +5,11 @@ import type { ProcessEnvironment } from "@playstead/shared/shell";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
+import { ChildProcessSpawner } from "effect/process";
 
 import * as ServerConfig from "../../config.ts";
 import * as SqlitePersistence from "../../persistence/Sqlite.ts";
+import * as ManagedProjectFolders from "../../project/ManagedProjectFolders.ts";
 import * as ProjectService from "../../project/ProjectService.ts";
 import * as ServerSettings from "../../serverSettings.ts";
 import * as TextGeneration from "../../textGeneration/TextGeneration.ts";
@@ -60,6 +62,8 @@ export const makeOrchestrationHarness = Effect.fn("makeOrchestrationHarness")(fu
   readonly config?: ServerConfig.ServerConfig["Service"];
   /** Runs startup recovery before anything is dispatched, as the server's startup does. */
   readonly recoverOnStartup?: boolean;
+  /** Stands in for spawning processes, such as the Git check of threads without a project. */
+  readonly childProcessSpawner?: ChildProcessSpawner.ChildProcessSpawner["Service"];
 }) {
   const config = input.config ?? (yield* makeTestServerConfig());
   const platform = yield* HostProcess.Platform;
@@ -106,6 +110,11 @@ export const makeOrchestrationHarness = Effect.fn("makeOrchestrationHarness")(fu
       Layer.provide(WorkspacePaths.layer),
       Layer.provide(SqlitePersistence.layerConfig),
       Layer.provide(ServerConfig.layer(config)),
+      Layer.provide(
+        input.childProcessSpawner === undefined
+          ? Layer.empty
+          : Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, input.childProcessSpawner),
+      ),
     ),
   );
   const services = yield* Effect.all({
@@ -118,6 +127,7 @@ export const makeOrchestrationHarness = Effect.fn("makeOrchestrationHarness")(fu
     settlement: ThreadSettlementService.ThreadSettlementService,
     settings: ServerSettings.ServerSettingsService,
     threadSearch: ThreadSearch.ThreadSearch,
+    folders: ManagedProjectFolders.ManagedProjectFolders,
   }).pipe(Effect.provideContext(context));
   if (input.recoverOnStartup === true) yield* services.recovery.recover;
 

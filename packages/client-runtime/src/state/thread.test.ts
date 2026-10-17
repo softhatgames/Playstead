@@ -45,6 +45,7 @@ const projection: OrchestrationV2ThreadProjection = {
     lastSnoozeWakeAt: null,
     autoSettleDisabledAt: null,
     titleRegeneration: null,
+    worktreePath: null,
   },
   runs: [],
   attempts: [],

@@ -22,6 +22,7 @@ import { useThreadShortcuts } from "../../hooks/useThreadShortcuts.ts";
 import { newId } from "../../ids.ts";
 import { ChatComposer } from "./ChatComposer.tsx";
 import { ChatHeader } from "./ChatHeader.tsx";
+import { DraftHeroHeadline } from "./DraftHeroHeadline.tsx";
 import {
   buildSendCommands,
   defaultModelSelection,
@@ -240,7 +241,9 @@ export function ChatView(
     <div className="flex h-full flex-col">
       <ChatHeader title={title} projectTitle={project?.title} thread={target} />
       <div className="min-h-0 flex-1 overflow-y-auto">
-        {error === undefined ? (
+        {props.kind === "draft" ? (
+          <DraftHeroHeadline draft={props.draft} />
+        ) : error === undefined ? (
           <MessagesTimeline rows={rows} working={working} />
         ) : (
           <p className="px-6 py-6 text-sm text-neutral-600 dark:text-neutral-300">{error}</p>

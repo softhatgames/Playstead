@@ -84,3 +84,17 @@ export class ProjectConflictError extends Schema.TaggedError<ProjectConflictErro
     return `Workspace ${this.workspaceRoot} already belongs to project ${this.conflictingProjectId}.`;
   }
 }
+
+/** `projects.ensureScratch`: the "No project" project, found or created. */
+export const ProjectEnsureScratchResult = Schema.Struct({ projectId: ProjectId });
+export type ProjectEnsureScratchResult = typeof ProjectEnsureScratchResult.Type;
+
+/**
+ * "No project" is unavailable, or its folder or project could not be made.
+ * T3 Code sends `OrchestrationDispatchCommandError`, whose Playstead form
+ * needs a command id this request has none of.
+ */
+export class ProjectEnsureScratchError extends Schema.TaggedError<ProjectEnsureScratchError>()(
+  "ProjectEnsureScratchError",
+  { message: Schema.String },
+) {}

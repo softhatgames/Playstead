@@ -147,6 +147,7 @@ const toThreadShell = (
     hasPendingUserInput: runtimeRequests.some((request) => request.status === "pending"),
     autoSettleDisabledAt: thread.autoSettleDisabledAt,
     titleRegeneration: thread.titleRegeneration,
+    worktreePath: thread.worktreePath,
   };
 };
 

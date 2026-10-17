@@ -53,6 +53,18 @@ export function setDraftModelSelection(draftId: string, modelSelection: ModelSel
   notify();
 }
 
+/**
+ * Moves an unsent draft to another project, "No project" included (T3 Code's
+ * `setLogicalProjectDraftThreadId` from the draft's project picker). Its
+ * thread is not on the server yet, so nothing else changes.
+ */
+export function setDraftProject(draftId: string, projectId: ProjectId): void {
+  const draft = drafts.get(draftId);
+  if (draft === undefined || draft.projectId === projectId) return;
+  drafts.set(draftId, { ...draft, projectId });
+  notify();
+}
+
 /** Once its thread exists, the draft is done. */
 export function discardDraft(draftId: string): void {
   if (drafts.delete(draftId)) notify();

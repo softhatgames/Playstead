@@ -78,7 +78,7 @@ const make = Effect.gen(function* () {
 
       const { textGenerationModelSelection } = yield* settings.getSettings;
       const result = yield* textGeneration.generateThreadTitle({
-        cwd: project.value.workspaceRoot,
+        cwd: thread.worktreePath ?? project.value.workspaceRoot,
         message,
         ...(kind.type === "regenerate" ? { previousTitle: thread.title } : {}),
         modelSelection: textGenerationModelSelection,

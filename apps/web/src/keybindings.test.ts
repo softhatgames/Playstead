@@ -82,6 +82,19 @@ describe("keyboard shortcuts", () => {
     expect(resolve(key("N", { metaKey: true, shiftKey: true }, "KeyN"), MAC)).toBe("chat.newLocal");
   });
 
+  it("mod+alt+n starts a thread without a project", () => {
+    // Option+N types a dead key on a Mac; the physical key still counts.
+    expect(resolve(key("˜", { metaKey: true, altKey: true }, "KeyN"), MAC)).toBe(
+      "chat.newWithoutProject",
+    );
+    expect(resolve(key("n", { ctrlKey: true, altKey: true }, "KeyN"), WINDOWS)).toBe(
+      "chat.newWithoutProject",
+    );
+    expect(
+      shortcutLabelForCommand(DEFAULT_RESOLVED_KEYBINDINGS, "chat.newWithoutProject", MAC),
+    ).toBe("⌥⌘N");
+  });
+
   it("mod+shift+[ and ] move to the previous and next thread", () => {
     const previous = resolve(key("{", { metaKey: true, shiftKey: true }, "BracketLeft"), MAC);
     const next = resolve(key("}", { metaKey: true, shiftKey: true }, "BracketRight"), MAC);

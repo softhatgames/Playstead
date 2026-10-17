@@ -16,6 +16,7 @@ import {
   getCommandPaletteMode,
   RECENT_THREAD_LIMIT,
   reduceCommandPaletteUiState,
+  withNoProjectItem,
 } from "./CommandPalette.logic.ts";
 
 /**
@@ -337,6 +338,47 @@ describe("New thread in…", () => {
       "thread.jump.9",
       undefined,
     ]);
+  });
+
+  it("puts No project second, after the first project, with its own shortcut", () => {
+    const items = withNoProjectItem(
+      enumerateCommandPaletteItems([
+        action("new-thread-in:space", ["Space game"]),
+        action("new-thread-in:rocket", ["Rocket game"]),
+      ]),
+      { contextIsScratch: false, run },
+    );
+    expect(items.map((item) => [item.value, item.title, item.shortcutCommand])).toEqual([
+      ["new-thread-in:space", "Space game", "thread.jump.1"],
+      ["new-thread-in:no-project", "No project", "chat.newWithoutProject"],
+      ["new-thread-in:rocket", "Rocket game", "thread.jump.2"],
+    ]);
+  });
+
+  it("puts No project first while the thread in view has no project", () => {
+    const items = withNoProjectItem([action("new-thread-in:space", ["Space game"])], {
+      contextIsScratch: true,
+      run,
+    });
+    expect(items.map((item) => item.value)).toEqual([
+      "new-thread-in:no-project",
+      "new-thread-in:space",
+    ]);
+  });
+
+  it("is found as no project, without project or none", () => {
+    const items = withNoProjectItem([], { contextIsScratch: false, run });
+    for (const query of ["no project", "without", "none"]) {
+      const groups = filterCommandPaletteGroups({
+        activeGroups: [{ value: "projects", label: "Projects", items }],
+        query,
+        isInSubmenu: true,
+        projectSearchItems: [],
+        threadSearchItems: [],
+        settingsSearchItems: [],
+      });
+      expect(values(groups)).toEqual([["projects", ["new-thread-in:no-project"]]]);
+    }
   });
 
   it("shows each project by its name, described by its folder", () => {
