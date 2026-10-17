@@ -103,3 +103,14 @@ it("opens Snoozed independently and preserves older shelf preferences", async ()
   state.toggleSidebarShelfExpanded("snoozed");
   assert.isTrue((await reload()).readSidebarShelvesExpanded().snoozed);
 });
+
+it("persists manual project order while retaining expansion and accepting new projects", async () => {
+  const state = await reload();
+  state.setProjectExpanded("b", false);
+  state.reorderProjects(["a", "b", "c"], "c", "a");
+  const next = await reload();
+  assert.deepStrictEqual(next.readProjectOrder(), ["c", "a", "b"]);
+  assert.isFalse(next.readProjectExpandedById().b);
+  next.reorderProjects(["c", "a", "b", "new"], "new", "a");
+  assert.deepStrictEqual((await reload()).readProjectOrder(), ["c", "new", "a", "b"]);
+});

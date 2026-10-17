@@ -76,6 +76,8 @@ const entityKindOf = (event: OrchestrationV2StoredEvent["event"]): EntityKind | 
     case "thread.visited":
     case "thread.marked-unread":
     case "thread.pinned":
+    case "thread.pin-reordered":
+    case "thread.active-reordered":
     case "thread.unpinned":
     case "thread.auto-settle-set":
     case "thread.settled":
