@@ -5,6 +5,7 @@ import * as NodeFS from "node:fs";
 import * as NodeModule from "node:module";
 import * as NodePath from "node:path";
 
+import { withoutAgentShellVariables } from "@playstead/shared/agentShell";
 import { identity } from "@playstead/shared/identity";
 
 /**
@@ -19,29 +20,11 @@ const repoRoot = NodePath.join(desktopDir, "..", "..");
 const require = NodeModule.createRequire(import.meta.url);
 
 /**
- * The shell's variables that must not reach the app: T3 Code's own, which its
- * agent shells carry, and `ELECTRON_RUN_AS_NODE`, which would start Electron
- * as plain Node (T3 Code's `dev-electron.mjs` deletes it too).
+ * The app's environment, without the agent shell's variables: T3 Code's own,
+ * and `ELECTRON_RUN_AS_NODE`, which would start Electron as plain Node
+ * (T3 Code's `dev-electron.mjs` deletes it too).
  */
-const isLeakedVariable = (name: string) => {
-  const upper = name.toUpperCase();
-  return (
-    upper === "ELECTRON_RUN_AS_NODE" ||
-    upper === "CLAUDECODE" ||
-    upper.startsWith("T3CODE_") ||
-    upper.startsWith("CLAUDE_CODE_")
-  );
-};
-
-export const createElectronEnv = (
-  baseEnv: Readonly<Record<string, string | undefined>>,
-): Record<string, string> => {
-  const env: Record<string, string> = {};
-  for (const [name, value] of Object.entries(baseEnv)) {
-    if (value !== undefined && !isLeakedVariable(name)) env[name] = value;
-  }
-  return env;
-};
+export const createElectronEnv = withoutAgentShellVariables;
 
 /**
  * Electron's binary. `require("electron")` runs Electron's own installer the

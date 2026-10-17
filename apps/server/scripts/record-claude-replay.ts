@@ -1,15 +1,11 @@
-// @effect-diagnostics nodeBuiltinImport:off -- The recorder reads this machine's identity to scrub it.
 // @effect-diagnostics preferSchemaOverJson:off -- Recorded frames are plain JSON values.
-import * as NodeFS from "node:fs";
-import * as NodeOS from "node:os";
-
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   encodeProviderReplayNdjson,
   type ProviderReplayEntry,
-  REPLAY_WORKSPACE_PLACEHOLDER,
 } from "@playstead/provider-testing/replayTranscript";
+import { withoutAgentShellVariables } from "@playstead/shared/agentShell";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -47,6 +43,14 @@ import {
   CLAUDE_TURN_INTERRUPT_SCENARIO,
   runTurnInterruptScenario,
 } from "../src/orchestration-v2/testkit/fixtures/turnInterrupt.ts";
+import {
+  readMachineIdentity,
+  recordingReplacements,
+  type Replacements,
+  scrubbed,
+  scrubbedText,
+  writeRecording,
+} from "../src/orchestration-v2/testkit/replayScrub.ts";
 import { makeTestServerConfig } from "../src/testUtils/testServer.ts";
 
 /**
@@ -67,17 +71,10 @@ import { makeTestServerConfig } from "../src/testUtils/testServer.ts";
  * waiting on it instead.
  *
  * The header carries `claude --version` and the capture date. The frames are
- * scrubbed of the folder (which becomes `<workspace>`), this machine's home,
- * user and host names, account e-mails and anything shaped like a token, and
- * the recorder refuses to write a file that still contains any of them.
+ * scrubbed by `src/orchestration-v2/testkit/replayScrub.ts`, shared with the
+ * Codex recorder, which also refuses to write a file that still names this
+ * machine or an account.
  */
-
-/** Variables a coding agent's shell carries that must not reach the recorded Claude. */
-const isAgentShellVariable = (name: string) =>
-  name === "ELECTRON_RUN_AS_NODE" ||
-  name === "CLAUDECODE" ||
-  name.startsWith("CLAUDE_CODE_") ||
-  name.startsWith("T3CODE_");
 
 const claudeVersion = Effect.gen(function* () {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
@@ -86,35 +83,6 @@ const claudeVersion = Effect.gen(function* () {
   if (version === undefined) return yield* Effect.die(`claude --version printed: ${output}`);
   return version;
 });
-
-const EMAIL = /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g;
-const TOKEN =
-  /\b(?:sk-ant-[A-Za-z0-9_-]{8,}|eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+)/g;
-const SECRET_KEYS = /token|secret|password|api[_-]?key|authorization|cookie|email/i;
-
-type Replacements = ReadonlyArray<readonly [string, string]>;
-
-const scrubbedText = (value: string, replacements: Replacements) => {
-  let text = value;
-  for (const [from, to] of replacements) text = text.split(from).join(to);
-  return text.replace(EMAIL, "user@example.com").replace(TOKEN, "REDACTED");
-};
-
-const scrubbed = (value: unknown, replacements: Replacements): unknown => {
-  if (typeof value === "string") return scrubbedText(value, replacements);
-  if (Array.isArray(value)) return value.map((item) => scrubbed(item, replacements));
-  if (typeof value === "object" && value !== null) {
-    return Object.fromEntries(
-      Object.entries(value).map(([key, item]) => [
-        key,
-        SECRET_KEYS.test(key) && typeof item === "string"
-          ? "REDACTED"
-          : scrubbed(item, replacements),
-      ]),
-    );
-  }
-  return value;
-};
 
 interface StreamedPiece {
   readonly at: number;
@@ -311,18 +279,59 @@ const recordRestartResume = (options: HarnessOptions) =>
     return { harness, workspace: first.workspace };
   });
 
+/** Each scenario: how it is recorded, and what the header says about it. */
+const SCENARIOS = {
+  [FILE_CREATE_SCENARIO.scenario]: {
+    record: recordFileCreate,
+    metadata: { model: FILE_CREATE_SCENARIO.model, prompt: FILE_CREATE_SCENARIO.prompt },
+  },
+  [RESTART_RESUME_SCENARIO.scenario]: {
+    record: recordRestartResume,
+    metadata: {
+      model: RESTART_RESUME_SCENARIO.model,
+      prompts: [RESTART_RESUME_SCENARIO.firstPrompt, RESTART_RESUME_SCENARIO.secondPrompt],
+    },
+  },
+  [CLAUDE_TURN_INTERRUPT_SCENARIO.scenario]: {
+    record: recordTurnInterrupt,
+    metadata: {
+      model: CLAUDE_TURN_INTERRUPT_SCENARIO.model,
+      prompts: [
+        CLAUDE_TURN_INTERRUPT_SCENARIO.longPrompt,
+        CLAUDE_TURN_INTERRUPT_SCENARIO.nextPrompt,
+      ],
+      interruptAfter: "command_execution running",
+    },
+  },
+  [QUESTION_ANSWER_SCENARIO_NAME]: {
+    record: (options: HarnessOptions) => recordQuestion(options, false),
+    metadata: {
+      model: CLAUDE_QUESTION_SCENARIO.model,
+      prompt: CLAUDE_QUESTION_SCENARIO.prompt,
+      answer: CLAUDE_QUESTION_SCENARIO.answer,
+    },
+  },
+  [QUESTION_INTERRUPT_SCENARIO_NAME]: {
+    record: (options: HarnessOptions) => recordQuestion(options, true),
+    metadata: {
+      model: CLAUDE_QUESTION_SCENARIO.model,
+      prompt: CLAUDE_QUESTION_SCENARIO.prompt,
+      interruptAfter: "user_input pending",
+    },
+  },
+};
+
 const program = Effect.gen(function* () {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const scenario = process.argv[2] ?? FILE_CREATE_SCENARIO.scenario;
-  if (
-    scenario !== FILE_CREATE_SCENARIO.scenario &&
-    scenario !== RESTART_RESUME_SCENARIO.scenario &&
-    scenario !== CLAUDE_TURN_INTERRUPT_SCENARIO.scenario &&
-    scenario !== QUESTION_ANSWER_SCENARIO_NAME &&
-    scenario !== QUESTION_INTERRUPT_SCENARIO_NAME
-  ) {
-    return yield* Effect.die(`No scenario is called ${scenario}.`);
+  const scenarioName = process.argv[2] ?? FILE_CREATE_SCENARIO.scenario;
+  const scenario = Object.hasOwn(SCENARIOS, scenarioName)
+    ? SCENARIOS[scenarioName as keyof typeof SCENARIOS]
+    : undefined;
+  if (scenario === undefined) {
+    return yield* Effect.die(
+      `No scenario is called ${scenarioName}. The scenarios are ${Object.keys(SCENARIOS).join(", ")}.`,
+    );
   }
   const version = yield* claudeVersion;
   const sdkEntry = yield* path.fromFileUrl(
@@ -340,39 +349,14 @@ const program = Effect.gen(function* () {
     return yield* ClaudeAgentSdkQueryRunner;
   }).pipe(Effect.provide(layerQueryRunner));
   const recording = makeRecordingQueryRunner(real);
-  const environment = Object.fromEntries(
-    Object.entries(process.env).filter(([name]) => !isAgentShellVariable(name)),
-  );
-  const harnessOptions = {
+  const { harness, workspace } = yield* scenario.record({
     claudeRunner: recording.runner,
     claudeBinaryPath: "claude",
-    environment,
-  } as const;
-  const { harness, workspace } =
-    scenario === RESTART_RESUME_SCENARIO.scenario
-      ? yield* recordRestartResume(harnessOptions)
-      : scenario === CLAUDE_TURN_INTERRUPT_SCENARIO.scenario
-        ? yield* recordTurnInterrupt(harnessOptions)
-        : scenario === QUESTION_ANSWER_SCENARIO_NAME ||
-            scenario === QUESTION_INTERRUPT_SCENARIO_NAME
-          ? yield* recordQuestion(harnessOptions, scenario === QUESTION_INTERRUPT_SCENARIO_NAME)
-          : yield* recordFileCreate(harnessOptions);
+    environment: withoutAgentShellVariables(process.env),
+  });
 
-  const home = NodeOS.homedir();
-  const user = NodeOS.userInfo().username;
-  const host = NodeOS.hostname();
-  const realWorkspace = NodeFS.realpathSync(workspace);
-  const realHome = NodeFS.realpathSync(harness.home);
-  // Longest first, so the folder goes before the home that contains it.
-  const replacements: ReadonlyArray<readonly [string, string]> = [
-    [realWorkspace, REPLAY_WORKSPACE_PLACEHOLDER],
-    [workspace, REPLAY_WORKSPACE_PLACEHOLDER],
-    [realHome, "/tmp/playstead-replay-home"],
-    [harness.home, "/tmp/playstead-replay-home"],
-    [home, "/home/replay-user"],
-    [host, "replay-host"],
-    [`/${user}/`, "/replay-user/"],
-  ];
+  const machine = readMachineIdentity();
+  const replacements = recordingReplacements({ workspace, playsteadHome: harness.home, machine });
   const entries: Array<ProviderReplayEntry> = collapseScrubbedDeltas(
     untilLastResult(recording.entries),
     replacements,
@@ -390,33 +374,10 @@ const program = Effect.gen(function* () {
       protocol: CLAUDE_REPLAY_PROTOCOL,
       version,
       capturedAt: DateTime.formatIso(yield* DateTime.now).slice(0, 10),
-      scenario,
+      scenario: scenarioName,
       metadata: {
         sdkVersion,
-        ...(scenario === RESTART_RESUME_SCENARIO.scenario
-          ? {
-              model: RESTART_RESUME_SCENARIO.model,
-              prompts: [RESTART_RESUME_SCENARIO.firstPrompt, RESTART_RESUME_SCENARIO.secondPrompt],
-            }
-          : scenario === CLAUDE_TURN_INTERRUPT_SCENARIO.scenario
-            ? {
-                model: CLAUDE_TURN_INTERRUPT_SCENARIO.model,
-                prompts: [
-                  CLAUDE_TURN_INTERRUPT_SCENARIO.longPrompt,
-                  CLAUDE_TURN_INTERRUPT_SCENARIO.nextPrompt,
-                ],
-                interruptAfter: "command_execution running",
-              }
-            : scenario === QUESTION_ANSWER_SCENARIO_NAME ||
-                scenario === QUESTION_INTERRUPT_SCENARIO_NAME
-              ? {
-                  model: CLAUDE_QUESTION_SCENARIO.model,
-                  prompt: CLAUDE_QUESTION_SCENARIO.prompt,
-                  ...(scenario === QUESTION_ANSWER_SCENARIO_NAME
-                    ? { answer: CLAUDE_QUESTION_SCENARIO.answer }
-                    : { interruptAfter: "user_input pending" }),
-                }
-              : { model: FILE_CREATE_SCENARIO.model, prompt: FILE_CREATE_SCENARIO.prompt }),
+        ...scenario.metadata,
         nativeSessionId: recording.sessionIds[0],
         recorder: "apps/server/scripts/record-claude-replay.ts",
       },
@@ -424,29 +385,13 @@ const program = Effect.gen(function* () {
     entries,
   });
 
-  const leaks = [
-    home,
-    `/${user}/`,
-    host,
-    realWorkspace,
+  const out = yield* writeRecording({
+    scenario: scenarioName,
+    provider: "claude",
+    text,
+    machine,
     workspace,
-    NodeOS.tmpdir(),
-    "/var/folders",
-    "/private/",
-  ].filter((value) => value.length >= 3 && text.includes(value));
-  if (leaks.length > 0 || EMAIL.test(text.replace(/user@example\.com/g, ""))) {
-    return yield* Effect.die("The scrubbed recording still names this machine or an account.");
-  }
-  const out = path.join(
-    path.dirname(yield* path.fromFileUrl(new URL(import.meta.url))),
-    "..",
-    "src",
-    "orchestration-v2",
-    "testkit",
-    "fixtures",
-    `${scenario}.claude.ndjson`,
-  );
-  yield* fs.writeFileString(out, text);
+  });
   yield* Effect.logInfo("Wrote the recording.").pipe(
     Effect.annotateLogs({ out, entries: entries.length }),
   );
