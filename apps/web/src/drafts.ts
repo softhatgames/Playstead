@@ -58,6 +58,15 @@ export function discardDraft(draftId: string): void {
   if (drafts.delete(draftId)) notify();
 }
 
+/** A removed project's drafts go with it (T3 Code's `clearProjectDraftThreadId`). */
+export function discardProjectDrafts(projectId: ProjectId): void {
+  let changed = false;
+  for (const [draftId, draft] of drafts) {
+    if (draft.projectId === projectId) changed = drafts.delete(draftId) || changed;
+  }
+  if (changed) notify();
+}
+
 export function useDraft(draftId: string): ThreadDraft | undefined {
   return useSyncExternalStore(subscribe, () => drafts.get(draftId));
 }

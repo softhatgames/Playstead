@@ -43,6 +43,7 @@ import {
   ListFilterIcon,
   PinIcon,
   PinOffIcon,
+  SettingsIcon,
   SquarePenIcon,
   Undo2Icon,
 } from "./icons.tsx";
@@ -563,6 +564,13 @@ function ProjectScopeMenu(props: {
     setOpen(false);
     setQuery("");
   };
+  const navigate = useNavigate();
+  // T3 Code's `openProjectSettings`: the gear, or right-click, on a project.
+  const openProjectSettings = (group: SidebarProjectGroup) => {
+    setOpen(false);
+    setQuery("");
+    void navigate({ to: "/projects/$projectKey", params: { projectKey: group.key } });
+  };
 
   return (
     <div ref={rootRef} className="relative">
@@ -608,18 +616,43 @@ function ProjectScopeMenu(props: {
             <ul role="listbox" aria-label="Projects">
               {shown.map((item) => {
                 const selected = (props.scopedGroup?.key ?? null) === item.key;
+                const group =
+                  item.key === null
+                    ? undefined
+                    : props.groups.find((candidate) => candidate.key === item.key);
                 return (
                   <li
                     key={item.key ?? "all"}
                     role="option"
                     aria-selected={selected}
                     onClick={() => choose(item.key)}
-                    className={`flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-neutral-100 dark:hover:bg-neutral-800 ${
+                    onContextMenu={(event) => {
+                      if (group === undefined) return;
+                      event.preventDefault();
+                      openProjectSettings(group);
+                    }}
+                    className={`group/scope flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-neutral-100 dark:hover:bg-neutral-800 ${
                       selected ? "font-medium" : ""
                     }`}
                   >
                     <FolderIcon className="size-4 shrink-0 text-neutral-500" />
-                    <span className="truncate">{item.label}</span>
+                    <span className="min-w-0 flex-1 truncate">{item.label}</span>
+                    {group === undefined ? null : (
+                      <button
+                        type="button"
+                        tabIndex={-1}
+                        aria-hidden="true"
+                        title={`Project settings for ${group.displayName}`}
+                        onPointerDown={(event) => event.stopPropagation()}
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          openProjectSettings(group);
+                        }}
+                        className="ml-auto rounded p-0.5 text-neutral-400 hover:bg-neutral-200 hover:text-neutral-900 dark:hover:bg-neutral-700 dark:hover:text-neutral-100"
+                      >
+                        <SettingsIcon className="size-3.5" />
+                      </button>
+                    )}
                   </li>
                 );
               })}

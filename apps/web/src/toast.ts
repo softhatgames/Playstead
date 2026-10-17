@@ -6,11 +6,19 @@
  * seconds, or when dismissed.
  */
 
+/** A button on the notice, such as **Delete anyway**; choosing it closes the notice. */
+export interface ToastAction {
+  readonly label: string;
+  readonly destructive?: boolean;
+  readonly onClick: () => void;
+}
+
 export interface Toast {
   readonly id: number;
   readonly type: "error" | "warning" | "success";
   readonly title: string;
   readonly description?: string;
+  readonly action?: ToastAction;
 }
 
 const TOAST_DURATION_MS = 5_000;
@@ -41,9 +49,16 @@ function addToast(toast: Omit<Toast, "id">): void {
   setTimeout(() => dismissToast(id), TOAST_DURATION_MS);
 }
 
-/** Something the person asked for that was not done, such as an empty title. */
-export function warningToast(title: string): void {
-  addToast({ type: "warning", title });
+/**
+ * Something the person asked for that was not done, such as an empty title,
+ * with what to do about it when there is something (T3 Code's "Project is
+ * not empty" with **Delete anyway**).
+ */
+export function warningToast(
+  title: string,
+  options: { readonly description?: string; readonly action?: ToastAction } = {},
+): void {
+  addToast({ type: "warning", title, ...options });
 }
 
 /** Something done, and what it was, such as a copied path (T3 Code's success notices). */

@@ -82,11 +82,12 @@ const layerStartupPairingLink = Layer.effectDiscard(
 );
 
 // Startup runs recovery and then the effect worker (`serverRuntimeStartup.ts`).
+// The project service deletes a removed project's threads through the orchestrator.
 const layerOrchestration = Layer.mergeAll(
-  OrchestrationRuntime.layerCore,
   ProviderRuntimeRecovery.layer,
   ProjectService.layer.pipe(Layer.provide(WorkspacePaths.layer)),
 ).pipe(
+  Layer.provideMerge(OrchestrationRuntime.layerCore),
   Layer.provide(
     Layer.mergeAll(ProviderAdapterRegistry.layerFromProviderRegistry, TextGeneration.layer),
   ),

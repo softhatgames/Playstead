@@ -1,4 +1,5 @@
 import type { ContextMenuPosition } from "@playstead/contracts/ipc";
+import { useNavigate } from "@tanstack/react-router";
 import { useCallback } from "react";
 
 import { copyTextToClipboard } from "../clipboard.ts";
@@ -51,6 +52,7 @@ import {
  *   settlement on or off for the thread.
  * - **Copy → Path** copies the project's folder, and **Copy → Thread ID**
  *   the thread's id, each with a notice.
+ * - **Project settings** opens the thread's project's settings.
  * - Archiving asks first when **Confirm before archiving** is on, deleting
  *   when **Confirm before deleting** is; a failure shows as a notice.
  */
@@ -65,6 +67,7 @@ export function useThreadActionMenu(
   const { onStartRename, projectFilter = false, variant = "full" } = options;
   const { archiveThread, confirmAndDeleteThread } = useThreadActions();
   const shell = usePrimaryConnectionState()?.shell;
+  const navigate = useNavigate();
 
   const openMenu = useCallback(
     (position: ContextMenuPosition) => {
@@ -166,6 +169,12 @@ export function useThreadActionMenu(
               (error: unknown) => failureToast("Failed to copy thread ID", error),
             );
             return;
+          case "project-settings":
+            await navigate({
+              to: "/projects/$projectKey",
+              params: { projectKey: thread.projectId },
+            });
+            return;
           case "archive": {
             const settings = await readClientSettings();
             if (
@@ -191,7 +200,16 @@ export function useThreadActionMenu(
         }
       })();
     },
-    [archiveThread, confirmAndDeleteThread, onStartRename, projectFilter, shell, thread, variant],
+    [
+      archiveThread,
+      confirmAndDeleteThread,
+      navigate,
+      onStartRename,
+      projectFilter,
+      shell,
+      thread,
+      variant,
+    ],
   );
 
   const closeMenu = useCallback(() => {

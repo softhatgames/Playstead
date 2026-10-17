@@ -14,8 +14,10 @@ import { Route as PairRouteImport } from './routes/pair'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as ThreadsThreadIdRouteImport } from './routes/threads.$threadId'
 import { Route as SettingsProvidersRouteImport } from './routes/settings.providers'
+import { Route as SettingsProjectsRouteImport } from './routes/settings.projects'
 import { Route as SettingsGeneralRouteImport } from './routes/settings.general'
 import { Route as SettingsArchivedRouteImport } from './routes/settings.archived'
+import { Route as ProjectsProjectKeyRouteImport } from './routes/projects.$projectKey'
 import { Route as DraftDraftIdRouteImport } from './routes/draft.$draftId'
 
 const SettingsRoute = SettingsRouteImport.update({
@@ -43,6 +45,11 @@ const SettingsProvidersRoute = SettingsProvidersRouteImport.update({
   path: '/providers',
   getParentRoute: () => SettingsRoute,
 } as any)
+const SettingsProjectsRoute = SettingsProjectsRouteImport.update({
+  id: '/projects',
+  path: '/projects',
+  getParentRoute: () => SettingsRoute,
+} as any)
 const SettingsGeneralRoute = SettingsGeneralRouteImport.update({
   id: '/general',
   path: '/general',
@@ -52,6 +59,11 @@ const SettingsArchivedRoute = SettingsArchivedRouteImport.update({
   id: '/archived',
   path: '/archived',
   getParentRoute: () => SettingsRoute,
+} as any)
+const ProjectsProjectKeyRoute = ProjectsProjectKeyRouteImport.update({
+  id: '/projects/$projectKey',
+  path: '/projects/$projectKey',
+  getParentRoute: () => rootRouteImport,
 } as any)
 const DraftDraftIdRoute = DraftDraftIdRouteImport.update({
   id: '/draft/$draftId',
@@ -64,8 +76,10 @@ export interface FileRoutesByFullPath {
   '/pair': typeof PairRoute
   '/settings': typeof SettingsRouteWithChildren
   '/draft/$draftId': typeof DraftDraftIdRoute
+  '/projects/$projectKey': typeof ProjectsProjectKeyRoute
   '/settings/archived': typeof SettingsArchivedRoute
   '/settings/general': typeof SettingsGeneralRoute
+  '/settings/projects': typeof SettingsProjectsRoute
   '/settings/providers': typeof SettingsProvidersRoute
   '/threads/$threadId': typeof ThreadsThreadIdRoute
 }
@@ -74,8 +88,10 @@ export interface FileRoutesByTo {
   '/pair': typeof PairRoute
   '/settings': typeof SettingsRouteWithChildren
   '/draft/$draftId': typeof DraftDraftIdRoute
+  '/projects/$projectKey': typeof ProjectsProjectKeyRoute
   '/settings/archived': typeof SettingsArchivedRoute
   '/settings/general': typeof SettingsGeneralRoute
+  '/settings/projects': typeof SettingsProjectsRoute
   '/settings/providers': typeof SettingsProvidersRoute
   '/threads/$threadId': typeof ThreadsThreadIdRoute
 }
@@ -85,8 +101,10 @@ export interface FileRoutesById {
   '/pair': typeof PairRoute
   '/settings': typeof SettingsRouteWithChildren
   '/draft/$draftId': typeof DraftDraftIdRoute
+  '/projects/$projectKey': typeof ProjectsProjectKeyRoute
   '/settings/archived': typeof SettingsArchivedRoute
   '/settings/general': typeof SettingsGeneralRoute
+  '/settings/projects': typeof SettingsProjectsRoute
   '/settings/providers': typeof SettingsProvidersRoute
   '/threads/$threadId': typeof ThreadsThreadIdRoute
 }
@@ -97,8 +115,10 @@ export interface FileRouteTypes {
     | '/pair'
     | '/settings'
     | '/draft/$draftId'
+    | '/projects/$projectKey'
     | '/settings/archived'
     | '/settings/general'
+    | '/settings/projects'
     | '/settings/providers'
     | '/threads/$threadId'
   fileRoutesByTo: FileRoutesByTo
@@ -107,8 +127,10 @@ export interface FileRouteTypes {
     | '/pair'
     | '/settings'
     | '/draft/$draftId'
+    | '/projects/$projectKey'
     | '/settings/archived'
     | '/settings/general'
+    | '/settings/projects'
     | '/settings/providers'
     | '/threads/$threadId'
   id:
@@ -117,8 +139,10 @@ export interface FileRouteTypes {
     | '/pair'
     | '/settings'
     | '/draft/$draftId'
+    | '/projects/$projectKey'
     | '/settings/archived'
     | '/settings/general'
+    | '/settings/projects'
     | '/settings/providers'
     | '/threads/$threadId'
   fileRoutesById: FileRoutesById
@@ -128,6 +152,7 @@ export interface RootRouteChildren {
   PairRoute: typeof PairRoute
   SettingsRoute: typeof SettingsRouteWithChildren
   DraftDraftIdRoute: typeof DraftDraftIdRoute
+  ProjectsProjectKeyRoute: typeof ProjectsProjectKeyRoute
   ThreadsThreadIdRoute: typeof ThreadsThreadIdRoute
 }
 
@@ -168,6 +193,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SettingsProvidersRouteImport
       parentRoute: typeof SettingsRoute
     }
+    '/settings/projects': {
+      id: '/settings/projects'
+      path: '/projects'
+      fullPath: '/settings/projects'
+      preLoaderRoute: typeof SettingsProjectsRouteImport
+      parentRoute: typeof SettingsRoute
+    }
     '/settings/general': {
       id: '/settings/general'
       path: '/general'
@@ -182,6 +214,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SettingsArchivedRouteImport
       parentRoute: typeof SettingsRoute
     }
+    '/projects/$projectKey': {
+      id: '/projects/$projectKey'
+      path: '/projects/$projectKey'
+      fullPath: '/projects/$projectKey'
+      preLoaderRoute: typeof ProjectsProjectKeyRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/draft/$draftId': {
       id: '/draft/$draftId'
       path: '/draft/$draftId'
@@ -195,12 +234,14 @@ declare module '@tanstack/react-router' {
 interface SettingsRouteChildren {
   SettingsArchivedRoute: typeof SettingsArchivedRoute
   SettingsGeneralRoute: typeof SettingsGeneralRoute
+  SettingsProjectsRoute: typeof SettingsProjectsRoute
   SettingsProvidersRoute: typeof SettingsProvidersRoute
 }
 
 const SettingsRouteChildren: SettingsRouteChildren = {
   SettingsArchivedRoute: SettingsArchivedRoute,
   SettingsGeneralRoute: SettingsGeneralRoute,
+  SettingsProjectsRoute: SettingsProjectsRoute,
   SettingsProvidersRoute: SettingsProvidersRoute,
 }
 
@@ -213,6 +254,7 @@ const rootRouteChildren: RootRouteChildren = {
   PairRoute: PairRoute,
   SettingsRoute: SettingsRouteWithChildren,
   DraftDraftIdRoute: DraftDraftIdRoute,
+  ProjectsProjectKeyRoute: ProjectsProjectKeyRoute,
   ThreadsThreadIdRoute: ThreadsThreadIdRoute,
 }
 export const routeTree = rootRouteImport
