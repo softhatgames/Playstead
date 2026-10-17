@@ -189,3 +189,9 @@ export function fallbackThreadAfterDelete(
       .toSorted((left, right) => right.createdAt.localeCompare(left.createdAt))[0]?.id ?? null
   );
 }
+
+/** Copy the actual thread workspace, as T3 Code's copy-path action does. */
+export const threadWorkspacePath = (
+  thread: { readonly worktreePath?: string | null } | undefined,
+  project: { readonly workspaceRoot: string } | undefined,
+): string | undefined => thread?.worktreePath ?? project?.workspaceRoot;

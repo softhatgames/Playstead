@@ -9,6 +9,7 @@ import { copyTextToClipboard } from "../clipboard.ts";
 import { readClientSettings } from "../clientSettings.ts";
 import { buildSidebarProjectGroups } from "../components/Sidebar.inbox.logic.ts";
 import {
+  threadWorkspacePath,
   buildThreadActionMenuItems,
   legacyThreadMenuItems,
   threadArchiveConfirmation,
@@ -51,7 +52,7 @@ import {
  * - **Filter by project**, offered when `projectFilter` is on (the inbox
  *   sidebar row), scopes the sidebar to the thread's project, or to every
  *   project again when it already is.
- * - **Copy → Path** copies the project's folder, and **Copy → Thread ID**
+ * - **Copy → Path** copies the thread's working folder, and **Copy → Thread ID**
  *   the thread's id, each with a notice.
  * - Archiving asks first when **Confirm before archiving** is on, deleting
  *   when **Confirm before deleting** is; a failure shows as a notice.
@@ -171,15 +172,19 @@ export function useThreadActionMenu(
             }
             return;
           case "copy-path": {
-            if (project === undefined) {
+            const workspacePath = threadWorkspacePath(
+              shell?.threads.find((candidate) => candidate.id === thread.id),
+              project,
+            );
+            if (workspacePath === undefined) {
               failureToast(
                 "Path unavailable",
                 new Error("This thread does not have a workspace path to copy."),
               );
               return;
             }
-            await copyTextToClipboard(project.workspaceRoot).then(
-              () => successToast("Path copied", project.workspaceRoot),
+            await copyTextToClipboard(workspacePath).then(
+              () => successToast("Path copied", workspacePath),
               (error: unknown) => failureToast("Failed to copy path", error),
             );
             return;

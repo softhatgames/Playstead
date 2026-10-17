@@ -2,6 +2,7 @@ import { assert, describe, it } from "@effect/vitest";
 import { ProjectId, ThreadId } from "@playstead/contracts/baseSchemas";
 
 import {
+  threadWorkspacePath,
   archivedThreadMenuItems,
   buildThreadActionMenuItems,
   fallbackThreadAfterDelete,
@@ -230,4 +231,16 @@ describe("fallbackThreadAfterDelete", () => {
     assert.isNull(fallbackThreadAfterDelete(threads, ThreadId.make("elsewhere")));
     assert.isNull(fallbackThreadAfterDelete(threads, ThreadId.make("unknown")));
   });
+});
+
+it("copies a scratch thread's own path, with the project root as the ordinary-thread fallback", () => {
+  assert.strictEqual(
+    threadWorkspacePath(
+      { worktreePath: "/home/scratch/thread" },
+      { workspaceRoot: "/home/scratch" },
+    ),
+    "/home/scratch/thread",
+  );
+  assert.strictEqual(threadWorkspacePath({}, { workspaceRoot: "/game" }), "/game");
+  assert.isUndefined(threadWorkspacePath(undefined, undefined));
 });
