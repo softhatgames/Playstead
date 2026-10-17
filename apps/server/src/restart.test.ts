@@ -176,6 +176,7 @@ describe("Survive a restart, and the same thread in a browser", () => {
               threadId,
               projectId,
               title: "Followed thread",
+              runtimeMode: "full-access",
               modelSelection: { instanceId: "claudeAgent", model: FILE_CREATE_SCENARIO.model },
             }),
           );
@@ -213,6 +214,7 @@ describe("Survive a restart, and the same thread in a browser", () => {
               threadId,
               messageId: MessageId.make("message:followed-game:1"),
               text: "Sent after the restart",
+              dispatchMode: { type: "start_immediately" },
             }),
           );
           const afterRestart = yield* awaitLatest((state) =>
@@ -252,6 +254,7 @@ describe("Survive a restart, and the same thread in a browser", () => {
             projectId,
             title: "New thread",
             modelSelection: { instanceId: "claudeAgent", model: FILE_CREATE_SCENARIO.model },
+            runtimeMode: "full-access",
           }),
         );
         const seenInBrowser = yield* Effect.forkScoped(
@@ -262,6 +265,7 @@ describe("Survive a restart, and the same thread in a browser", () => {
         yield* desktop.request((rpc) =>
           rpc["orchestration.dispatchCommand"]({
             type: "message.dispatch",
+            dispatchMode: { type: "start_immediately" },
             commandId: CommandId.make("command:shared-game:message"),
             threadId,
             messageId: MessageId.make("message:shared-game:1"),

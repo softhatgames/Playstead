@@ -23,9 +23,18 @@ import {
 } from "../src/orchestration-v2/Adapters/ClaudeAdapterV2.testkit.ts";
 import { makeOrchestrationHarness } from "../src/orchestration-v2/testkit/OrchestratorHarness.ts";
 import {
+  CLAUDE_AUTO_MODE_SCENARIO,
+  runAutoModeScenario,
+} from "../src/orchestration-v2/testkit/fixtures/autoMode.ts";
+import {
   FILE_CREATE_SCENARIO,
   runFileCreateScenario,
 } from "../src/orchestration-v2/testkit/fixtures/fileCreate.ts";
+import {
+  CLAUDE_PROPOSED_PLAN_SCENARIO,
+  PROPOSED_PLAN_SCENARIO_NAME,
+  runProposedPlanScenario,
+} from "../src/orchestration-v2/testkit/fixtures/proposedPlan.ts";
 import {
   CLAUDE_QUESTION_SCENARIO,
   QUESTION_ANSWER_SCENARIO_NAME,
@@ -40,9 +49,40 @@ import {
   runSecondTurn,
 } from "../src/orchestration-v2/testkit/fixtures/restartResume.ts";
 import {
+  describeSessionApprovalRun,
+  runSessionApprovalScenario,
+  SESSION_APPROVAL_SCENARIOS,
+  type SessionApprovalScenario,
+} from "../src/orchestration-v2/testkit/fixtures/sessionApprovals.ts";
+import {
+  CLAUDE_SUPERVISED_SCENARIO,
+  runSupervisedScenario,
+  SUPERVISED_ANSWERS,
+  type SupervisedScenarioName,
+} from "../src/orchestration-v2/testkit/fixtures/supervisedApproval.ts";
+import {
   CLAUDE_TURN_INTERRUPT_SCENARIO,
   runTurnInterruptScenario,
 } from "../src/orchestration-v2/testkit/fixtures/turnInterrupt.ts";
+import {
+  CLAUDE_TODO_LIST_SCENARIO,
+  runTodoListScenario,
+  TODO_LIST_IDS,
+  TODO_LIST_SCENARIO_NAME,
+} from "../src/orchestration-v2/testkit/fixtures/todoList.ts";
+import {
+  CLAUDE_TRAITS_CHANGE_SCENARIO,
+  runTraitsChangeScenario,
+} from "../src/orchestration-v2/testkit/fixtures/traitsChange.ts";
+import {
+  CLAUDE_QUEUED_TURN_SCENARIO,
+  queuedTurnPrompt,
+  runQueuedTurnScenario,
+} from "../src/orchestration-v2/testkit/fixtures/queuedTurn.ts";
+import {
+  CLAUDE_MESSAGE_STEERING_SCENARIO,
+  runMessageSteeringScenario,
+} from "../src/orchestration-v2/testkit/fixtures/messageSteering.ts";
 import {
   readMachineIdentity,
   recordingReplacements,
@@ -61,14 +101,26 @@ import { makeTestServerConfig } from "../src/testUtils/testServer.ts";
  * adapter sends). It uses the signed-in `claude` on PATH, in a temporary
  * empty folder, and writes `src/orchestration-v2/testkit/fixtures/<scenario>.claude.ndjson`.
  *
- *   node apps/server/scripts/record-claude-replay.ts [file_create | restart_resume | turn_interrupt | question_answer | question_interrupt]
+ *   node apps/server/scripts/record-claude-replay.ts [file_create | restart_resume | turn_interrupt | question_answer | question_interrupt | auto_mode | traits_change | approval_accept | approval_decline | approval_cancel | approval_interrupt | auto_accept_edits | session_command | session_edits | queued_turn | proposed_plan | todo_list | message_steering]
  *
+ * `auto_mode` writes a file in Auto, then changes the thread to Full access,
+ * which reopens the query with `resume`, and sends one more message.
  * `restart_resume` builds the services a second time over the same home
  * between its two turns, as a restarted server would. `turn_interrupt`
  * interrupts a long command once it runs, then sends one more message.
  * `question_answer` answers Claude's `AskUserQuestion` through
  * `runtime-request.respond`; `question_interrupt` interrupts the turn
- * waiting on it instead.
+ * waiting on it instead. `traits_change` sends turns that each carry other
+ * reasoning efforts. The `approval_*` scenarios ask Claude, in
+ * Supervised, to write a file, and approve, decline or cancel each approval
+ * through `runtime-request.respond`, or interrupt the turn waiting on one.
+ * `auto_accept_edits`, `session_command` and `session_edits` send turns in
+ * Auto-accept edits and Supervised and answer each turn's approvals with its
+ * decision, **Always allow this session** among them. `queued_turn` queues
+ * messages behind a turn, removes one, and holds the queue with Stop before
+ * resuming it. `message_steering` steers a turn while its command runs (a
+ * message with priority `now`), then sends a steer as a turn ends, which
+ * starts a turn of its own.
  *
  * The header carries `claude --version` and the capture date. The frames are
  * scrubbed by `src/orchestration-v2/testkit/replayScrub.ts`, shared with the
@@ -253,6 +305,29 @@ const recordQuestion = (options: HarnessOptions, interrupt: boolean) =>
     return { harness, workspace };
   });
 
+/** A plan proposed in plan mode, then implemented in the default mode. */
+const recordProposedPlan = (options: HarnessOptions) =>
+  Effect.gen(function* () {
+    const harness = yield* makeOrchestrationHarness(options);
+    const { workspace, planned, plan, fileAfterPlan, implemented } = yield* runProposedPlanScenario(
+      harness,
+      CLAUDE_PROPOSED_PLAN_SCENARIO,
+    );
+    yield* Effect.logInfo("The turns ended.").pipe(
+      Effect.annotateLogs({
+        planned: planned.status,
+        plan: JSON.stringify(plan.markdown),
+        implemented: implemented.status,
+      }),
+    );
+    if (planned.status !== "completed" || implemented.status !== "completed" || fileAfterPlan) {
+      return yield* Effect.die(
+        `The runs ended ${planned.status} and ${implemented.status}; file written while planning: ${fileAfterPlan}.`,
+      );
+    }
+    return { harness, workspace };
+  });
+
 /** A turn, a restart over the same home, and a turn that needs the first one's context. */
 const recordRestartResume = (options: HarnessOptions) =>
   Effect.gen(function* () {
@@ -279,8 +354,213 @@ const recordRestartResume = (options: HarnessOptions) =>
     return { harness, workspace: first.workspace };
   });
 
+/** Turns that each carry other traits. */
+const recordTraitsChange = (options: HarnessOptions) =>
+  Effect.gen(function* () {
+    const harness = yield* makeOrchestrationHarness(options);
+    const { workspace, runs } = yield* runTraitsChangeScenario(
+      harness,
+      CLAUDE_TRAITS_CHANGE_SCENARIO,
+    );
+    yield* Effect.logInfo("The turns ended.").pipe(
+      Effect.annotateLogs({ runs: runs.map((run) => run.status).join(", ") }),
+    );
+    if (runs.some((run) => run.status !== "completed")) {
+      return yield* Effect.die("A traits turn did not complete.");
+    }
+    return { harness, workspace };
+  });
+
+/** Queued turns, one removed, and a queue held by Stop and resumed. */
+const recordQueuedTurn = (options: HarnessOptions) =>
+  Effect.gen(function* () {
+    const harness = yield* makeOrchestrationHarness(options);
+    const { workspace, one, two, five } = yield* runQueuedTurnScenario(
+      harness,
+      CLAUDE_QUEUED_TURN_SCENARIO,
+    );
+    yield* Effect.logInfo("The turns ended.").pipe(
+      Effect.annotateLogs({ runs: [one, two, five].map((run) => run.status).join(", ") }),
+    );
+    if ([one, two, five].some((run) => run.status !== "completed")) {
+      return yield* Effect.die("A queued turn did not complete.");
+    }
+    return { harness, workspace };
+  });
+
+/** A turn steered while its command runs, then a steer too late that starts its own turn. */
+const recordMessageSteering = (options: HarnessOptions) =>
+  Effect.gen(function* () {
+    const harness = yield* makeOrchestrationHarness(options);
+    const { workspace, steered, three, late } = yield* runMessageSteeringScenario(
+      harness,
+      CLAUDE_MESSAGE_STEERING_SCENARIO,
+    );
+    const runs = [steered, three, late];
+    yield* Effect.logInfo("The turns ended.").pipe(
+      Effect.annotateLogs({ runs: runs.map((run) => run.status).join(", ") }),
+    );
+    if (runs.some((run) => run.status !== "completed")) {
+      return yield* Effect.die("A steering turn did not complete.");
+    }
+    return { harness, workspace };
+  });
+
+/** A file written in Auto, then a turn after the change to Full access. */
+const recordAutoMode = (options: HarnessOptions) =>
+  Effect.gen(function* () {
+    const harness = yield* makeOrchestrationHarness(options);
+    const { workspace, write, next } = yield* runAutoModeScenario(
+      harness,
+      CLAUDE_AUTO_MODE_SCENARIO,
+    );
+    yield* Effect.logInfo("The turns ended.").pipe(
+      Effect.annotateLogs({ write: write.status, next: next.status }),
+    );
+    if (write.status !== "completed" || next.status !== "completed") {
+      return yield* Effect.die(`The runs ended ${write.status} and ${next.status}.`);
+    }
+    return { harness, workspace };
+  });
+
+/** A file write in Supervised, and the person's answer to each approval it asks for. */
+const recordSupervised = (options: HarnessOptions, name: SupervisedScenarioName) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const harness = yield* makeOrchestrationHarness(options);
+    const answer = SUPERVISED_ANSWERS[name];
+    const { workspace, approvals, run } = yield* runSupervisedScenario(
+      harness,
+      CLAUDE_SUPERVISED_SCENARIO,
+      answer,
+    );
+    const written = path.join(workspace, CLAUDE_SUPERVISED_SCENARIO.fileName);
+    yield* Effect.logInfo("The turn ended.").pipe(
+      Effect.annotateLogs({
+        run: run.status,
+        approvals: JSON.stringify(approvals.map((approval) => approval.kind)),
+        file: (yield* fs.exists(written)) ? "written" : "missing",
+      }),
+    );
+    const expected = answer === "accept" || answer === "decline" ? "completed" : "interrupted";
+    if (run.status !== expected || approvals.length === 0) {
+      return yield* Effect.die(`The run ended ${run.status} after ${approvals.length} approvals.`);
+    }
+    // Only an approved change may happen.
+    if ((yield* fs.exists(written)) !== (answer === "accept")) {
+      return yield* Effect.die(`The file is ${answer === "accept" ? "missing" : "written"}.`);
+    }
+    return { harness, workspace };
+  });
+
+/** Turns whose approvals are each answered with the turn's decision. */
+const recordSessionApprovals = (options: HarnessOptions, scenario: SessionApprovalScenario) =>
+  Effect.gen(function* () {
+    const harness = yield* makeOrchestrationHarness(options);
+    const { workspace, turns } = yield* runSessionApprovalScenario(harness, scenario);
+    yield* Effect.logInfo("The turns ended.").pipe(
+      Effect.annotateLogs(yield* describeSessionApprovalRun(workspace, scenario, turns)),
+    );
+    if (turns.some((turn) => turn.run.status !== "completed")) {
+      return yield* Effect.die("A turn did not complete.");
+    }
+    return { harness, workspace };
+  });
+
+const sessionApprovalEntry = (scenario: SessionApprovalScenario) => ({
+  record: (options: HarnessOptions) => recordSessionApprovals(options, scenario),
+  metadata: { model: scenario.model, turns: scenario.turns },
+});
+
+const supervisedEntry = (name: SupervisedScenarioName) => ({
+  record: (options: HarnessOptions) => recordSupervised(options, name),
+  metadata: {
+    model: CLAUDE_SUPERVISED_SCENARIO.model,
+    prompt: CLAUDE_SUPERVISED_SCENARIO.prompt,
+    runtimeMode: "approval-required",
+    answer: SUPERVISED_ANSWERS[name],
+  },
+});
+
+/**
+ * A turn that keeps a todo list. Claude Code offers its todo tools to the
+ * SDK only when `CLAUDE_CODE_ENABLE_TODO_TOOLS` is set, which T3 Code leaves
+ * to the person (an instance or host opt-in); the recording sets it.
+ */
+const recordTodoList = (options: HarnessOptions) =>
+  Effect.gen(function* () {
+    const harness = yield* makeOrchestrationHarness({
+      ...options,
+      environment: { ...options.environment, CLAUDE_CODE_ENABLE_TODO_TOOLS: "1" },
+    });
+    const { workspace, run } = yield* runTodoListScenario(harness, CLAUDE_TODO_LIST_SCENARIO);
+    const projection = yield* harness.orchestrator.getThreadProjection(TODO_LIST_IDS.threadId);
+    const lists = projection._tag === "Some" ? projection.value.plans : [];
+    const tools =
+      projection._tag === "Some"
+        ? projection.value.turnItems.flatMap((item) =>
+            item.type === "dynamic_tool" ? [item.toolName] : [],
+          )
+        : [];
+    yield* Effect.logInfo("The turn ended.").pipe(
+      Effect.annotateLogs({
+        run: run.status,
+        plans: JSON.stringify(lists),
+        tools: tools.join(", "),
+      }),
+    );
+    if (run.status !== "completed" || lists.length === 0) {
+      return yield* Effect.die(`The run ended ${run.status} with ${lists.length} todo lists.`);
+    }
+    return { harness, workspace };
+  });
+
 /** Each scenario: how it is recorded, and what the header says about it. */
 const SCENARIOS = {
+  [TODO_LIST_SCENARIO_NAME]: {
+    record: recordTodoList,
+    metadata: { model: CLAUDE_TODO_LIST_SCENARIO.model, prompt: CLAUDE_TODO_LIST_SCENARIO.prompt },
+  },
+  approval_accept: supervisedEntry("approval_accept"),
+  approval_decline: supervisedEntry("approval_decline"),
+  approval_cancel: supervisedEntry("approval_cancel"),
+  approval_interrupt: supervisedEntry("approval_interrupt"),
+  auto_accept_edits: sessionApprovalEntry(SESSION_APPROVAL_SCENARIOS.claude.auto_accept_edits),
+  session_command: sessionApprovalEntry(SESSION_APPROVAL_SCENARIOS.claude.session_command),
+  session_edits: sessionApprovalEntry(SESSION_APPROVAL_SCENARIOS.claude.session_edits),
+  [CLAUDE_QUEUED_TURN_SCENARIO.scenario]: {
+    record: recordQueuedTurn,
+    metadata: {
+      model: CLAUDE_QUEUED_TURN_SCENARIO.model,
+      prompts: [1, 2, 5].map(queuedTurnPrompt),
+      queuedOptions: CLAUDE_QUEUED_TURN_SCENARIO.queuedOptions,
+    },
+  },
+  [CLAUDE_MESSAGE_STEERING_SCENARIO.scenario]: {
+    record: recordMessageSteering,
+    metadata: {
+      model: CLAUDE_MESSAGE_STEERING_SCENARIO.model,
+      prompts: CLAUDE_MESSAGE_STEERING_SCENARIO.prompts,
+      steerAfter: "command_execution running",
+      lateSteer: "sent while the turn's end is held back from the server",
+    },
+  },
+  [CLAUDE_TRAITS_CHANGE_SCENARIO.scenario]: {
+    record: recordTraitsChange,
+    metadata: {
+      model: CLAUDE_TRAITS_CHANGE_SCENARIO.model,
+      turns: CLAUDE_TRAITS_CHANGE_SCENARIO.turns,
+    },
+  },
+  [CLAUDE_AUTO_MODE_SCENARIO.scenario]: {
+    record: recordAutoMode,
+    metadata: {
+      model: CLAUDE_AUTO_MODE_SCENARIO.model,
+      prompts: [CLAUDE_AUTO_MODE_SCENARIO.writePrompt, CLAUDE_AUTO_MODE_SCENARIO.nextPrompt],
+      runtimeModes: ["auto", "full-access"],
+    },
+  },
   [FILE_CREATE_SCENARIO.scenario]: {
     record: recordFileCreate,
     metadata: { model: FILE_CREATE_SCENARIO.model, prompt: FILE_CREATE_SCENARIO.prompt },
@@ -301,6 +581,14 @@ const SCENARIOS = {
         CLAUDE_TURN_INTERRUPT_SCENARIO.nextPrompt,
       ],
       interruptAfter: "command_execution running",
+    },
+  },
+  [PROPOSED_PLAN_SCENARIO_NAME]: {
+    record: recordProposedPlan,
+    metadata: {
+      model: CLAUDE_PROPOSED_PLAN_SCENARIO.model,
+      prompt: CLAUDE_PROPOSED_PLAN_SCENARIO.planPrompt,
+      interactionModes: ["plan", "default"],
     },
   },
   [QUESTION_ANSWER_SCENARIO_NAME]: {

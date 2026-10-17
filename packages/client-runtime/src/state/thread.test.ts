@@ -41,6 +41,7 @@ const projection: OrchestrationV2ThreadProjection = {
   messages: [],
   turnItems: [],
   runtimeRequests: [],
+  plans: [],
   updatedAt: at,
 };
 

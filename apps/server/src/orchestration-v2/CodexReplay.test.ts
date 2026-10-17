@@ -2,19 +2,14 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import { CommandId } from "@playstead/contracts/baseSchemas";
 import { OrchestrationDispatchCommandError } from "@playstead/contracts/orchestrationV2";
-import {
-  decodeProviderReplayNdjson,
-  materializeReplayWorkspace,
-  type ProviderReplayTranscript,
-} from "@playstead/provider-testing/replayTranscript";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Stream from "effect/Stream";
 
-import { makeCodexReplay } from "./Adapters/CodexAdapterV2.testkit.ts";
 import { makeOrchestrationHarness } from "./testkit/OrchestratorHarness.ts";
+import { type ProviderReplayOptions, replayCodex } from "./testkit/ProviderReplay.ts";
 import {
   CODEX_FILE_CREATE_SCENARIO,
   FILE_CREATE_IDS,
@@ -29,35 +24,8 @@ import {
  * compared with the recording, Full access's approval and sandbox settings
  * included, so a wrong mapping fails the replay.
  */
-const readRecording = Effect.gen(function* () {
-  const fs = yield* FileSystem.FileSystem;
-  const path = yield* Path.Path;
-  const recordingPath = path.join(
-    path.dirname(yield* path.fromFileUrl(new URL(import.meta.url))),
-    "testkit",
-    "fixtures",
-    "file_create.codex.ndjson",
-  );
-  return yield* decodeProviderReplayNdjson(yield* fs.readFileString(recordingPath));
-});
-
-const replayFileCreate = (
-  edit: (recording: ProviderReplayTranscript) => ProviderReplayTranscript = (recording) =>
-    recording,
-) =>
-  Effect.gen(function* () {
-    const path = yield* Path.Path;
-    const recorded = edit(yield* readRecording);
-    // The workspace is the harness's own folder, known only once it exists.
-    let replay: Effect.Success<ReturnType<typeof makeCodexReplay>> | undefined;
-    const harness = yield* makeOrchestrationHarness({
-      codexClients: { open: (input) => Effect.suspend(() => replay!.clients.open(input)) },
-    });
-    replay = yield* makeCodexReplay(
-      yield* materializeReplayWorkspace(recorded, path.join(harness.home, "empty-game")),
-    );
-    return { harness, replay: replay! };
-  });
+const replayFileCreate = (edit?: ProviderReplayOptions["edit"]) =>
+  replayCodex("file_create.codex.ndjson", edit === undefined ? {} : { edit });
 
 describe("Chat with Codex in a thread", () => {
   it.layer(NodeServices.layer)((it) => {
@@ -174,6 +142,7 @@ describe("Chat with Codex in a thread", () => {
             projectId: FILE_CREATE_IDS.projectId,
             title: "New thread",
             modelSelection: { instanceId: "codex", model: CODEX_FILE_CREATE_SCENARIO.model },
+            runtimeMode: "full-access",
           }),
         );
 

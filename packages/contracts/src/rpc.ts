@@ -17,7 +17,15 @@ import {
   OrchestrationV2SubscribeThreadInput,
   OrchestrationV2ThreadStreamItem,
 } from "./orchestrationV2.ts";
-import { Project, ProjectConflictError, ProjectMutation, ProjectMutationError } from "./project.ts";
+import {
+  Project,
+  ProjectConflictError,
+  ProjectMutation,
+  ProjectMutationError,
+  ProjectWriteFileError,
+  ProjectWriteFileInput,
+  ProjectWriteFileResult,
+} from "./project.ts";
 import { ProviderInstanceId, ProviderInstanceMutation } from "./providerInstance.ts";
 import {
   ServerConfig,
@@ -25,7 +33,7 @@ import {
   ServerLifecycleStreamEvent,
   ServerProviderUpdatedPayload,
 } from "./server.ts";
-import { ServerSettings, ServerSettingsError } from "./settings.ts";
+import { ServerSettings, ServerSettingsError, ServerSettingsPatch } from "./settings.ts";
 
 export const WS_METHODS = {
   serverGetConfig: "server.getConfig",
@@ -33,6 +41,7 @@ export const WS_METHODS = {
   serverUpdateSettings: "server.updateSettings",
   subscribeServerConfig: "subscribeServerConfig",
   subscribeServerLifecycle: "subscribeServerLifecycle",
+  projectsWriteFile: "projects.writeFile",
   projectsMutate: "projects.mutate",
   filesystemBrowse: "filesystem.browse",
 } as const;
@@ -48,9 +57,15 @@ const WsServerRefreshProvidersRpc = Rpc.make(WS_METHODS.serverRefreshProviders, 
   success: ServerProviderUpdatedPayload,
 });
 
-/** Sets a provider instance's **Binary path**; the instance is checked again with it. */
+/**
+ * Changes settings: the patch's, and with a mutation a provider instance's
+ * **Binary path**, after which the instance is checked again with it.
+ */
 const WsServerUpdateSettingsRpc = Rpc.make(WS_METHODS.serverUpdateSettings, {
-  payload: Schema.Struct({ providerInstanceMutation: ProviderInstanceMutation }),
+  payload: Schema.Struct({
+    patch: ServerSettingsPatch,
+    providerInstanceMutation: Schema.optionalKey(ProviderInstanceMutation),
+  }),
   success: ServerSettings,
   error: ServerSettingsError,
 });
@@ -73,6 +88,13 @@ const WsProjectsMutateRpc = Rpc.make(WS_METHODS.projectsMutate, {
   payload: ProjectMutation,
   success: Project,
   error: Schema.Union([ProjectMutationError, ProjectConflictError]),
+});
+
+/** Writes a file inside a project's folder, as **Save to workspace** does with a plan. */
+const WsProjectsWriteFileRpc = Rpc.make(WS_METHODS.projectsWriteFile, {
+  payload: ProjectWriteFileInput,
+  success: ProjectWriteFileResult,
+  error: ProjectWriteFileError,
 });
 
 /** The folders under a partly typed path, for Add project's autocompletion. */
@@ -116,6 +138,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsSubscribeServerConfigRpc,
   WsSubscribeServerLifecycleRpc,
   WsProjectsMutateRpc,
+  WsProjectsWriteFileRpc,
   WsFilesystemBrowseRpc,
   WsOrchestrationSubscribeShellRpc,
   WsOrchestrationDispatchCommandRpc,

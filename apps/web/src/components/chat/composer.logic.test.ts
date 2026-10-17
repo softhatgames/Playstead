@@ -2,6 +2,7 @@ import { assert, describe, it } from "@effect/vitest";
 import {
   CommandId,
   MessageId,
+  PlanId,
   ProjectId,
   RunId,
   ThreadId,
@@ -19,6 +20,11 @@ import {
   defaultModelSelection,
   deriveComposerAction,
   deriveModelPickerEntries,
+  isComposerModeShortcut,
+  isEditQueuedMessageShortcut,
+  isSendAlternateShortcut,
+  isSteerQueuedMessageShortcut,
+  resolveComposerSelection,
 } from "./composer.logic.ts";
 
 const provider = (
@@ -35,10 +41,15 @@ const provider = (
   checkedAt: "2026-10-17T00:00:00.000Z",
   models:
     instanceId === "codex"
-      ? [{ slug: "gpt-fake", name: "GPT Fake", isDefault: true }]
+      ? [{ slug: "gpt-fake", name: "GPT Fake", isDefault: true, capabilities: null }]
       : [
-          { slug: "claude-opus-5-5", name: "Claude Opus 5.5" },
-          { slug: "claude-fable-5-1", name: "Claude Fable 5.1", isDefault: true },
+          { slug: "claude-opus-5-5", name: "Claude Opus 5.5", capabilities: null },
+          {
+            slug: "claude-fable-5-1",
+            name: "Claude Fable 5.1",
+            isDefault: true,
+            capabilities: null,
+          },
         ],
   ...overrides,
 });
@@ -88,9 +99,10 @@ describe("buildSendCommands", () => {
     threadCommandId: CommandId.make("command:thread"),
     messageCommandId: CommandId.make("command:message"),
     messageId: MessageId.make("message:1"),
+    runtimeModeCommandId: CommandId.make("command:mode"),
   };
 
-  it("creates the thread first when sending from a new thread, titled from the message", () => {
+  it("creates the thread first, in the draft's mode, when sending from a new thread, titled from the message", () => {
     const commands = buildSendCommands({
       target: {
         kind: "new",
@@ -98,6 +110,8 @@ describe("buildSendCommands", () => {
         projectId: ProjectId.make("project:1"),
         modelSelection: { instanceId: "claudeAgent", model: "claude-fable-5-1" },
       },
+      runtimeMode: "auto",
+      dispatchMode: "auto",
       text: "  Make a tiny platformer\n",
       ids,
     });
@@ -110,6 +124,7 @@ describe("buildSendCommands", () => {
         projectId: "project:1",
         title: "New thread",
         modelSelection: { instanceId: "claudeAgent", model: "claude-fable-5-1" },
+        runtimeMode: "auto",
       },
       {
         type: "message.dispatch",
@@ -118,13 +133,27 @@ describe("buildSendCommands", () => {
         messageId: "message:1",
         text: "Make a tiny platformer",
         titleSeed: "Make a tiny platformer",
+        dispatchMode: { type: "start_immediately" },
+        deliveryIntent: "auto",
       },
     ]);
   });
 
-  it("sends only the message to a thread that has one already", () => {
+  it("sends only the message to a thread that has one already, with the composer's traits", () => {
     const commands = buildSendCommands({
-      target: { kind: "existing", threadId: ThreadId.make("thread:1"), hasMessages: true },
+      target: {
+        kind: "existing",
+        threadId: ThreadId.make("thread:1"),
+        hasMessages: true,
+        runtimeMode: "full-access",
+        modelSelection: {
+          instanceId: "codex",
+          model: "gpt-5.6-terra",
+          options: [{ id: "reasoningEffort", value: "high" }],
+        },
+      },
+      runtimeMode: "full-access",
+      dispatchMode: "auto",
       text: "Now add a jump",
       ids,
     });
@@ -136,8 +165,226 @@ describe("buildSendCommands", () => {
         threadId: "thread:1",
         messageId: "message:1",
         text: "Now add a jump",
+        modelSelection: {
+          instanceId: "codex",
+          model: "gpt-5.6-terra",
+          options: [{ id: "reasoningEffort", value: "high" }],
+        },
+        dispatchMode: { type: "start_immediately" },
+        deliveryIntent: "auto",
       },
     ]);
+  });
+
+  it("sends a mode chosen in the composer before the next message", () => {
+    const commands = buildSendCommands({
+      target: {
+        kind: "existing",
+        threadId: ThreadId.make("thread:1"),
+        hasMessages: true,
+        runtimeMode: "full-access",
+        modelSelection: { instanceId: "codex", model: "gpt-5.6-terra" },
+      },
+      runtimeMode: "auto",
+      dispatchMode: "auto",
+      text: "Now add a jump",
+      ids,
+    });
+
+    assert.deepStrictEqual<unknown>(commands, [
+      {
+        type: "thread.runtime-mode.set",
+        commandId: "command:mode",
+        threadId: "thread:1",
+        runtimeMode: "auto",
+      },
+      {
+        type: "message.dispatch",
+        commandId: "command:message",
+        threadId: "thread:1",
+        messageId: "message:1",
+        text: "Now add a jump",
+        modelSelection: { instanceId: "codex", model: "gpt-5.6-terra" },
+        dispatchMode: { type: "start_immediately" },
+        deliveryIntent: "auto",
+      },
+    ]);
+  });
+
+  it("queues a message sent while a run is active behind it", () => {
+    const commands = buildSendCommands({
+      target: {
+        kind: "existing",
+        threadId: ThreadId.make("thread:1"),
+        hasMessages: true,
+        runtimeMode: "full-access",
+        modelSelection: { instanceId: "codex", model: "gpt-5.6-terra" },
+      },
+      runtimeMode: "full-access",
+      dispatchMode: "queue",
+      text: "Then add a second level",
+      ids,
+    });
+
+    assert.deepStrictEqual<unknown>(commands, [
+      {
+        type: "message.dispatch",
+        commandId: "command:message",
+        threadId: "thread:1",
+        messageId: "message:1",
+        text: "Then add a second level",
+        modelSelection: { instanceId: "codex", model: "gpt-5.6-terra" },
+        dispatchMode: { type: "queue_after_active" },
+      },
+    ]);
+  });
+
+  it("sends a steer for the server to put into the active run", () => {
+    const commands = buildSendCommands({
+      target: {
+        kind: "existing",
+        threadId: ThreadId.make("thread:1"),
+        hasMessages: true,
+        runtimeMode: "full-access",
+        modelSelection: { instanceId: "codex", model: "gpt-5.6-terra" },
+      },
+      runtimeMode: "full-access",
+      dispatchMode: "steer",
+      text: "Use blue instead",
+      ids,
+    });
+
+    assert.deepStrictEqual<unknown>(commands, [
+      {
+        type: "message.dispatch",
+        commandId: "command:message",
+        threadId: "thread:1",
+        messageId: "message:1",
+        text: "Use blue instead",
+        modelSelection: { instanceId: "codex", model: "gpt-5.6-terra" },
+        dispatchMode: { type: "start_immediately" },
+        deliveryIntent: "steer",
+      },
+    ]);
+  });
+
+  it("creates a new thread in plan mode when the draft is in plan mode", () => {
+    const commands = buildSendCommands({
+      target: {
+        kind: "new",
+        threadId: ThreadId.make("thread:new"),
+        projectId: ProjectId.make("project:1"),
+        modelSelection: { instanceId: "codex", model: "gpt-5.6-terra" },
+      },
+      runtimeMode: "full-access",
+      interactionMode: "plan",
+      dispatchMode: "auto",
+      text: "Plan a tiny platformer",
+      ids,
+    });
+
+    assert.strictEqual(commands[0]?.type, "thread.create");
+    assert.strictEqual(
+      commands[0]?.type === "thread.create" ? commands[0].interactionMode : undefined,
+      "plan",
+    );
+  });
+
+  it("sends both modes chosen in the composer before the next message, then the plan it implements", () => {
+    const commands = buildSendCommands({
+      target: {
+        kind: "existing",
+        threadId: ThreadId.make("thread:1"),
+        hasMessages: true,
+        runtimeMode: "full-access",
+        interactionMode: "plan",
+        modelSelection: { instanceId: "codex", model: "gpt-5.6-terra" },
+      },
+      runtimeMode: "auto",
+      interactionMode: "default",
+      dispatchMode: "auto",
+      text: "PLEASE IMPLEMENT THIS PLAN:\n# Plan",
+      sourcePlanRef: { threadId: ThreadId.make("thread:1"), planId: PlanId.make("plan:1") },
+      ids: { ...ids, interactionModeCommandId: CommandId.make("command:interaction") },
+    });
+
+    assert.deepStrictEqual<unknown>(commands, [
+      {
+        type: "thread.runtime-mode.set",
+        commandId: "command:mode",
+        threadId: "thread:1",
+        runtimeMode: "auto",
+      },
+      {
+        type: "thread.interaction-mode.set",
+        commandId: "command:interaction",
+        threadId: "thread:1",
+        interactionMode: "default",
+      },
+      {
+        type: "message.dispatch",
+        commandId: "command:message",
+        threadId: "thread:1",
+        messageId: "message:1",
+        text: "PLEASE IMPLEMENT THIS PLAN:\n# Plan",
+        modelSelection: { instanceId: "codex", model: "gpt-5.6-terra" },
+        sourcePlanRef: { threadId: "thread:1", planId: "plan:1" },
+        dispatchMode: { type: "start_immediately" },
+        deliveryIntent: "auto",
+      },
+    ]);
+  });
+});
+
+describe("resolveComposerSelection", () => {
+  const terra = { instanceId: "codex", model: "gpt-5.6-terra" } as const;
+  const high = [{ id: "reasoningEffort", value: "high" }] as const;
+  const low = [{ id: "reasoningEffort", value: "low" }] as const;
+  const recall = (instanceId: string, model: string) =>
+    instanceId === "codex" && model === "gpt-5.6-terra" ? low : undefined;
+
+  it("starts a new thread on the traits remembered for its model", () => {
+    assert.deepStrictEqual(
+      resolveComposerSelection({ selection: terra, chosen: undefined, recall, isDraft: true }),
+      { ...terra, options: low },
+    );
+    assert.deepStrictEqual(
+      resolveComposerSelection({
+        selection: { instanceId: "codex", model: "gpt-6.1-sol" },
+        chosen: undefined,
+        recall,
+        isDraft: true,
+      }),
+      { instanceId: "codex", model: "gpt-6.1-sol" },
+    );
+  });
+
+  it("keeps a started thread's own traits rather than the remembered ones", () => {
+    assert.deepStrictEqual(
+      resolveComposerSelection({ selection: terra, chosen: undefined, recall, isDraft: false }),
+      terra,
+    );
+  });
+
+  it("uses the traits chosen in the composer, but only for the model they were chosen on", () => {
+    assert.deepStrictEqual(
+      resolveComposerSelection({
+        selection: terra,
+        chosen: { ...terra, options: high },
+        recall,
+        isDraft: false,
+      }),
+      { ...terra, options: high },
+    );
+    assert.deepStrictEqual(
+      resolveComposerSelection({
+        selection: terra,
+        chosen: { instanceId: "codex", model: "gpt-6.1-sol", options: high },
+        recall,
+        isDraft: false,
+      }),
+      terra,
+    );
   });
 });
 
@@ -175,36 +422,166 @@ describe("deriveComposerAction", () => {
     message: "Interrupt requested",
   });
 
+  const action = (input: {
+    readonly runs: ReadonlyArray<OrchestrationV2Run>;
+    readonly turnItems?: ReadonlyArray<OrchestrationV2TurnItem>;
+    readonly hasContent?: boolean;
+    readonly editingQueuedMessage?: boolean;
+    readonly canResume?: boolean;
+    readonly followUp?: "queue" | "steer";
+  }) =>
+    deriveComposerAction({
+      runs: input.runs,
+      turnItems: input.turnItems ?? [],
+      hasContent: input.hasContent ?? false,
+      editingQueuedMessage: input.editingQueuedMessage ?? false,
+      canResume: input.canResume ?? false,
+      dispatchMode: input.runs.some((candidate) => candidate.status === "running")
+        ? (input.followUp ?? "queue")
+        : "auto",
+    });
+
+  it("steers with what is typed while a run is active, when that is the follow-up", () => {
+    assert.deepStrictEqual(
+      action({ runs: [run("run:2", "running")], hasContent: true, followUp: "steer" }),
+      { kind: "steer" },
+    );
+  });
+
   it("offers sending while no run is active", () => {
-    assert.deepStrictEqual(deriveComposerAction([run("run:1", "interrupted")], []), {
+    assert.deepStrictEqual(action({ runs: [run("run:1", "completed")], hasContent: true }), {
       kind: "send",
     });
   });
 
-  it("offers only Interrupt, for the active run, while one runs", () => {
+  it("offers Interrupt, for the active run, while one runs and nothing is typed", () => {
     assert.deepStrictEqual(
-      deriveComposerAction([run("run:1", "completed"), run("run:2", "starting")], []),
+      action({ runs: [run("run:1", "completed"), run("run:2", "starting")] }),
       { kind: "interrupt", runId: RunId.make("run:2") },
     );
   });
 
+  it("queues what is typed while a run is active", () => {
+    assert.deepStrictEqual(action({ runs: [run("run:2", "running")], hasContent: true }), {
+      kind: "queue",
+    });
+  });
+
   it("shows the run stopping once Interrupt was pressed, until it has", () => {
     assert.deepStrictEqual(
-      deriveComposerAction([run("run:2", "running")], [interruptRequest("run:2")]),
+      action({ runs: [run("run:2", "running")], turnItems: [interruptRequest("run:2")] }),
       { kind: "interrupting" },
+    );
+  });
+
+  it("offers Resume in an empty composer after a stop, and sending once something is typed", () => {
+    assert.deepStrictEqual(
+      [
+        action({ runs: [run("run:1", "interrupted")], canResume: true }),
+        action({ runs: [run("run:1", "interrupted")], canResume: true, hasContent: true }),
+      ],
+      [{ kind: "resume" }, { kind: "send" }],
+    );
+  });
+
+  it("saves a queued message being edited, even while a run is active", () => {
+    assert.deepStrictEqual(
+      action({ runs: [run("run:2", "running")], editingQueuedMessage: true, canResume: true }),
+      { kind: "update-queued" },
+    );
+  });
+});
+
+describe("isComposerModeShortcut", () => {
+  const keys = (key: string, held: ReadonlyArray<"meta" | "ctrl" | "shift" | "alt">) => ({
+    key,
+    metaKey: held.includes("meta"),
+    ctrlKey: held.includes("ctrl"),
+    shiftKey: held.includes("shift"),
+    altKey: held.includes("alt"),
+  });
+
+  it("is mod+shift+a: Command on a Mac, Control elsewhere", () => {
+    assert.deepStrictEqual(
+      [
+        isComposerModeShortcut(keys("A", ["meta", "shift"]), "MacIntel"),
+        isComposerModeShortcut(keys("a", ["ctrl", "shift"]), "Win32"),
+        isComposerModeShortcut(keys("A", ["ctrl", "shift"]), "Linux x86_64"),
+      ],
+      [true, true, true],
+    );
+  });
+
+  it("is not another chord with the same key", () => {
+    assert.deepStrictEqual(
+      [
+        isComposerModeShortcut(keys("A", ["ctrl", "shift"]), "MacIntel"),
+        isComposerModeShortcut(keys("a", ["meta"]), "MacIntel"),
+        isComposerModeShortcut(keys("A", ["meta", "shift", "alt"]), "MacIntel"),
+        isComposerModeShortcut(keys("A", ["meta", "ctrl", "shift"]), "MacIntel"),
+        isComposerModeShortcut(keys("S", ["meta", "shift"]), "MacIntel"),
+      ],
+      [false, false, false, false, false],
+    );
+  });
+});
+
+describe("queue shortcuts", () => {
+  const keys = (key: string, held: ReadonlyArray<"meta" | "ctrl" | "shift" | "alt">) => ({
+    key,
+    metaKey: held.includes("meta"),
+    ctrlKey: held.includes("ctrl"),
+    shiftKey: held.includes("shift"),
+    altKey: held.includes("alt"),
+  });
+
+  it("sends the other follow-up with mod+enter", () => {
+    assert.deepStrictEqual(
+      [
+        isSendAlternateShortcut(keys("Enter", ["meta"]), "MacIntel"),
+        isSendAlternateShortcut(keys("Enter", ["ctrl"]), "Win32"),
+        isSendAlternateShortcut(keys("Enter", []), "MacIntel"),
+        isSendAlternateShortcut(keys("Enter", ["meta", "shift"]), "MacIntel"),
+      ],
+      [true, true, false, false],
+    );
+  });
+
+  it("sends the first queued message as a steer with mod+shift+enter", () => {
+    assert.deepStrictEqual(
+      [
+        isSteerQueuedMessageShortcut(keys("Enter", ["meta", "shift"]), "MacIntel"),
+        isSteerQueuedMessageShortcut(keys("Enter", ["ctrl", "shift"]), "Win32"),
+        isSteerQueuedMessageShortcut(keys("Enter", ["meta"]), "MacIntel"),
+        isSteerQueuedMessageShortcut(keys("Enter", ["ctrl", "shift"]), "MacIntel"),
+        isSteerQueuedMessageShortcut(keys("Enter", ["meta", "shift", "alt"]), "MacIntel"),
+      ],
+      [true, true, false, false, false],
+    );
+  });
+
+  it("edits the last queued message with alt+arrowup alone", () => {
+    assert.deepStrictEqual(
+      [
+        isEditQueuedMessageShortcut(keys("ArrowUp", ["alt"])),
+        isEditQueuedMessageShortcut(keys("ArrowUp", [])),
+        isEditQueuedMessageShortcut(keys("ArrowUp", ["alt", "shift"])),
+      ],
+      [true, false, false],
     );
   });
 });
 
 describe("canChooseModel", () => {
-  it("lets the model change only while the composer can send", () => {
+  it("lets the model change for the next message, but not for a queued one being edited", () => {
     assert.deepStrictEqual(
       [
         canChooseModel({ kind: "send" }),
+        canChooseModel({ kind: "queue" }),
         canChooseModel({ kind: "interrupt", runId: RunId.make("run:1") }),
-        canChooseModel({ kind: "interrupting" }),
+        canChooseModel({ kind: "update-queued" }),
       ],
-      [true, false, false],
+      [true, true, true, false],
     );
   });
 });

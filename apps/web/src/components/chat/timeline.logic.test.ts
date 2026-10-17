@@ -1,6 +1,7 @@
 import { assert, describe, it } from "@effect/vitest";
 import {
   MessageId,
+  PlanId,
   RuntimeRequestId,
   ThreadId,
   TurnItemId,
@@ -65,6 +66,35 @@ describe("deriveTimelineRows", () => {
       },
       { kind: "assistant", id: "item:reply", text: "Created it", streaming: true },
     ]);
+  });
+
+  it("marks a message that steered the turn, or came from the queue", () => {
+    const user = (
+      n: number,
+      inputIntent: Extract<OrchestrationV2TurnItem, { type: "user_message" }>["inputIntent"],
+    ): OrchestrationV2TurnItem => ({
+      ...base(`item:user:${n}`, n, "completed"),
+      type: "user_message",
+      messageId: MessageId.make(`message:${n}`),
+      text: `Message ${n}`,
+      ...(inputIntent === undefined ? {} : { inputIntent }),
+    });
+
+    const rows = deriveTimelineRows(
+      [
+        user(1, "turn_start"),
+        user(2, "steer"),
+        user(3, "promoted_queued_to_steer"),
+        user(4, "queued_turn"),
+        user(5, undefined),
+      ],
+      undefined,
+    );
+
+    assert.deepStrictEqual(
+      rows.map((row) => (row.kind === "user" ? (row.intent ?? null) : row.kind)),
+      [null, "steer", "promoted_queued_to_steer", "queued_turn", null],
+    );
   });
 
   it("names running and failed work as T3 Code does", () => {
@@ -204,6 +234,97 @@ describe("deriveTimelineRows", () => {
       },
       { kind: "interrupt-request", id: "item:request", label: "Interrupt requested" },
       { kind: "interrupted", id: "item:result", label: "Interrupted" },
+    ]);
+  });
+  it("shows each approval in the activity log as T3 Code does, with its prompt or its kind", () => {
+    const approval = (
+      id: string,
+      status: OrchestrationV2TurnItem["status"],
+      prompt?: string,
+    ): OrchestrationV2TurnItem => ({
+      ...base(id, 1, status),
+      type: "approval_request",
+      requestId: RuntimeRequestId.make(`request:${id}`),
+      requestKind: "file-change",
+      ...(prompt === undefined ? {} : { prompt }),
+    });
+    const rows = deriveTimelineRows(
+      [
+        approval("item:waiting", "waiting", "supervised-claude.txt"),
+        approval("item:declined", "cancelled"),
+      ],
+      "/games/empty",
+    );
+
+    assert.deepStrictEqual(rows, [
+      {
+        kind: "work",
+        id: "item:waiting",
+        label: "Approval requested",
+        detail: "supervised-claude.txt",
+        icon: "approval",
+        tone: "tool",
+        running: true,
+      },
+      {
+        kind: "work",
+        id: "item:declined",
+        label: "Approval requested",
+        detail: "file-change",
+        icon: "approval",
+        tone: "tool",
+        running: false,
+      },
+    ]);
+  });
+
+  it('shows a proposed plan as its card and a todo list as "Plan updated" with its steps', () => {
+    const rows = deriveTimelineRows(
+      [
+        {
+          ...base("item:plan", 1, "completed"),
+          type: "proposed_plan",
+          planId: PlanId.make("plan:1"),
+          markdown: "# Write hello\n\n1. Write it.",
+          streaming: false,
+        },
+        {
+          ...base("item:exit-plan", 2, "failed"),
+          type: "dynamic_tool",
+          toolName: "ExitPlanMode",
+          input: { plan: "# Write hello" },
+        },
+        {
+          ...base("item:todo", 3, "completed"),
+          type: "todo_list",
+          planId: PlanId.make("plan:2"),
+          steps: [
+            { id: "1", text: "Create first.txt", status: "completed" },
+            { id: "2", text: "Reply done", status: "running" },
+          ],
+          explanation: "Two files",
+        },
+      ],
+      undefined,
+    );
+
+    assert.deepStrictEqual(rows, [
+      {
+        kind: "proposed-plan",
+        id: "item:plan",
+        planId: "plan:1",
+        markdown: "# Write hello\n\n1. Write it.",
+        streaming: false,
+      },
+      {
+        kind: "work",
+        id: "item:todo",
+        label: "Plan updated",
+        detail: "Two files\n\ncompleted: Create first.txt\nrunning: Reply done",
+        icon: "tool",
+        tone: "tool",
+        running: false,
+      },
     ]);
   });
 });

@@ -25,6 +25,7 @@ import * as ProviderRegistry from "./provider/ProviderRegistry.ts";
 import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
 import * as ServerSettings from "./serverSettings.ts";
 import * as WorkspaceEntries from "./workspace/WorkspaceEntries.ts";
+import * as WorkspaceFileSystem from "./workspace/WorkspaceFileSystem.ts";
 
 // RpcServer's default sends a socket-level Defect frame instead, and the client
 // ends every pending request on the socket with it.
@@ -58,8 +59,10 @@ const layerWsRpc = WsRpcGroup.toLayer(
       [WS_METHODS.serverGetConfig]: () => getConfig,
       [WS_METHODS.serverRefreshProviders]: ({ instanceId }) =>
         Effect.map(providers.refresh(instanceId), (list) => ({ providers: list })),
-      [WS_METHODS.serverUpdateSettings]: ({ providerInstanceMutation }) =>
-        settings.updateProviderInstance(providerInstanceMutation),
+      [WS_METHODS.serverUpdateSettings]: ({ patch, providerInstanceMutation }) =>
+        providerInstanceMutation === undefined
+          ? settings.updateSettings(patch)
+          : settings.updateProviderInstance(providerInstanceMutation, patch),
       // Both change streams start with their current value, which the
       // snapshot already carries.
       [WS_METHODS.subscribeServerConfig]: () =>
@@ -109,6 +112,8 @@ const layerWsRpc = WsRpcGroup.toLayer(
             ),
           ),
         ),
+      [WS_METHODS.projectsWriteFile]: (input) =>
+        WorkspaceFileSystem.writeFile(input).pipe(Effect.provideContext(context)),
       [WS_METHODS.filesystemBrowse]: (input) =>
         WorkspaceEntries.browse(input).pipe(Effect.provideContext(context)),
       [ORCHESTRATION_V2_WS_METHODS.subscribeShell]: () =>

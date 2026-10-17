@@ -86,9 +86,11 @@ export const sendFileCreateMessage = (
       projectId: FILE_CREATE_IDS.projectId,
       title: "New thread",
       modelSelection: { instanceId: scenario.instanceId, model: scenario.model },
+      runtimeMode: "full-access",
     });
     const sent = yield* harness.orchestrator.dispatch({
       type: "message.dispatch",
+      dispatchMode: { type: "start_immediately" },
       commandId: CommandId.make("command:file-create:message"),
       threadId: FILE_CREATE_IDS.threadId,
       messageId: FILE_CREATE_IDS.messageId,

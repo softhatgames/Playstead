@@ -4,6 +4,7 @@ import {
   OrchestrationV2AppThread,
   OrchestrationV2ConversationMessage,
   OrchestrationV2ExecutionNode,
+  OrchestrationV2PlanArtifact,
   OrchestrationV2ProviderSession,
   OrchestrationV2ProviderThread,
   OrchestrationV2ProviderTurn,
@@ -60,6 +61,7 @@ const ENTITIES = {
     table: "orchestration_v2_projection_runtime_requests",
     schema: OrchestrationV2RuntimeRequest,
   },
+  plans: { table: "orchestration_v2_projection_plans", schema: OrchestrationV2PlanArtifact },
 } as const;
 type EntityKind = keyof typeof ENTITIES;
 
@@ -68,6 +70,8 @@ const entityKindOf = (event: OrchestrationV2StoredEvent["event"]): EntityKind | 
     case "thread.created":
     case "thread.metadata-updated":
     case "thread.model-selection-updated":
+    case "thread.runtime-mode-updated":
+    case "thread.interaction-mode-updated":
       return "thread";
     case "run.created":
     case "run.updated":
@@ -89,6 +93,8 @@ const entityKindOf = (event: OrchestrationV2StoredEvent["event"]): EntityKind | 
       return "turnItems";
     case "runtime-request.updated":
       return "runtimeRequests";
+    case "plan.updated":
+      return "plans";
   }
 };
 
@@ -97,13 +103,17 @@ const decodeJsonString = <S extends Schema.Top>(schema: S) =>
 const encodeJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 const decodeThread = decodeJsonString(OrchestrationV2AppThread);
 
-/** The sidebar's view of a thread: its latest run says whether it is working. */
+/**
+ * The sidebar's view of a thread: its latest run says whether it is
+ * working. Queued runs wait behind it and don't count.
+ */
 const toThreadShell = (
   thread: OrchestrationV2AppThread,
   runs: ReadonlyArray<OrchestrationV2Run>,
 ): OrchestrationV2ThreadShell => {
   const latest = runs.reduce<OrchestrationV2Run | undefined>(
-    (found, run) => (found === undefined || run.ordinal > found.ordinal ? run : found),
+    (found, run) =>
+      run.status !== "queued" && (found === undefined || run.ordinal > found.ordinal) ? run : found,
     undefined,
   );
   return {
@@ -147,8 +157,9 @@ export class ProjectionStoreV2 extends Context.Service<
     >;
     /**
      * Threads whose projection still says a provider is at work: an active
-     * run, a provider session not stopped, or an active provider thread
-     * (T3 Code's `getRecoveryThreadIds("runtime")`).
+     * run, a queued run not held, a provider session not stopped, or an
+     * active provider thread (T3 Code's `getRecoveryThreadIds("runtime")`
+     * and `"queued-runs"`).
      */
     readonly listRecoveryThreadIds: Effect.Effect<ReadonlyArray<ThreadId>, ProjectionStoreV2Error>;
     /** One run as the projection has it now. */
@@ -235,6 +246,7 @@ const make = Effect.gen(function* () {
         providerTurns,
         messages,
         runtimeRequests,
+        plans,
       ] = yield* Effect.all([
         readRows(ENTITIES.runs, threadId),
         readRows(ENTITIES.attempts, threadId),
@@ -244,6 +256,7 @@ const make = Effect.gen(function* () {
         readRows(ENTITIES.providerTurns, threadId),
         readRows(ENTITIES.messages, threadId),
         readRows(ENTITIES.runtimeRequests, threadId),
+        readRows(ENTITIES.plans, threadId),
       ]);
       const turnItems = [...(yield* readRows(ENTITIES.turnItems, threadId))].sort(
         (left, right) => left.ordinal - right.ordinal,
@@ -259,6 +272,7 @@ const make = Effect.gen(function* () {
         messages,
         turnItems,
         runtimeRequests,
+        plans,
         updatedAt: thread.value.updatedAt,
       } satisfies OrchestrationV2ThreadProjection);
     }).pipe(Effect.mapError(failWith("getThread")));
@@ -286,6 +300,8 @@ const make = Effect.gen(function* () {
   const listRecoveryThreadIds = sql<{ readonly threadId: ThreadId }>`
     SELECT thread_id AS "threadId" FROM orchestration_v2_projection_runs
     WHERE json_extract(payload_json, '$.status') IN ${sql.in([...ACTIVE_RUN_STATUSES])}
+      OR (json_extract(payload_json, '$.status') = 'queued'
+        AND json_extract(payload_json, '$.queueHeld') IS NOT 1)
     UNION
     SELECT thread_id AS "threadId" FROM orchestration_v2_projection_provider_sessions
     WHERE json_extract(payload_json, '$.status') NOT IN ('stopped', 'error')

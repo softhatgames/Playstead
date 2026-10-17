@@ -27,6 +27,14 @@
       "types": "./src/keyedLock.ts",
       "import": "./src/keyedLock.ts"
     },
+    "./model": {
+      "types": "./src/model.ts",
+      "import": "./src/model.ts"
+    },
+    "./orchestrationV2ThreadError": {
+      "types": "./src/orchestrationV2ThreadError.ts",
+      "import": "./src/orchestrationV2ThreadError.ts"
+    },
     "./path": {
       "types": "./src/path.ts",
       "import": "./src/path.ts"
