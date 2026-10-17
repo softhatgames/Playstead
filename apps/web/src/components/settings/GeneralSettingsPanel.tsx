@@ -1,15 +1,22 @@
 import { type ClientSettings, DEFAULT_CLIENT_SETTINGS } from "@playstead/contracts/ipc";
+import type { ModelSelection } from "@playstead/contracts/orchestrationV2";
+import { DEFAULT_SERVER_SETTINGS } from "@playstead/contracts/settings";
 import type { ReactNode } from "react";
 
 import { updateClientSettings, useClientSettings } from "../../clientSettings.ts";
+import { requestPrimary, usePrimaryConnectionState } from "../../connection/runtime.ts";
 import { failureToast } from "../../toast.ts";
+import { deriveModelPickerEntries } from "../chat/composer.logic.ts";
+import { ProviderModelPicker } from "../chat/ProviderModelPicker.tsx";
+import { resolveTextGenerationSelection } from "./textGenerationSettings.logic.ts";
 
 /**
  * **Settings → General**, with only the rows Playstead has so far (T3 Code's
  * `GeneralSettingsPanel` in `apps/web/src/components/settings/SettingsPanels.tsx`
- * at 2577baf): the **Confirmations** section's archive and delete rows. The
- * slice's other rows (text generation, automatic settlement, the sidebar)
- * join it with their features; the rest of General waits for slice 5.
+ * at 2577baf): the **Confirmations** section's archive and delete rows, and
+ * **Text generation**, the provider and model that write thread titles. The
+ * slice's other rows (automatic settlement, the sidebar) join it with their
+ * features; the rest of General waits for slice 5.
  */
 export function GeneralSettingsPanel() {
   const settings = useClientSettings();
@@ -49,7 +56,85 @@ export function GeneralSettingsPanel() {
           />
         </div>
       </section>
+      <TextGenerationSection />
     </div>
+  );
+}
+
+const sameSelection = (left: ModelSelection, right: ModelSelection) =>
+  JSON.stringify(left) === JSON.stringify(right);
+
+/**
+ * **Text generation** (T3 Code's section of that name in
+ * `SettingsPanels.tsx`): the model picker over the installed providers,
+ * standing on the fallback when the chosen provider cannot run, and
+ * **Reset** while the setting is off T3 Code's default. A server setting,
+ * saved through `server.updateSettings`. Choosing reasoning effort and the
+ * other options waits for the traits picker (slice 1).
+ */
+function TextGenerationSection() {
+  const config = usePrimaryConnectionState()?.config;
+  const save = (textGenerationModelSelection: ModelSelection) =>
+    requestPrimary((client) =>
+      client["server.updateSettings"]({ patch: { textGenerationModelSelection } }),
+    ).catch((error: unknown) => failureToast("Text generation model not saved", error));
+  const entries = config === undefined ? [] : deriveModelPickerEntries(config.providers, undefined);
+  const saved = config?.settings.textGenerationModelSelection;
+  const selection =
+    config === undefined || saved === undefined
+      ? undefined
+      : resolveTextGenerationSelection(saved, config.providers);
+  const isDefault =
+    saved === undefined ||
+    sameSelection(saved, DEFAULT_SERVER_SETTINGS.textGenerationModelSelection);
+
+  return (
+    <section aria-labelledby="settings-text-generation" className="flex flex-col gap-2">
+      <h2
+        id="settings-text-generation"
+        className="text-sm font-medium text-neutral-600 dark:text-neutral-300"
+      >
+        Text generation
+      </h2>
+      <div className="rounded-lg border border-neutral-200 dark:border-neutral-800">
+        <div className="flex items-center gap-4 px-4 py-3">
+          <div className="min-w-0 flex-1">
+            <div className="text-sm font-medium">Text generation model</div>
+            <div className="text-xs text-neutral-500 dark:text-neutral-400">
+              Used for thread titles.
+            </div>
+          </div>
+          {isDefault ? null : (
+            <button
+              type="button"
+              aria-label="Reset text generation model to default"
+              onClick={() => void save(DEFAULT_SERVER_SETTINGS.textGenerationModelSelection)}
+              className="text-xs text-neutral-500 hover:underline dark:text-neutral-400"
+            >
+              Reset
+            </button>
+          )}
+          {config === undefined ? (
+            <span className="text-sm text-neutral-500 dark:text-neutral-400">
+              Connecting to the server…
+            </span>
+          ) : entries.length === 0 ? (
+            <span className="text-sm text-neutral-500 dark:text-neutral-400">
+              No text generation providers available.
+            </span>
+          ) : (
+            <ProviderModelPicker
+              entries={entries}
+              selection={selection}
+              disabled={false}
+              placement="below"
+              ariaLabel="Text generation model"
+              onSelect={(next) => void save(resolveTextGenerationSelection(next, config.providers))}
+            />
+          )}
+        </div>
+      </div>
+    </section>
   );
 }
 

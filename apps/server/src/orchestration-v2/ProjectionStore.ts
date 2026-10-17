@@ -125,6 +125,7 @@ const toThreadShell = (
     deletedAt: thread.deletedAt,
     latestRunCompletedAt: latest?.completedAt ?? null,
     lastVisitedAt: thread.lastVisitedAt,
+    titleRegeneration: thread.titleRegeneration,
   };
 };
 

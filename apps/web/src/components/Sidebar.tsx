@@ -254,7 +254,11 @@ function SidebarThreadRow({
         className={rowClass}
       >
         {status}
-        <span className="truncate" title={thread.title}>
+        {/* Dimmed while a provider writes the title (T3 Code's `opacity-55`). */}
+        <span
+          className={`truncate${thread.titleRegeneration === null ? "" : " opacity-55"}`}
+          title={thread.title}
+        >
           {thread.title}
         </span>
       </Link>

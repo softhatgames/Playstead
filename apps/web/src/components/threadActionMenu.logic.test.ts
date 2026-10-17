@@ -10,7 +10,7 @@ import {
   threadRuntimeCanArchive,
 } from "./threadActionMenu.logic.ts";
 
-const idle = { isRunning: false, projectFilter: null } as const;
+const idle = { isRunning: false, isRegeneratingTitle: false, projectFilter: null } as const;
 
 /** Each item as `[id, label, disabled, destructive, separatorBefore, children]`. */
 const outline = (items: ReturnType<typeof buildThreadActionMenuItems>) =>
@@ -24,9 +24,10 @@ const outline = (items: ReturnType<typeof buildThreadActionMenuItems>) =>
   ]);
 
 describe("buildThreadActionMenuItems", () => {
-  it("offers T3 Code's items in its order: rename, mark unread, copy, archive, then delete", () => {
+  it("offers T3 Code's items in its order: rename, regenerate title, mark unread, copy, archive, then delete", () => {
     assert.deepStrictEqual(outline(buildThreadActionMenuItems(idle)), [
       ["rename", "Rename thread", false, false, true, []],
+      ["regenerate-title", "Regenerate title", false, false, false, []],
       ["mark-unread", "Mark unread", false, false, false, []],
       [
         "copy",
@@ -51,7 +52,7 @@ describe("buildThreadActionMenuItems", () => {
           ...idle,
           projectFilter: { label: "space-game", isActive },
         }),
-      ).slice(1, 3);
+      ).slice(2, 4);
     assert.deepStrictEqual(filterItem(false), [
       ["mark-unread", "Mark unread", false, false, false, []],
       ["filter-by-project", "Filter by space-game", false, false, false, []],
@@ -64,6 +65,15 @@ describe("buildThreadActionMenuItems", () => {
       false,
       [],
     ]);
+  });
+
+  it("shows Regenerating… and disables it while the thread's title is being generated", () => {
+    const items = outline(buildThreadActionMenuItems({ ...idle, isRegeneratingTitle: true }));
+    assert.deepStrictEqual(items[1], ["regenerate-title", "Regenerating…", true, false, false, []]);
+    assert.lengthOf(
+      items.filter(([, , disabled]) => disabled),
+      1,
+    );
   });
 
   it("disables Archive thread while the thread's run is working, and keeps the rest", () => {

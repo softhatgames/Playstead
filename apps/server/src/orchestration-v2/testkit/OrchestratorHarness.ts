@@ -9,6 +9,8 @@ import * as Stream from "effect/Stream";
 import * as ServerConfig from "../../config.ts";
 import * as SqlitePersistence from "../../persistence/Sqlite.ts";
 import * as ProjectService from "../../project/ProjectService.ts";
+import * as ServerSettings from "../../serverSettings.ts";
+import * as TextGeneration from "../../textGeneration/TextGeneration.ts";
 import { makeTestServerConfig } from "../../testUtils/testServer.ts";
 import * as WorkspacePaths from "../../workspace/WorkspacePaths.ts";
 import { ClaudeAgentSdkQueryRunner, makeClaudeAdapter } from "../Adapters/ClaudeAdapterV2.ts";
@@ -20,19 +22,28 @@ import * as ProviderAdapterRegistry from "../ProviderAdapterRegistry.ts";
 import * as ProviderRuntimeRecoveryService from "../ProviderRuntimeRecoveryService.ts";
 import * as OrchestrationRuntime from "../runtimeLayer.ts";
 
+/** Text generation that never improves on the seed, for tests about other things. */
+const keepsTheSeed: TextGeneration.TextGeneration["Service"] = {
+  generateThreadTitle: () => Effect.succeed({ title: "New thread" }),
+};
+
 /**
  * Seam 1: the real server services at the orchestrator's command boundary
  * (T3 Code's `ProviderReplayHarness.ts` `layerWithRegistry` at 2577baf,
  * without checkpoints, Git or handoffs). The orchestrator, event sink,
- * effect worker, provider adapters, projections, project service and SQLite
- * are real, in a temporary Playstead home; only each adapter's seam to its
- * provider is given (Claude's `query()` runner, Codex's app-server clients):
- * a replay in tests, the recording wrapper in the recorders. A provider
- * given no seam has no adapter, so it cannot run threads. A restart is a
- * second harness over the first one's `config`.
+ * effect worker, provider adapters, projections, project service, settings
+ * and SQLite are real, in a temporary Playstead home; only each adapter's
+ * seam to its provider is given (Claude's `query()` runner, Codex's
+ * app-server clients): a replay in tests, the recording wrapper in the
+ * recorders. A provider given no seam has no adapter, so it cannot run
+ * threads. Titles come from `textGeneration`, which stands in for the
+ * providers' CLIs; without one every title comes back "New thread", which
+ * keeps the seed. A restart is a second harness over the first one's
+ * `config`.
  */
 export const makeOrchestrationHarness = Effect.fn("makeOrchestrationHarness")(function* (input: {
   readonly claudeRunner?: ClaudeAgentSdkQueryRunner["Service"];
+  readonly textGeneration?: TextGeneration.TextGeneration["Service"];
   readonly codexClients?: CodexAppServerClientFactory["Service"];
   /** The recorders run the person's CLI with their environment; replays need neither. */
   readonly claudeBinaryPath?: string;
@@ -86,6 +97,10 @@ export const makeOrchestrationHarness = Effect.fn("makeOrchestrationHarness")(fu
       ProviderRuntimeRecoveryService.layer,
     ).pipe(
       Layer.provide(adapters),
+      Layer.provide(
+        Layer.succeed(TextGeneration.TextGeneration, input.textGeneration ?? keepsTheSeed),
+      ),
+      Layer.provideMerge(ServerSettings.layer),
       Layer.provideMerge(OrchestrationRuntime.layer),
       Layer.provide(WorkspacePaths.layer),
       Layer.provide(SqlitePersistence.layerConfig),

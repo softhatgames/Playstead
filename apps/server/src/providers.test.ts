@@ -5,6 +5,7 @@ import {
   type LocalConnection,
   makeLocalConnection,
 } from "@playstead/client-runtime/connection";
+import { DEFAULT_TEXT_GENERATION_MODEL_SELECTION } from "@playstead/contracts/settings";
 import { writeFakeCodex } from "@playstead/provider-testing/fakeProviders";
 import { makeTempDirectoryScoped } from "@playstead/shared/tempDirectory";
 import { assert, describe, it } from "@effect/vitest";
@@ -92,6 +93,7 @@ describe("provider RPC methods", () => {
 
         const settings = yield* connection.request((client) =>
           client["server.updateSettings"]({
+            patch: {},
             providerInstanceMutation: {
               operation: "upsert",
               instanceId: "codex",
@@ -101,6 +103,7 @@ describe("provider RPC methods", () => {
         );
         assert.deepStrictEqual(settings, {
           providerInstances: { codex: { driver: "codex", config: { binaryPath: ownCodex } } },
+          textGenerationModelSelection: DEFAULT_TEXT_GENERATION_MODEL_SELECTION,
         });
 
         const updated = yield* awaitConnectionState(
@@ -125,6 +128,7 @@ describe("provider RPC methods", () => {
         const result = yield* connection
           .request((client) =>
             client["server.updateSettings"]({
+              patch: {},
               providerInstanceMutation: {
                 operation: "upsert",
                 instanceId: "codex",

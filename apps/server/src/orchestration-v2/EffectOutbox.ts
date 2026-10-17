@@ -1,5 +1,6 @@
 import {
   CommandId,
+  MessageId,
   ProviderSessionId,
   ProviderTurnId,
   RunId,
@@ -21,8 +22,9 @@ import * as SqlClient from "effect/sql/SqlClient";
  * The work a command leaves for the effect worker (T3 Code's
  * `OrchestrationEffectRequestV2` at 2577baf): starting a run's provider
  * turn, interrupting it, giving the provider the person's answers to its
- * question, and stopping a thread's provider session. There is no
- * checkpoint, title generation or cleanup.
+ * question, stopping a thread's provider session, and generating the
+ * thread's title from its first message or, for a regenerate, its
+ * conversation. There is no checkpoint or cleanup.
  */
 const OrchestrationEffectRequestV2 = Schema.Union([
   Schema.Struct({ type: Schema.Literal("provider-turn.start"), runId: RunId }),
@@ -43,17 +45,26 @@ const OrchestrationEffectRequestV2 = Schema.Union([
     providerSessionId: ProviderSessionId,
     detail: Schema.String,
   }),
+  Schema.Struct({
+    type: Schema.Literal("thread-title.generate"),
+    kind: Schema.Union([
+      Schema.Struct({ type: Schema.Literal("initial"), messageId: MessageId }),
+      Schema.Struct({ type: Schema.Literal("regenerate") }),
+    ]),
+  }),
 ]);
 export type OrchestrationEffectRequestV2 = typeof OrchestrationEffectRequestV2.Type;
 
 /**
  * Effects that can safely run again after the process that ran them is gone
  * (T3 Code's `REPLAY_SAFE_EFFECT_TYPES_AFTER_PROCESS_LOSS`): stopping a
- * provider session that no longer exists does nothing. Recovery leaves them
- * to run, and puts one a stopped server was running back in the queue.
+ * provider session that no longer exists does nothing, and a title is only
+ * applied while its request is still the thread's. Recovery leaves them to
+ * run, and puts one a stopped server was running back in the queue.
  */
 const REPLAY_SAFE_EFFECT_TYPES_AFTER_PROCESS_LOSS = [
   "provider-session.detach",
+  "thread-title.generate",
 ] as const satisfies ReadonlyArray<OrchestrationEffectRequestV2["type"]>;
 
 /**
@@ -108,7 +119,9 @@ export class EffectOutboxError extends Schema.TaggedError<EffectOutboxError>()(
  * The effect outbox, `orchestration_v2_effect_outbox` (T3 Code's
  * `apps/server/src/orchestration-v2/EffectOutbox.ts` at 2577baf). Effects are
  * enqueued in the transaction that commits their command and claimed in
- * order, at most one running per thread. A failed effect is final: nothing
+ * order, at most one running per thread in each of two lanes: titles in
+ * their own, so a title is generated while the thread's turn goes on, and
+ * everything else in the other. A failed effect is final: nothing
  * retries it, since starting a turn twice would send the message twice.
  * A cancelled effect that is running is told through `awaitCancellation`,
  * so the worker stops it (T3 Code's `signalCancellations`).
@@ -218,7 +231,7 @@ const make = Effect.gen(function* () {
     ).pipe(Effect.mapError(failWith("enqueue")));
 
   // One statement, so a claim is atomic: the oldest pending row whose thread
-  // has nothing running and no older pending row.
+  // has nothing running and no older pending row in the same lane.
   const claimNext = (now: string) =>
     sql<ClaimedRow>`
       UPDATE orchestration_v2_effect_outbox
@@ -233,6 +246,16 @@ const make = Effect.gen(function* () {
               AND (
                 other.status = 'running'
                 OR (other.status = 'pending' AND other.rowid < candidate.rowid)
+              )
+              AND (
+                (
+                  candidate.effect_type = 'thread-title.generate'
+                  AND other.effect_type = 'thread-title.generate'
+                )
+                OR (
+                  candidate.effect_type != 'thread-title.generate'
+                  AND other.effect_type != 'thread-title.generate'
+                )
               )
           )
         ORDER BY candidate.rowid ASC

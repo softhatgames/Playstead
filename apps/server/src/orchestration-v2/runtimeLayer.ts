@@ -11,6 +11,7 @@ import * as ProjectStore from "./ProjectStore.ts";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
 import * as ProviderTurnStartService from "./ProviderTurnStartService.ts";
 import * as RunExecutionService from "./RunExecutionService.ts";
+import * as ThreadTitleRegenerationService from "./ThreadTitleRegenerationService.ts";
 
 /**
  * Orchestration's stores and event sink over the server's SQLite, assembled
@@ -33,10 +34,14 @@ export const layer = EventSink.layer.pipe(
 
 /**
  * The orchestrator and the effect worker, with what starts and runs provider
- * turns. They need the stores above and a `ProviderAdapterRegistryV2`: the
- * server's reads the provider registry, and tests give replaying adapters.
+ * turns and generates titles. They need the stores above, a
+ * `ProviderAdapterRegistryV2`, the server's settings and `TextGeneration`:
+ * the server's read the provider registry, and tests give replaying
+ * adapters and their own text generation.
  */
-export const layerCore = Layer.mergeAll(Orchestrator.layer, EffectWorker.layer).pipe(
+export const layerCore = EffectWorker.layer.pipe(
+  Layer.provide(ThreadTitleRegenerationService.layer),
+  Layer.provideMerge(Orchestrator.layer),
   Layer.provide(ProviderTurnStartService.layer),
   Layer.provide(Layer.mergeAll(RunExecutionService.layer, ProviderSessionManager.layer)),
 );

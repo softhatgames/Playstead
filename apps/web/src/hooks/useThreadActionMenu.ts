@@ -12,7 +12,12 @@ import { usePrimaryConnectionState } from "../connection/runtime.ts";
 import { readLocalApi } from "../localApi.ts";
 import { failureToast, successToast } from "../toast.ts";
 import { readSidebarProjectFilter, setSidebarProjectFilter } from "../uiState.ts";
-import { markThreadUnread, type ThreadActionTarget, useThreadActions } from "./useThreadActions.ts";
+import {
+  markThreadUnread,
+  regenerateThreadTitle,
+  type ThreadActionTarget,
+  useThreadActions,
+} from "./useThreadActions.ts";
 
 /**
  * Opens a thread's menu and runs what is chosen (T3 Code's
@@ -21,6 +26,8 @@ import { markThreadUnread, type ThreadActionTarget, useThreadActions } from "./u
  * The sidebar row and the thread view's header share it.
  *
  * - **Rename thread** starts the caller's inline rename (`onStartRename`).
+ * - **Regenerate title** has a provider write a new title; while one is
+ *   being written it reads "Regenerating…" and does nothing.
  * - **Mark unread** shows the thread as unread; T3 Code reports no failure,
  *   such as a thread with no completed run.
  * - **Filter by project**, offered when `projectFilter` is on (the sidebar
@@ -45,8 +52,10 @@ export function useThreadActionMenu(
       const project = projects?.find((candidate) => candidate.id === thread.projectId);
       void (async () => {
         const api = readLocalApi();
+        const isRegeneratingTitle = thread.titleRegeneration !== null;
         const items = buildThreadActionMenuItems({
           isRunning: !threadRuntimeCanArchive(thread.status),
+          isRegeneratingTitle,
           projectFilter:
             projectFilter && project !== undefined
               ? { label: project.title, isActive: readSidebarProjectFilter() === project.id }
@@ -56,6 +65,12 @@ export function useThreadActionMenu(
         switch (chosen) {
           case "rename":
             onStartRename();
+            return;
+          case "regenerate-title":
+            if (isRegeneratingTitle) return;
+            await regenerateThreadTitle(thread.id).catch((error: unknown) =>
+              failureToast("Failed to regenerate thread title", error),
+            );
             return;
           case "mark-unread":
             await markThreadUnread(thread.id).catch(() => undefined);

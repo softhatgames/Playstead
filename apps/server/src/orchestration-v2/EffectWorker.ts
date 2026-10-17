@@ -8,17 +8,24 @@ import * as EffectOutbox from "./EffectOutbox.ts";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
 import * as ProviderTurnStartService from "./ProviderTurnStartService.ts";
 import * as RunExecutionService from "./RunExecutionService.ts";
+import * as ThreadTitleRegenerationService from "./ThreadTitleRegenerationService.ts";
 
 const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
+
+/** How many effects the server runs at once (T3 Code's `DEFAULT_EFFECT_WORKER_CONCURRENCY`). */
+const DAEMON_CONCURRENCY = 4;
 
 /**
  * Runs the outbox's effects (T3 Code's
  * `apps/server/src/orchestration-v2/EffectWorker.ts` at 2577baf): starting a
- * run's provider turn, interrupting it, giving it the person's answers, and
- * stopping a thread's provider session; there is no checkpoint step. An effect a command cancels while it runs is
+ * run's provider turn, interrupting it, giving it the person's answers,
+ * stopping a thread's provider session and generating a thread's title;
+ * there is no checkpoint step. An effect a command cancels while it runs is
  * stopped, as T3 Code's `runOnce` races `execute` against
- * `awaitCancellation`. The server runs `runDaemon`; tests call `drain` and
- * then wait for the events they expect.
+ * `awaitCancellation`. The server runs `runDaemon`, which runs up to four
+ * effects at once, as T3 Code's daemon does, so a title being generated
+ * holds up no turn. Tests call `drain` and then wait for the events they
+ * expect.
  */
 export class OrchestrationEffectWorkerV2 extends Context.Service<
   OrchestrationEffectWorkerV2,
@@ -37,6 +44,7 @@ const make = Effect.gen(function* () {
   const turnStart = yield* ProviderTurnStartService.ProviderTurnStartServiceV2;
   const runs = yield* RunExecutionService.RunExecutionServiceV2;
   const sessions = yield* ProviderSessionManager.ProviderSessionManagerV2;
+  const titles = yield* ThreadTitleRegenerationService.ThreadTitleRegenerationService;
 
   const execute = (
     effect: EffectOutbox.ClaimedEffect,
@@ -46,6 +54,11 @@ const make = Effect.gen(function* () {
     | Effect.Error<ReturnType<RunExecutionService.RunExecutionServiceV2["Service"]["interruptRun"]>>
     | Effect.Error<
         ReturnType<RunExecutionService.RunExecutionServiceV2["Service"]["respondToRuntimeRequest"]>
+      >
+    | Effect.Error<
+        ReturnType<
+          ThreadTitleRegenerationService.ThreadTitleRegenerationService["Service"]["execute"]
+        >
       >
   > => {
     switch (effect.request.type) {
@@ -69,6 +82,12 @@ const make = Effect.gen(function* () {
           threadId: effect.threadId,
           providerSessionId: effect.request.providerSessionId,
         });
+      case "thread-title.generate":
+        return titles.execute({
+          threadId: effect.threadId,
+          requestId: effect.commandId,
+          kind: effect.request.kind,
+        });
     }
   };
 
@@ -76,6 +95,8 @@ const make = Effect.gen(function* () {
     const claimed = yield* outbox.claimNext(yield* nowIso);
     if (Option.isNone(claimed)) return false;
     const effect = claimed.value;
+    // A command can leave several effects; another runner may take the next.
+    yield* outbox.notifyAvailable;
     const outcome = yield* Effect.raceFirst(
       Effect.exit(execute(effect)),
       Effect.as(outbox.awaitCancellation(effect.id), "cancelled" as const),
@@ -107,7 +128,12 @@ const make = Effect.gen(function* () {
   return OrchestrationEffectWorkerV2.of({
     runOnce,
     drain,
-    runDaemon: Effect.forever(Effect.andThen(drain, outbox.awaitAvailable)),
+    runDaemon: Effect.all(
+      Array.from({ length: DAEMON_CONCURRENCY }, () =>
+        Effect.forever(Effect.andThen(drain, outbox.awaitAvailable)),
+      ),
+      { concurrency: "unbounded", discard: true },
+    ).pipe(Effect.andThen(Effect.never)),
   });
 });
 

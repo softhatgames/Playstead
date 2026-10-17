@@ -313,7 +313,8 @@ describe("Survive a restart", () => {
           recoverOnStartup: true,
         });
 
-        assert.strictEqual(yield* restarted.worker.drain, 0);
+        // Only the title runs: generating it again is safe, unlike the turn.
+        assert.strictEqual(yield* restarted.worker.drain, 1);
         const projection = Option.getOrThrow(
           yield* restarted.orchestrator.getThreadProjection(FILE_CREATE_IDS.threadId),
         );

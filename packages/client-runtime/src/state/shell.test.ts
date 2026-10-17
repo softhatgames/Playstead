@@ -30,6 +30,7 @@ const thread = (
   deletedAt: null,
   latestRunCompletedAt: null,
   lastVisitedAt: null,
+  titleRegeneration: null,
   ...overrides,
 });
 
