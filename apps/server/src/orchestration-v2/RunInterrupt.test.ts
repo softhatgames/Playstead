@@ -86,7 +86,39 @@ const codexReplay = (
     replay = yield* makeCodexReplay(
       yield* materializeReplayWorkspace(recorded, path.join(harness.home, "empty-game")),
     );
-    return { harness, replay: replay! };
+    return { harness, replay: replay!, recorded };
+  });
+
+/** The `processId` of each command Codex started in a recording. */
+const codexCommandProcesses = (recording: ProviderReplayTranscript) =>
+  recording.entries.flatMap((entry) => {
+    const frame = entry.frame as {
+      readonly method?: unknown;
+      readonly params?: {
+        readonly item?: { readonly type?: unknown; readonly processId?: unknown };
+      };
+    };
+    const item = frame.params?.item;
+    return entry.type === "emit_inbound" &&
+      frame.method === "item/started" &&
+      item?.type === "commandExecution" &&
+      typeof item.processId === "string"
+      ? [item.processId]
+      : [];
+  });
+
+/** The `processId` of each background terminal the adapter asked Codex to terminate. */
+const codexTerminatedProcesses = (recording: ProviderReplayTranscript) =>
+  recording.entries.flatMap((entry) => {
+    const frame = entry.frame as {
+      readonly method?: unknown;
+      readonly params?: { readonly processId?: unknown };
+    };
+    return entry.type === "expect_outbound" &&
+      frame.method === "thread/backgroundTerminals/terminate" &&
+      typeof frame.params?.processId === "string"
+      ? [frame.params.processId]
+      : [];
   });
 
 const threadProjection = (harness: Effect.Success<ReturnType<typeof makeOrchestrationHarness>>) =>
@@ -248,6 +280,23 @@ describe("Interrupt a turn", () => {
           }).pipe(Effect.scoped),
       );
     }
+
+    it.effect(
+      "Codex: interrupting a turn stops the command it was running, which Codex's own interrupt leaves running",
+      () =>
+        Effect.gen(function* () {
+          const { harness, replay, recorded } = yield* codexReplay("turn_interrupt.codex.ndjson");
+
+          const { first } = yield* runTurnInterruptScenario(harness, CODEX_TURN_INTERRUPT_SCENARIO);
+
+          // The replay holds the adapter to every frame it was recorded with.
+          yield* replay.assertComplete;
+          assert.strictEqual(first.status, "interrupted");
+          const commands = codexCommandProcesses(recorded);
+          assert.lengthOf(commands, 1);
+          assert.deepStrictEqual(codexTerminatedProcesses(recorded), commands);
+        }).pipe(Effect.scoped),
+    );
 
     it.effect(
       "a turn whose provider never answers the interrupt still ends interrupted, and the thread accepts the next message",
