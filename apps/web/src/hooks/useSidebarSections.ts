@@ -11,16 +11,17 @@ import {
   type SidebarProjectGroup,
 } from "../sidebarProjectGrouping.ts";
 import { clearThreadSelection } from "../threadSelectionStore.ts";
-import { useSidebarProjectScopeKey } from "../uiState.ts";
+import {
+  toggleSidebarShelfExpanded,
+  useSidebarProjectScopeKey,
+  useSidebarShelvesExpanded,
+} from "../uiState.ts";
 import { useIsScratchProject } from "./useScratchProject.ts";
 
 type SidebarThread = OrchestrationV2ThreadShell;
 
 const SETTLED_TAIL_INITIAL_COUNT = 10;
 const SETTLED_TAIL_PAGE_COUNT = 25;
-const SETTLED_SHELF_EXPANDED_KEY = "playstead:sidebar:settled-expanded";
-const WORKING_SHELF_EXPANDED_KEY = "playstead:sidebar:working-expanded";
-const SNOOZED_SHELF_EXPANDED_KEY = "playstead:sidebar:snoozed-expanded";
 // The longest delay `setTimeout` takes; a later wake is checked again then.
 const MAX_TIMER_DELAY_MS = 2_147_483_647;
 
@@ -61,28 +62,9 @@ export function useSidebarProjectScope(
   return { groups, scopeKey, scopedGroup, scopedProjectIds };
 }
 
-/** A shelf's open state, kept in the browser as T3 Code's `useLocalStorage` keeps it. */
-function useStoredBoolean(key: string, initial: boolean) {
-  const [value, setValue] = useState(() => {
-    try {
-      const stored = window.localStorage.getItem(key);
-      return stored === null ? initial : stored === "true";
-    } catch {
-      return initial;
-    }
-  });
-  const toggle = useCallback(() => {
-    setValue((current) => {
-      try {
-        window.localStorage.setItem(key, String(!current));
-      } catch {
-        // The shelf still toggles for this page.
-      }
-      return !current;
-    });
-  }, [key]);
-  return [value, toggle] as const;
-}
+const toggleWorking = () => toggleSidebarShelfExpanded("working");
+const toggleSnoozed = () => toggleSidebarShelfExpanded("snoozed");
+const toggleSettled = () => toggleSidebarShelfExpanded("settled");
 
 export interface SidebarShelf {
   readonly expanded: boolean;
@@ -151,9 +133,12 @@ export function useSidebarSections(input: {
     return () => window.clearTimeout(timer);
   }, [nextWakeAt, snoozeWakeTick]);
 
-  const [settledExpanded, toggleSettled] = useStoredBoolean(SETTLED_SHELF_EXPANDED_KEY, false);
-  const [workingExpanded, toggleWorking] = useStoredBoolean(WORKING_SHELF_EXPANDED_KEY, false);
-  const [snoozedExpanded, toggleSnoozed] = useStoredBoolean(SNOOZED_SHELF_EXPANDED_KEY, false);
+  // Each shelf's open state is in the ui state, as T3 Code keeps it in the browser.
+  const {
+    settled: settledExpanded,
+    working: workingExpanded,
+    snoozed: snoozedExpanded,
+  } = useSidebarShelvesExpanded();
   const [settledVisibleCount, setSettledVisibleCount] = useState(SETTLED_TAIL_INITIAL_COUNT);
   useEffect(() => setSettledVisibleCount(SETTLED_TAIL_INITIAL_COUNT), [scopeKey]);
   const showMoreSettled = useCallback(
@@ -202,14 +187,7 @@ export function useSidebarSections(input: {
       snoozed: { expanded: snoozedExpanded, toggle: toggleSnoozed },
       settled: { expanded: settledExpanded, toggle: toggleSettled },
     }),
-    [
-      workingExpanded,
-      toggleWorking,
-      snoozedExpanded,
-      toggleSnoozed,
-      settledExpanded,
-      toggleSettled,
-    ],
+    [workingExpanded, snoozedExpanded, settledExpanded],
   );
 
   return {
