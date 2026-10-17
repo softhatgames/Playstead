@@ -29,6 +29,12 @@ import {
 } from "./server.ts";
 import { ServerSettings, ServerSettingsError } from "./settings.ts";
 
+import {
+  OrchestrationSearchThreadsInput,
+  OrchestrationSearchThreadsResult,
+  OrchestrationSearchThreadsError,
+} from "./threadSearch.ts";
+
 export const WS_METHODS = {
   serverGetConfig: "server.getConfig",
   serverRefreshProviders: "server.refreshProviders",
@@ -118,12 +124,19 @@ const WsOrchestrationSubscribeThreadRpc = Rpc.make(ORCHESTRATION_V2_WS_METHODS.s
   stream: true,
 });
 
+const WsOrchestrationSearchThreadsRpc = Rpc.make(ORCHESTRATION_V2_WS_METHODS.searchThreads, {
+  payload: OrchestrationSearchThreadsInput,
+  success: OrchestrationSearchThreadsResult,
+  error: OrchestrationSearchThreadsError,
+});
+
 /**
  * The RPC contract on `/ws`. The socket is authenticated before it opens, and
  * every client on this computer may call every method, so the methods carry
  * no authorization middleware.
  */
 export const WsRpcGroup = RpcGroup.make(
+  WsOrchestrationSearchThreadsRpc,
   WsServerGetConfigRpc,
   WsServerRefreshProvidersRpc,
   WsServerUpdateSettingsRpc,

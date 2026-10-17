@@ -51,6 +51,7 @@ import {
   threadAfterPark,
 } from "./Sidebar.inbox.logic.ts";
 import { isTrailingDoubleClick } from "./Sidebar.logic.ts";
+import { SidebarThreadSearch } from "./sidebar/SidebarThreadSearch.tsx";
 import { ThreadStatusIndicator, useThreadRename } from "./sidebar/SidebarThreadParts.tsx";
 
 type SidebarThread = OrchestrationV2ThreadShell;
@@ -72,7 +73,7 @@ const inboxReturns = createInboxReturnTracker();
  * settle and archive show **Undo** below it (`AppSidebarLayout`).
  *
  * Seams for the slice's later tickets: **Snoozed** goes between Working and
- * Settled (#38), thread search in the header (#41), dragging between and
+ * Settled (#38), dragging between and
  * within sections (#40), and **New thread in…** from the palette (#42).
  */
 export function Sidebar() {
@@ -243,84 +244,97 @@ export function Sidebar() {
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <div className="flex items-center gap-1 px-2 pb-1">
-        <span className="min-w-0 flex-1 truncate pl-2 text-xs font-medium text-neutral-500 dark:text-neutral-400">
-          {scopedGroup === null ? "Threads" : scopedGroup.displayName}
-        </span>
-        {groups.length > 0 ? (
+      <SidebarThreadSearch
+        threads={[...sections.pinned, ...sections.active, ...sections.working, ...sections.settled]}
+        projects={projects}
+        actions={
           <>
-            <ProjectScopeMenu groups={groups} scopedGroup={scopedGroup} />
+            {groups.length > 0 ? (
+              <>
+                <ProjectScopeMenu groups={groups} scopedGroup={scopedGroup} />
+                <HeaderButton
+                  label="Add project"
+                  onClick={() => openCommandPalette({ open: "add-project" })}
+                >
+                  <FolderPlusIcon className="size-4" />
+                </HeaderButton>
+              </>
+            ) : null}
             <HeaderButton
-              label="Add project"
-              onClick={() => openCommandPalette({ open: "add-project" })}
+              label="New thread"
+              disabled={projects.length === 0}
+              onClick={startNewThread}
             >
-              <FolderPlusIcon className="size-4" />
+              <SquarePenIcon className="size-4" />
             </HeaderButton>
           </>
-        ) : null}
-        <HeaderButton label="New thread" disabled={projects.length === 0} onClick={startNewThread}>
-          <SquarePenIcon className="size-4" />
-        </HeaderButton>
-      </div>
-      <nav aria-label="Threads" className="flex min-h-0 flex-1 flex-col overflow-y-auto px-2 pb-2">
-        {total === 0 ? (
-          <div className="flex flex-col items-center gap-2 px-2 py-6 text-center text-xs text-neutral-500 dark:text-neutral-400">
-            {projects.length === 0 ? (
-              <>
-                <span>No projects yet</span>
-                <button
-                  type="button"
-                  onClick={() => openCommandPalette({ open: "add-project" })}
-                  className="rounded-md border border-neutral-300 px-2.5 py-1 font-medium hover:bg-neutral-100 dark:border-neutral-700 dark:hover:bg-neutral-900"
-                >
-                  Add project
-                </button>
-              </>
-            ) : scopedGroup !== null ? (
-              `No threads in ${scopedGroup.displayName} yet`
-            ) : (
-              "No threads yet"
-            )}
-          </div>
-        ) : (
-          <ul role="presentation" className="flex flex-1 flex-col gap-px">
-            {sections.pinned.length > 0 ? (
-              <SectionLabel label="Pinned">
-                {sections.pinned.map((thread) => renderRow(thread, "pinned"))}
+        }
+      >
+        <nav
+          aria-label="Threads"
+          className="flex min-h-0 flex-1 flex-col overflow-y-auto px-2 pb-2"
+        >
+          {total === 0 ? (
+            <div className="flex flex-col items-center gap-2 px-2 py-6 text-center text-xs text-neutral-500 dark:text-neutral-400">
+              {projects.length === 0 ? (
+                <>
+                  <span>No projects yet</span>
+                  <button
+                    type="button"
+                    onClick={() => openCommandPalette({ open: "add-project" })}
+                    className="rounded-md border border-neutral-300 px-2.5 py-1 font-medium hover:bg-neutral-100 dark:border-neutral-700 dark:hover:bg-neutral-900"
+                  >
+                    Add project
+                  </button>
+                </>
+              ) : scopedGroup !== null ? (
+                `No threads in ${scopedGroup.displayName} yet`
+              ) : (
+                "No threads yet"
+              )}
+            </div>
+          ) : (
+            <ul role="presentation" className="flex flex-1 flex-col gap-px">
+              {sections.pinned.length > 0 ? (
+                <SectionLabel label="Pinned">
+                  {sections.pinned.map((thread) => renderRow(thread, "pinned"))}
+                </SectionLabel>
+              ) : null}
+              <SectionLabel label="Active">
+                {sections.active.map((thread) => renderRow(thread, "active"))}
               </SectionLabel>
-            ) : null}
-            <SectionLabel label="Active">
-              {sections.active.map((thread) => renderRow(thread, "active"))}
-            </SectionLabel>
-            <li className="mt-auto" aria-hidden />
-            {sections.working.length > 0 ? (
+              <li className="mt-auto" aria-hidden />
+              {sections.working.length > 0 ? (
+                <ShelfHeader
+                  label={workingExpanded ? "Working" : `Working (${sections.working.length})`}
+                  expanded={workingExpanded}
+                  onToggle={toggleWorking}
+                />
+              ) : null}
+              {visibleWorking.map((thread) => renderRow(thread, "working"))}
               <ShelfHeader
-                label={workingExpanded ? "Working" : `Working (${sections.working.length})`}
-                expanded={workingExpanded}
-                onToggle={toggleWorking}
+                label={settledExpanded ? "Settled" : `Settled (${sections.settled.length})`}
+                expanded={settledExpanded}
+                onToggle={toggleSettled}
               />
-            ) : null}
-            {visibleWorking.map((thread) => renderRow(thread, "working"))}
-            <ShelfHeader
-              label={settledExpanded ? "Settled" : `Settled (${sections.settled.length})`}
-              expanded={settledExpanded}
-              onToggle={toggleSettled}
-            />
-            {visibleSettled.map((thread) => renderRow(thread, "settled"))}
-            {settledExpanded && hiddenSettledCount > 0 ? (
-              <li>
-                <button
-                  type="button"
-                  onClick={() => setSettledVisibleCount((count) => count + SETTLED_TAIL_PAGE_COUNT)}
-                  className="w-full rounded-md px-2.5 py-1.5 text-left text-sm text-neutral-500 hover:bg-neutral-100 dark:text-neutral-400 dark:hover:bg-neutral-900"
-                >
-                  Show {Math.min(hiddenSettledCount, SETTLED_TAIL_PAGE_COUNT)} more
-                </button>
-              </li>
-            ) : null}
-          </ul>
-        )}
-      </nav>
+              {visibleSettled.map((thread) => renderRow(thread, "settled"))}
+              {settledExpanded && hiddenSettledCount > 0 ? (
+                <li>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setSettledVisibleCount((count) => count + SETTLED_TAIL_PAGE_COUNT)
+                    }
+                    className="w-full rounded-md px-2.5 py-1.5 text-left text-sm text-neutral-500 hover:bg-neutral-100 dark:text-neutral-400 dark:hover:bg-neutral-900"
+                  >
+                    Show {Math.min(hiddenSettledCount, SETTLED_TAIL_PAGE_COUNT)} more
+                  </button>
+                </li>
+              ) : null}
+            </ul>
+          )}
+        </nav>
+      </SidebarThreadSearch>
     </div>
   );
 }

@@ -31,6 +31,10 @@
     "./state/thread": {
       "types": "./src/state/thread.ts",
       "import": "./src/state/thread.ts"
+    },
+    "./state/threadSearch": {
+      "types": "./src/state/threadSearch.ts",
+      "import": "./src/state/threadSearch.ts"
     }
   },
   "scripts": {
