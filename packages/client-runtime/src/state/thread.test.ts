@@ -40,6 +40,7 @@ const projection: OrchestrationV2ThreadProjection = {
     pinnedAt: null,
     pinOrderKey: null,
     activeOrderKey: null,
+    autoSettleDisabledAt: null,
     titleRegeneration: null,
   },
   runs: [],

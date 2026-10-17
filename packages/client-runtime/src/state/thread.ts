@@ -32,6 +32,7 @@ const applyEvent = (
     case "thread.unpinned":
     case "thread.settled":
     case "thread.unsettled":
+    case "thread.auto-settle-set":
       return { ...projection, thread: event.payload, updatedAt: event.payload.updatedAt };
     case "run.created":
     case "run.updated":

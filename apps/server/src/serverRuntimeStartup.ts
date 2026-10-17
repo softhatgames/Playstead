@@ -12,6 +12,7 @@ import * as Schema from "effect/Schema";
 import * as ServerEnvironment from "./environment/ServerEnvironment.ts";
 import * as EffectWorker from "./orchestration-v2/EffectWorker.ts";
 import * as ProviderRuntimeRecovery from "./orchestration-v2/ProviderRuntimeRecoveryService.ts";
+import * as ThreadSettlement from "./orchestration-v2/ThreadSettlementService.ts";
 import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
 
 export class ServerRuntimeStartupError extends Schema.TaggedError<ServerRuntimeStartupError>()(
@@ -26,7 +27,7 @@ export class ServerRuntimeStartupError extends Schema.TaggedError<ServerRuntimeS
 /**
  * Startup, and the gate it opens (T3 Code's `apps/server/src/serverRuntimeStartup.ts`
  * at 2577baf). Recovery settles what the last server left running, then the
- * effect worker starts. Until startup completes, every HTTP request waits at
+ * effect worker and automatic settlement start. Until startup completes, every HTTP request waits at
  * the gate, so the environment descriptor answering means recovery is done
  * and the server is ready for commands.
  */
@@ -53,6 +54,7 @@ const make = (options?: StartupOptions) =>
     const lifecycleEvents = yield* ServerLifecycleEvents.ServerLifecycleEvents;
     const recovery = yield* ProviderRuntimeRecovery.ProviderRuntimeRecoveryService;
     const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+    const settlement = yield* ThreadSettlement.ThreadSettlementService;
 
     const commandReady = yield* Deferred.make<void, ServerRuntimeStartupError>();
     const httpListening = yield* Deferred.make<void>();
@@ -109,6 +111,9 @@ const make = (options?: StartupOptions) =>
         );
       }
       yield* startEffectWorker;
+      // Settlement reads the projections recovery has settled, as T3 Code's
+      // settlement worker waits for the server's activation.
+      yield* settlement.start();
       yield* options?.beforeReady ?? Effect.void;
       yield* Deferred.await(httpListening);
       yield* lifecycleEvents.publish({
