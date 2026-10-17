@@ -79,6 +79,7 @@ const entityKindOf = (event: OrchestrationV2StoredEvent["event"]): EntityKind | 
     case "thread.unpinned":
     case "thread.settled":
     case "thread.unsettled":
+    case "thread.auto-settle-set":
       return "thread";
     case "run.created":
     case "run.updated":
@@ -136,8 +137,38 @@ const toThreadShell = (
     pinnedAt: thread.pinnedAt,
     pinOrderKey: thread.pinOrderKey,
     activeOrderKey: thread.activeOrderKey,
+    autoSettleDisabledAt: thread.autoSettleDisabledAt,
     titleRegeneration: thread.titleRegeneration,
   };
+};
+
+/**
+ * A thread automatic settlement may settle, as the sweep reads it (T3 Code's
+ * `ProjectionSettlementCandidate`, without branches and pull requests):
+ * the thread's own fields and its latest run's times, and the latest time
+ * the person wrote to it.
+ */
+export type ProjectionSettlementCandidate = Pick<
+  OrchestrationV2ThreadShell,
+  | "id"
+  | "projectId"
+  | "createdAt"
+  | "updatedAt"
+  | "archivedAt"
+  | "settledOverride"
+  | "pinnedAt"
+  | "autoSettleDisabledAt"
+  | "status"
+  | "latestRunId"
+  | "latestRunRequestedAt"
+  | "latestRunCompletedAt"
+> & {
+  readonly latestRunStartedAt: string | null;
+  readonly latestUserMessageAt: string | null;
+  readonly hasPendingRuntimeRequest: boolean;
+  readonly hasActiveRun: boolean;
+  /** The thread itself, for what the sweep reads beyond these fields. */
+  readonly thread: OrchestrationV2AppThread;
 };
 
 /** Where a thread shows: the sidebar, or **Settings → Archive**. */
@@ -177,6 +208,15 @@ export class ProjectionStoreV2 extends Context.Service<
      * (T3 Code's `getRecoveryThreadIds("runtime")`).
      */
     readonly listRecoveryThreadIds: Effect.Effect<ReadonlyArray<ThreadId>, ProjectionStoreV2Error>;
+    /**
+     * The threads automatic settlement may settle, least recently updated
+     * first, or only the one given (T3 Code's `getSettlementCandidates`):
+     * not deleted, archived, settled or un-settled, pinned or opted out, with
+     * no run active and nothing waiting on the person.
+     */
+    readonly getSettlementCandidates: (
+      threadId?: ThreadId,
+    ) => Effect.Effect<ReadonlyArray<ProjectionSettlementCandidate>, ProjectionStoreV2Error>;
     /** One run as the projection has it now. */
     readonly getRun: (
       runId: RunId,
@@ -338,6 +378,67 @@ const make = Effect.gen(function* () {
     Effect.mapError(failWith("listRecoveryThreadIds")),
   );
 
+  const getSettlementCandidates = (threadId?: ThreadId) =>
+    Effect.gen(function* () {
+      const rows = yield* sql<{
+        readonly payloadJson: string;
+        readonly latestUserMessageAt: string | null;
+      }>`
+        SELECT t.payload_json AS "payloadJson",
+          (
+            SELECT MAX(json_extract(message.payload_json, '$.updatedAt'))
+            FROM orchestration_v2_projection_messages message
+            WHERE message.thread_id = t.thread_id
+              AND json_extract(message.payload_json, '$.role') = 'user'
+          ) AS "latestUserMessageAt"
+        FROM orchestration_v2_projection_threads t
+        WHERE json_extract(t.payload_json, '$.deletedAt') IS NULL
+          ${threadId === undefined ? sql`` : sql`AND t.thread_id = ${threadId}`}
+          AND json_extract(t.payload_json, '$.archivedAt') IS NULL
+          AND json_extract(t.payload_json, '$.settledOverride') IS NULL
+          AND json_extract(t.payload_json, '$.pinnedAt') IS NULL
+          AND json_extract(t.payload_json, '$.autoSettleDisabledAt') IS NULL
+          AND NOT EXISTS (
+            SELECT 1 FROM orchestration_v2_projection_runs run
+            WHERE run.thread_id = t.thread_id
+              AND json_extract(run.payload_json, '$.status') IN ${sql.in([...ACTIVE_RUN_STATUSES])}
+          )
+          AND NOT EXISTS (
+            SELECT 1 FROM orchestration_v2_projection_runtime_requests request
+            WHERE request.thread_id = t.thread_id
+              AND json_extract(request.payload_json, '$.status') = 'pending'
+          )
+        ORDER BY json_extract(t.payload_json, '$.updatedAt') ASC, t.thread_id ASC
+      `;
+      return yield* Effect.forEach(rows, (row) =>
+        Effect.gen(function* () {
+          const thread = yield* decodeThread(row.payloadJson);
+          const runs = yield* readRows(ENTITIES.runs, thread.id);
+          const shell = toThreadShell(thread, runs);
+          const latest = latestRunOf(runs);
+          return {
+            id: shell.id,
+            projectId: shell.projectId,
+            createdAt: shell.createdAt,
+            updatedAt: shell.updatedAt,
+            archivedAt: shell.archivedAt,
+            settledOverride: shell.settledOverride,
+            pinnedAt: shell.pinnedAt,
+            autoSettleDisabledAt: shell.autoSettleDisabledAt,
+            status: shell.status,
+            latestRunId: shell.latestRunId,
+            latestRunRequestedAt: shell.latestRunRequestedAt,
+            latestRunCompletedAt: shell.latestRunCompletedAt,
+            latestRunStartedAt: latest?.startedAt ?? null,
+            latestUserMessageAt: row.latestUserMessageAt,
+            hasPendingRuntimeRequest: false,
+            hasActiveRun: false,
+            thread,
+          } satisfies ProjectionSettlementCandidate;
+        }),
+      );
+    }).pipe(Effect.mapError(failWith("getSettlementCandidates")));
+
   const getTurnItemOrdinal = (itemId: TurnItemId) =>
     sql<{ readonly ordinal: number }>`
       SELECT json_extract(payload_json, '$.ordinal') AS ordinal
@@ -378,6 +479,7 @@ const make = Effect.gen(function* () {
     getThreadShell,
     listThreadShells,
     listRecoveryThreadIds,
+    getSettlementCandidates,
     getTurnItemOrdinal,
     maxTurnItemOrdinal,
   });

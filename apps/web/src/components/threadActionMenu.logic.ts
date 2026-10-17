@@ -5,11 +5,12 @@ import type { OrchestrationV2ThreadShell } from "@playstead/contracts/orchestrat
 /**
  * The thread menu (T3 Code's `apps/web/src/components/threadActionMenu.logic.ts`
  * at 2577baf), opened from a sidebar row and the thread view's header. It
- * has T3 Code's items in T3 Code's order as each arrives: so far **Pin**,
- * **Settle**, **Rename thread**, **Regenerate title**, **Mark unread**,
- * **Filter by project**, **Copy** (Path and Thread ID), **Project
- * settings**, **Archive thread** and **Delete**. Snooze and auto-settle
- * come with their features, as fields of the state and ids here. Threads have no branch, so
+ * has T3 Code's items in T3 Code's order as each arrives: so far **Pin
+ * thread**, **Settle thread**, **Rename thread**, **Regenerate title**,
+ * **Mark unread**, **Filter by project**, **Auto-settle behavior**, **Copy**
+ * (Path and Thread ID), **Project settings**, **Archive thread** and
+ * **Delete**. Snooze comes with its feature, as fields of the state and ids
+ * here. Threads have no branch, so
  * T3 Code's "New thread on (branch)" and **Copy → Branch** never show.
  */
 export type ThreadActionMenuId =
@@ -21,6 +22,9 @@ export type ThreadActionMenuId =
   | "regenerate-title"
   | "mark-unread"
   | "filter-by-project"
+  | "auto-settle"
+  | "auto-settle:enabled"
+  | "auto-settle:disabled"
   | "copy"
   | "copy-path"
   | "copy-thread-id"
@@ -41,6 +45,8 @@ export interface ThreadActionMenuState {
   readonly projectFilter: { readonly label: string; readonly isActive: boolean } | null;
   readonly isPinned: boolean;
   readonly isSettled: boolean;
+  /** Automatic settlement is on for the thread (T3 Code's `autoSettleEnabled`). */
+  readonly autoSettleEnabled: boolean;
 }
 
 export function buildThreadActionMenuItems(
@@ -68,6 +74,14 @@ export function buildThreadActionMenuItems(
               : `Filter by ${state.projectFilter.label}`,
           },
         ]),
+    {
+      id: "auto-settle",
+      label: "Auto-settle behavior",
+      children: [
+        { id: "auto-settle:enabled", label: "Enabled", checked: state.autoSettleEnabled },
+        { id: "auto-settle:disabled", label: "Disabled", checked: !state.autoSettleEnabled },
+      ],
+    },
     {
       id: "copy",
       label: "Copy",

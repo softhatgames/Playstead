@@ -29,6 +29,7 @@ const SHELL_THREAD_EVENT_TYPES: ReadonlySet<string> = new Set([
   "thread.unpinned",
   "thread.settled",
   "thread.unsettled",
+  "thread.auto-settle-set",
   "run.created",
   "run.updated",
 ]);

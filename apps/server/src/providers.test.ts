@@ -104,6 +104,7 @@ describe("provider RPC methods", () => {
         assert.deepStrictEqual(settings, {
           providerInstances: { codex: { driver: "codex", config: { binaryPath: ownCodex } } },
           textGenerationModelSelection: DEFAULT_TEXT_GENERATION_MODEL_SELECTION,
+          sidebarAutoSettleAfterDays: 3,
         });
 
         const updated = yield* awaitConnectionState(

@@ -17,6 +17,7 @@ const idle = {
   projectFilter: null,
   isPinned: false,
   isSettled: false,
+  autoSettleEnabled: true,
 } as const;
 
 /** Each item as `[id, label, disabled, destructive, separatorBefore, children]`. */
@@ -31,13 +32,24 @@ const outline = (items: ReturnType<typeof buildThreadActionMenuItems>) =>
   ]);
 
 describe("buildThreadActionMenuItems", () => {
-  it("offers T3 Code's items in its order: pin, settle, rename, regenerate title, mark unread, copy, project settings, archive, then delete", () => {
+  it("offers T3 Code's items in its order: pin, settle, rename, regenerate title, mark unread, auto-settle, copy, project settings, archive, then delete", () => {
     assert.deepStrictEqual(outline(buildThreadActionMenuItems(idle)), [
       ["pin", "Pin thread", false, false, false, []],
       ["settle", "Settle thread", false, false, false, []],
       ["rename", "Rename thread", false, false, true, []],
       ["regenerate-title", "Regenerate title", false, false, false, []],
       ["mark-unread", "Mark unread", false, false, false, []],
+      [
+        "auto-settle",
+        "Auto-settle behavior",
+        false,
+        false,
+        false,
+        [
+          ["auto-settle:enabled", "Enabled"],
+          ["auto-settle:disabled", "Disabled"],
+        ],
+      ],
       [
         "copy",
         "Copy",
@@ -74,6 +86,26 @@ describe("buildThreadActionMenuItems", () => {
       false,
       false,
       [],
+    ]);
+  });
+
+  it("checks Enabled or Disabled under Auto-settle behavior, after the project filter", () => {
+    const autoSettle = (autoSettleEnabled: boolean) => {
+      const items = buildThreadActionMenuItems({
+        ...idle,
+        autoSettleEnabled,
+        projectFilter: { label: "space-game", isActive: false },
+      });
+      assert.strictEqual(items[5]?.id, "filter-by-project");
+      return (items[6]?.children ?? []).map((child) => [child.id, child.checked === true]);
+    };
+    assert.deepStrictEqual(autoSettle(true), [
+      ["auto-settle:enabled", true],
+      ["auto-settle:disabled", false],
+    ]);
+    assert.deepStrictEqual(autoSettle(false), [
+      ["auto-settle:enabled", false],
+      ["auto-settle:disabled", true],
     ]);
   });
 

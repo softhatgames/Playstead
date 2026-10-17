@@ -124,9 +124,13 @@ const reject = (command: OrchestrationV2ServerCommand, reason: string) =>
  *   the answers. There are no approval decisions.
  * - `thread.archive`, `thread.unarchive`, `thread.model-selection.set`,
  *   `thread.metadata.update`, `thread.mark-unread`, `thread.pin`,
- *   `thread.unpin`, `thread.settle`, `thread.unsettle` and the internal
+ *   `thread.unpin`, `thread.settle`, `thread.unsettle`,
+ *   `thread.auto-settle.set` and the internal
  *   `thread.title.regeneration.complete` change the thread itself, through
  *   `dispatchThreadMutation`.
+ * - The internal `thread.auto-settle` settles the thread for the settlement
+ *   sweep, unless it changed since the sweep read it (T3 Code's
+ *   `thread.auto-settle` case in `dispatchCommand`).
  * - `thread.visit` moves the read marker forward (`dispatchThreadVisit`).
  * - `thread.delete` deletes the thread (`planThreadDeletion`).
  *
@@ -173,6 +177,7 @@ export function decideThreadCommand(input: {
       pinnedAt: null,
       pinOrderKey: null,
       activeOrderKey: null,
+      autoSettleDisabledAt: null,
       titleRegeneration: null,
     };
     return Result.succeed({
@@ -197,8 +202,31 @@ export function decideThreadCommand(input: {
     case "thread.unpin":
     case "thread.settle":
     case "thread.unsettle":
+    case "thread.auto-settle.set":
     case "thread.title.regeneration.complete":
       return dispatchThreadMutation(command, projection, now);
+    case "thread.auto-settle": {
+      // The sweep decided on what it read; any change since, or any override
+      // the person set (an un-settle's "active" too), wins over it.
+      const { thread } = projection;
+      if (
+        thread.settledOverride !== null ||
+        DateTime.toEpochMillis(DateTime.makeUnsafe(thread.updatedAt)) >
+          DateTime.toEpochMillis(DateTime.makeUnsafe(command.snapshotAt))
+      ) {
+        return reject(command, `Thread ${thread.id} changed before automatic settlement.`);
+      }
+      return dispatchThreadMutation(
+        {
+          type: "thread.settle",
+          commandId: command.commandId,
+          threadId: command.threadId,
+          ...(command.settledAt === undefined ? {} : { settledAt: command.settledAt }),
+        },
+        projection,
+        now,
+      );
+    }
     case "thread.visit":
       return Result.succeed(dispatchThreadVisit(command, projection, now));
     case "thread.delete":
@@ -284,6 +312,7 @@ type ThreadMutationCommand = Extract<
       | "thread.unpin"
       | "thread.settle"
       | "thread.unsettle"
+      | "thread.auto-settle.set"
       | "thread.title.regeneration.complete";
   }
 >;
@@ -304,14 +333,15 @@ const threadTitleGenerationEffect = (
 });
 
 /**
- * The commands an archived thread refuses (T3 Code's list). Snooze, wake,
- * the per-thread auto-settle switch and reordering join it as they arrive.
+ * The commands an archived thread refuses (T3 Code's list). Snooze, wake
+ * and reordering join it as they arrive.
  */
 const REFUSED_WHILE_ARCHIVED: ReadonlySet<ThreadMutationCommand["type"]> = new Set([
   "thread.pin",
   "thread.unpin",
   "thread.settle",
   "thread.unsettle",
+  "thread.auto-settle.set",
 ]);
 
 /**
@@ -369,6 +399,8 @@ function settleBlocker(projection: OrchestrationV2ThreadProjection): string | nu
  *   ("Thread settled."); settling a settled thread keeps its time.
  * - `thread.unsettle` brings the thread back to active work and holds it
  *   there, so automatic settlement leaves it alone until a message.
+ * - `thread.auto-settle.set` turns automatic settlement off for the thread
+ *   (keeping the first time it was turned off) or back on.
  *
  * An archived thread refuses the commands in `REFUSED_WHILE_ARCHIVED`.
  */
@@ -488,6 +520,14 @@ function dispatchThreadMutation(
           updatedAt: alreadyActive ? thread.updatedAt : now,
         };
       }
+      case "thread.auto-settle.set": {
+        const unchanged = command.enabled === (thread.autoSettleDisabledAt === null);
+        return {
+          ...thread,
+          autoSettleDisabledAt: command.enabled ? null : (thread.autoSettleDisabledAt ?? now),
+          updatedAt: unchanged ? thread.updatedAt : now,
+        };
+      }
     }
   })();
   const eventType = (() => {
@@ -511,6 +551,8 @@ function dispatchThreadMutation(
         return "thread.settled" as const;
       case "thread.unsettle":
         return "thread.unsettled" as const;
+      case "thread.auto-settle.set":
+        return "thread.auto-settle-set" as const;
     }
   })();
   const events: Array<NewDomainEvent> = [

@@ -195,6 +195,7 @@ describe("generated titles over RPC", () => {
         assert.deepStrictEqual(settings, {
           providerInstances: {},
           textGenerationModelSelection: claudeHaiku,
+          sidebarAutoSettleAfterDays: 3,
         });
         yield* awaitConnectionState(
           connection,
@@ -229,6 +230,7 @@ describe("generated titles over RPC", () => {
         assert.deepStrictEqual(state.config?.settings, {
           providerInstances: { codex: { driver: "codex", config: { binaryPath: "my-codex" } } },
           textGenerationModelSelection: DEFAULT_TEXT_GENERATION_MODEL_SELECTION,
+          sidebarAutoSettleAfterDays: 3,
         });
       }).pipe(Effect.scoped),
     );
