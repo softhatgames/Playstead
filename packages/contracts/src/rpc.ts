@@ -11,6 +11,8 @@ import {
   ORCHESTRATION_V2_WS_METHODS,
   OrchestrationDispatchCommandError,
   OrchestrationThreadNotFoundError,
+  OrchestrationV2ArchivedShellSnapshot,
+  OrchestrationV2ArchivedShellStreamItem,
   OrchestrationV2Command,
   OrchestrationV2DispatchCommandResult,
   OrchestrationV2ShellStreamItem,
@@ -89,6 +91,18 @@ const WsOrchestrationSubscribeShellRpc = Rpc.make(ORCHESTRATION_V2_WS_METHODS.su
   stream: true,
 });
 
+/** **Settings → Archive**'s threads as they are now. */
+const WsOrchestrationGetArchivedShellSnapshotRpc = Rpc.make(
+  ORCHESTRATION_V2_WS_METHODS.getArchivedShellSnapshot,
+  { payload: Schema.Struct({}), success: OrchestrationV2ArchivedShellSnapshot },
+);
+
+/** **Settings → Archive**'s threads: a snapshot, then each change. */
+const WsOrchestrationSubscribeArchivedShellRpc = Rpc.make(
+  ORCHESTRATION_V2_WS_METHODS.subscribeArchivedShell,
+  { payload: Schema.Struct({}), success: OrchestrationV2ArchivedShellStreamItem, stream: true },
+);
+
 /** Sends an orchestration command; the result is the last event it produced. */
 const WsOrchestrationDispatchCommandRpc = Rpc.make(ORCHESTRATION_V2_WS_METHODS.dispatchCommand, {
   payload: OrchestrationV2Command,
@@ -118,6 +132,8 @@ export const WsRpcGroup = RpcGroup.make(
   WsProjectsMutateRpc,
   WsFilesystemBrowseRpc,
   WsOrchestrationSubscribeShellRpc,
+  WsOrchestrationGetArchivedShellSnapshotRpc,
+  WsOrchestrationSubscribeArchivedShellRpc,
   WsOrchestrationDispatchCommandRpc,
   WsOrchestrationSubscribeThreadRpc,
 );

@@ -1,3 +1,4 @@
+import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
 import {
@@ -37,6 +38,8 @@ import { ProviderDriverKind, ProviderInstanceId } from "./providerInstance.ts";
 
 export const ORCHESTRATION_V2_WS_METHODS = {
   dispatchCommand: "orchestration.dispatchCommand",
+  getArchivedShellSnapshot: "orchestration.getArchivedShellSnapshot",
+  subscribeArchivedShell: "orchestration.subscribeArchivedShell",
   subscribeShell: "orchestration.subscribeShell",
   subscribeThread: "orchestration.subscribeThread",
 } as const;
@@ -63,6 +66,19 @@ const OrchestrationV2ProviderRef = Schema.Struct({
 });
 export type OrchestrationV2ProviderRef = typeof OrchestrationV2ProviderRef.Type;
 
+/**
+ * A thread field added after threads were first stored: a row written before
+ * it decodes with null (T3 Code's decoding defaults on the thread).
+ */
+const NullOrTimeDefaultNull = Schema.NullOr(IsoDateTime).pipe(
+  Schema.withDecodingDefault(Effect.succeed(null)),
+);
+
+/**
+ * A thread (T3 Code's `OrchestrationV2AppThread`, trimmed). An archived
+ * thread has `archivedAt`; a deleted one keeps its row with `deletedAt`,
+ * T3 Code's soft delete, and refuses every command.
+ */
 export const OrchestrationV2AppThread = Schema.Struct({
   id: ThreadId,
   projectId: ProjectId,
@@ -74,6 +90,8 @@ export const OrchestrationV2AppThread = Schema.Struct({
   activeProviderThreadId: Schema.NullOr(ProviderThreadId),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
+  archivedAt: NullOrTimeDefaultNull,
+  deletedAt: NullOrTimeDefaultNull,
 });
 export type OrchestrationV2AppThread = typeof OrchestrationV2AppThread.Type;
 
@@ -95,6 +113,14 @@ export const ACTIVE_RUN_STATUSES: ReadonlySet<OrchestrationV2RunStatus> = new Se
   "running",
   "waiting",
 ]);
+
+/**
+ * The statuses of a run waiting in the queue behind an active one. Playstead
+ * has no queue until permission modes and turn control (slice 1) bring it,
+ * so the set is empty; archive and delete cancel what is in it, as they do
+ * T3 Code's `queued` runs.
+ */
+export const QUEUED_RUN_STATUSES: ReadonlySet<OrchestrationV2RunStatus> = new Set();
 
 export const OrchestrationV2Run = Schema.Struct({
   id: RunId,
@@ -360,6 +386,9 @@ export const OrchestrationV2DomainEvent = Schema.Union([
   event("thread.created", OrchestrationV2AppThread),
   event("thread.metadata-updated", OrchestrationV2AppThread),
   event("thread.model-selection-updated", OrchestrationV2AppThread),
+  event("thread.archived", OrchestrationV2AppThread),
+  event("thread.unarchived", OrchestrationV2AppThread),
+  event("thread.deleted", OrchestrationV2AppThread),
   event("run.created", OrchestrationV2Run),
   event("run.updated", OrchestrationV2Run),
   event("run-attempt.created", OrchestrationV2RunAttempt),
@@ -419,6 +448,8 @@ export const OrchestrationV2ThreadShell = Schema.Struct({
   status: OrchestrationV2ShellThreadStatus,
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
+  archivedAt: Schema.NullOr(IsoDateTime),
+  deletedAt: Schema.NullOr(IsoDateTime),
 });
 export type OrchestrationV2ThreadShell = typeof OrchestrationV2ThreadShell.Type;
 
@@ -426,12 +457,21 @@ export const OrchestrationV2ShellSnapshot = Schema.Struct({
   /** The last application event the snapshot includes. */
   snapshotSequence: NonNegativeInt,
   projects: Schema.Array(OrchestrationProjectShell),
-  /** Oldest first. */
+  /** The threads not archived, oldest first. */
   threads: Schema.Array(OrchestrationV2ThreadShell),
+  /**
+   * Archived threads, kept apart from the rest. The sidebar's stream sends
+   * none here, as T3 Code's active shell does; **Settings → Archive** reads
+   * them from the archived shell.
+   */
+  archivedThreads: Schema.Array(OrchestrationV2ThreadShell),
 });
 export type OrchestrationV2ShellSnapshot = typeof OrchestrationV2ShellSnapshot.Type;
 
-/** The snapshot first, then each change after it. */
+/**
+ * The snapshot first, then each change after it. A thread that is archived
+ * or deleted leaves the sidebar with `thread.removed`.
+ */
 export const OrchestrationV2ShellStreamItem = Schema.Union([
   Schema.Struct({
     kind: Schema.Literal("snapshot"),
@@ -447,8 +487,45 @@ export const OrchestrationV2ShellStreamItem = Schema.Union([
     sequence: NonNegativeInt,
     thread: OrchestrationV2ThreadShell,
   }),
+  Schema.Struct({
+    kind: Schema.Literal("thread.removed"),
+    sequence: NonNegativeInt,
+    threadId: ThreadId,
+  }),
 ]);
 export type OrchestrationV2ShellStreamItem = typeof OrchestrationV2ShellStreamItem.Type;
+
+/** **Settings → Archive**'s threads, with the projects they belong to (T3 Code's). */
+export const OrchestrationV2ArchivedShellSnapshot = Schema.Struct({
+  snapshotSequence: NonNegativeInt,
+  projects: Schema.Array(OrchestrationProjectShell),
+  /** Oldest first. */
+  threads: Schema.Array(OrchestrationV2ThreadShell),
+});
+export type OrchestrationV2ArchivedShellSnapshot = typeof OrchestrationV2ArchivedShellSnapshot.Type;
+
+/**
+ * The archived shell, then each change: a thread archived, or changed while
+ * archived, is updated, and one unarchived or deleted is removed.
+ */
+export const OrchestrationV2ArchivedShellStreamItem = Schema.Union([
+  Schema.Struct({
+    kind: Schema.Literal("snapshot"),
+    snapshot: OrchestrationV2ArchivedShellSnapshot,
+  }),
+  Schema.Struct({
+    kind: Schema.Literal("thread.updated"),
+    sequence: NonNegativeInt,
+    thread: OrchestrationV2ThreadShell,
+  }),
+  Schema.Struct({
+    kind: Schema.Literal("thread.removed"),
+    sequence: NonNegativeInt,
+    threadId: ThreadId,
+  }),
+]);
+export type OrchestrationV2ArchivedShellStreamItem =
+  typeof OrchestrationV2ArchivedShellStreamItem.Type;
 
 export const OrchestrationV2SubscribeThreadInput = Schema.Struct({ threadId: ThreadId });
 export type OrchestrationV2SubscribeThreadInput = typeof OrchestrationV2SubscribeThreadInput.Type;
@@ -475,7 +552,9 @@ export type OrchestrationV2ThreadStreamItem = typeof OrchestrationV2ThreadStream
  * another of the same provider instance's. A message is plain text; the
  * first one's `titleSeed` titles the thread. `run.interrupt` stops a run
  * that is still active. `runtime-request.respond` answers a provider's
- * question; there are no approval decisions.
+ * question; there are no approval decisions. `thread.archive` and
+ * `thread.unarchive` move a thread to and from **Settings → Archive**, and
+ * `thread.delete` deletes it.
  */
 export const OrchestrationV2Command = Schema.Union([
   Schema.Struct({
@@ -512,6 +591,21 @@ export const OrchestrationV2Command = Schema.Union([
     threadId: ThreadId,
     requestId: RuntimeRequestId,
     answers: ProviderUserInputAnswers,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("thread.archive"),
+    commandId: CommandId,
+    threadId: ThreadId,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("thread.unarchive"),
+    commandId: CommandId,
+    threadId: ThreadId,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("thread.delete"),
+    commandId: CommandId,
+    threadId: ThreadId,
   }),
 ]);
 export type OrchestrationV2Command = typeof OrchestrationV2Command.Type;

@@ -21,6 +21,8 @@ const bridge: DesktopBridge = {
   pickFolder: (options) => ipcRenderer.invoke(IpcChannels.pickFolder, options),
   setTheme: (theme) => ipcRenderer.invoke(IpcChannels.setTheme, theme),
   openExternal: (url) => ipcRenderer.invoke(IpcChannels.openExternal, url),
+  showContextMenu: (items, position) =>
+    ipcRenderer.invoke(IpcChannels.showContextMenu, items, position),
 };
 
 contextBridge.exposeInMainWorld("desktopBridge", bridge);

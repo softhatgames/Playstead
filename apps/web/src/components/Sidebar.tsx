@@ -1,10 +1,14 @@
-import { ACTIVE_RUN_STATUSES } from "@playstead/contracts/orchestrationV2";
+import {
+  ACTIVE_RUN_STATUSES,
+  type OrchestrationV2ThreadShell,
+} from "@playstead/contracts/orchestrationV2";
 import { Link, useNavigate, useParams } from "@tanstack/react-router";
 import { useEffect, useRef } from "react";
 
 import { openCommandPalette } from "../commandPaletteBus.ts";
 import { usePrimaryConnectionState } from "../connection/runtime.ts";
 import { createDraft } from "../drafts.ts";
+import { useThreadActionMenu } from "../hooks/useThreadActionMenu.ts";
 import { openProject, useActiveProjectId } from "../uiState.ts";
 import { FolderIcon, FolderPlusIcon, SquarePenIcon } from "./icons.tsx";
 
@@ -13,7 +17,8 @@ import { FolderIcon, FolderPlusIcon, SquarePenIcon } from "./icons.tsx";
  * at 2577baf, `SidebarProjectsContent`, `SidebarProjectItem` and
  * `SidebarProjectThreadList`). Projects are listed oldest first, as the
  * server keeps them, each with its threads newest first. **New thread** opens
- * a draft; there is no removing, reordering, search or thread menu.
+ * a draft; right-clicking a thread opens its menu. There is no removing,
+ * reordering or search yet.
  */
 export function Sidebar() {
   const state = usePrimaryConnectionState();
@@ -86,32 +91,13 @@ export function Sidebar() {
                   aria-label={`Threads in ${project.title}`}
                   className="mt-0.5 ml-5 flex flex-col gap-0.5"
                 >
-                  {projectThreads.map((thread) => {
-                    const current = thread.id === activeThreadId;
-                    return (
-                      <li key={thread.id}>
-                        <Link
-                          to="/threads/$threadId"
-                          params={{ threadId: thread.id }}
-                          onClick={() => openProject(project.id)}
-                          aria-current={current ? "page" : undefined}
-                          className={`flex items-center gap-2 rounded-md px-2 py-1 text-sm ${
-                            current
-                              ? "bg-neutral-200 dark:bg-neutral-800"
-                              : "text-neutral-700 hover:bg-neutral-100 dark:text-neutral-300 dark:hover:bg-neutral-900"
-                          }`}
-                        >
-                          <span className="truncate">{thread.title}</span>
-                          {thread.status !== "idle" && ACTIVE_RUN_STATUSES.has(thread.status) ? (
-                            <span
-                              aria-label="Working"
-                              className="ml-auto size-1.5 shrink-0 animate-pulse rounded-full bg-sky-500"
-                            />
-                          ) : null}
-                        </Link>
-                      </li>
-                    );
-                  })}
+                  {projectThreads.map((thread) => (
+                    <SidebarThreadRow
+                      key={thread.id}
+                      thread={thread}
+                      current={thread.id === activeThreadId}
+                    />
+                  ))}
                 </ul>
               )}
             </li>
@@ -124,5 +110,43 @@ export function Sidebar() {
         </div>
       ) : null}
     </nav>
+  );
+}
+
+/** A thread in the tree; right-clicking it opens the thread menu (T3 Code's `SidebarThreadRow`). */
+function SidebarThreadRow({
+  thread,
+  current,
+}: {
+  readonly thread: OrchestrationV2ThreadShell;
+  readonly current: boolean;
+}) {
+  const { openMenu } = useThreadActionMenu(thread);
+  return (
+    <li>
+      <Link
+        to="/threads/$threadId"
+        params={{ threadId: thread.id }}
+        onClick={() => openProject(thread.projectId)}
+        onContextMenu={(event) => {
+          event.preventDefault();
+          openMenu({ x: event.clientX, y: event.clientY });
+        }}
+        aria-current={current ? "page" : undefined}
+        className={`flex items-center gap-2 rounded-md px-2 py-1 text-sm ${
+          current
+            ? "bg-neutral-200 dark:bg-neutral-800"
+            : "text-neutral-700 hover:bg-neutral-100 dark:text-neutral-300 dark:hover:bg-neutral-900"
+        }`}
+      >
+        <span className="truncate">{thread.title}</span>
+        {thread.status !== "idle" && ACTIVE_RUN_STATUSES.has(thread.status) ? (
+          <span
+            aria-label="Working"
+            className="ml-auto size-1.5 shrink-0 animate-pulse rounded-full bg-sky-500"
+          />
+        ) : null}
+      </Link>
+    </li>
   );
 }

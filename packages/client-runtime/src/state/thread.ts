@@ -23,6 +23,9 @@ const applyEvent = (
     case "thread.created":
     case "thread.metadata-updated":
     case "thread.model-selection-updated":
+    case "thread.archived":
+    case "thread.unarchived":
+    case "thread.deleted":
       return { ...projection, thread: event.payload, updatedAt: event.payload.updatedAt };
     case "run.created":
     case "run.updated":

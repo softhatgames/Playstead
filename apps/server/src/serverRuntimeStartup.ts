@@ -99,7 +99,11 @@ const make = (options?: StartupOptions) =>
     const startup = Effect.gen(function* () {
       const descriptor = yield* environment.getDescriptor;
       const recovered = yield* recovery.recover;
-      if (recovered.cancelledRuns > 0 || recovered.cancelledEffects > 0) {
+      if (
+        recovered.cancelledRuns > 0 ||
+        recovered.cancelledEffects > 0 ||
+        recovered.requeuedEffects > 0
+      ) {
         yield* Effect.logInfo("Settled the work the last server left running").pipe(
           Effect.annotateLogs({ ...recovered }),
         );

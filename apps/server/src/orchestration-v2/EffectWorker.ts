@@ -5,6 +5,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 
 import * as EffectOutbox from "./EffectOutbox.ts";
+import * as ProviderSessionManager from "./ProviderSessionManager.ts";
 import * as ProviderTurnStartService from "./ProviderTurnStartService.ts";
 import * as RunExecutionService from "./RunExecutionService.ts";
 
@@ -13,8 +14,8 @@ const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
 /**
  * Runs the outbox's effects (T3 Code's
  * `apps/server/src/orchestration-v2/EffectWorker.ts` at 2577baf): starting a
- * run's provider turn, interrupting it, and giving it the person's answers;
- * there is no checkpoint step. An effect a command cancels while it runs is
+ * run's provider turn, interrupting it, giving it the person's answers, and
+ * stopping a thread's provider session; there is no checkpoint step. An effect a command cancels while it runs is
  * stopped, as T3 Code's `runOnce` races `execute` against
  * `awaitCancellation`. The server runs `runDaemon`; tests call `drain` and
  * then wait for the events they expect.
@@ -35,6 +36,7 @@ const make = Effect.gen(function* () {
   const outbox = yield* EffectOutbox.EffectOutboxV2;
   const turnStart = yield* ProviderTurnStartService.ProviderTurnStartServiceV2;
   const runs = yield* RunExecutionService.RunExecutionServiceV2;
+  const sessions = yield* ProviderSessionManager.ProviderSessionManagerV2;
 
   const execute = (
     effect: EffectOutbox.ClaimedEffect,
@@ -61,6 +63,11 @@ const make = Effect.gen(function* () {
           providerSessionId: effect.request.providerSessionId,
           requestId: effect.request.requestId,
           answers: effect.request.answers,
+        });
+      case "provider-session.detach":
+        return sessions.detach({
+          threadId: effect.threadId,
+          providerSessionId: effect.request.providerSessionId,
         });
     }
   };
