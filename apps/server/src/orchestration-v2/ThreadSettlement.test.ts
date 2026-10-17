@@ -138,7 +138,7 @@ describe("Pin and settle a thread", () => {
           assert.isNull(after.thread.settledAt);
           assert.isNotNull(after.thread.unsettledAt);
           assert.match(
-            after.messages.filter((message) => message.role === "assistant").at(-1)?.text ?? "",
+            after.messages.findLast((message) => message.role === "assistant")?.text ?? "",
             new RegExp(RESTART_RESUME_SCENARIO.codeWord, "i"),
           );
         }).pipe(Effect.scoped),

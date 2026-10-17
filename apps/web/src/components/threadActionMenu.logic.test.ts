@@ -5,12 +5,13 @@ import {
   archivedThreadMenuItems,
   buildThreadActionMenuItems,
   fallbackThreadAfterDelete,
+  legacyThreadMenuItems,
   threadArchiveConfirmation,
   threadDeleteConfirmation,
   threadRuntimeCanArchive,
 } from "./threadActionMenu.logic.ts";
 
-const idle = { isRunning: false, projectFilter: null } as const;
+const idle = { isRunning: false, projectFilter: null, isPinned: false, isSettled: false } as const;
 
 /** Each item as `[id, label, disabled, destructive, separatorBefore, children]`. */
 const outline = (items: ReturnType<typeof buildThreadActionMenuItems>) =>
@@ -24,8 +25,10 @@ const outline = (items: ReturnType<typeof buildThreadActionMenuItems>) =>
   ]);
 
 describe("buildThreadActionMenuItems", () => {
-  it("offers T3 Code's items in its order: rename, mark unread, copy, archive, then delete", () => {
+  it("offers T3 Code's items in its order: pin, settle, rename, mark unread, copy, archive, then delete", () => {
     assert.deepStrictEqual(outline(buildThreadActionMenuItems(idle)), [
+      ["pin", "Pin thread", false, false, false, []],
+      ["settle", "Settle thread", false, false, false, []],
       ["rename", "Rename thread", false, false, true, []],
       ["mark-unread", "Mark unread", false, false, false, []],
       [
@@ -51,7 +54,7 @@ describe("buildThreadActionMenuItems", () => {
           ...idle,
           projectFilter: { label: "space-game", isActive },
         }),
-      ).slice(1, 3);
+      ).slice(3, 5);
     assert.deepStrictEqual(filterItem(false), [
       ["mark-unread", "Mark unread", false, false, false, []],
       ["filter-by-project", "Filter by space-game", false, false, false, []],
@@ -66,11 +69,38 @@ describe("buildThreadActionMenuItems", () => {
     ]);
   });
 
+  it("offers Unpin thread for a pinned thread and Un-settle thread for a settled one", () => {
+    assert.deepStrictEqual(
+      outline(buildThreadActionMenuItems({ ...idle, isPinned: true, isSettled: true }))
+        .slice(0, 2)
+        .map(([id, label]) => [id, label]),
+      [
+        ["unpin", "Unpin thread"],
+        ["unsettle", "Un-settle thread"],
+      ],
+    );
+  });
+
   it("disables Archive thread while the thread's run is working, and keeps the rest", () => {
     const items = buildThreadActionMenuItems({ ...idle, isRunning: true });
     assert.deepStrictEqual(
       items.filter((item) => item.disabled === true).map((item) => item.id),
       ["archive"],
+    );
+  });
+});
+
+describe("legacyThreadMenuItems", () => {
+  it("offers the project tree's flat menu: rename, mark unread, copy path, copy thread ID, then delete", () => {
+    assert.deepStrictEqual(
+      legacyThreadMenuItems.map((item) => [item.id, item.label, item.destructive === true]),
+      [
+        ["rename", "Rename thread", false],
+        ["mark-unread", "Mark unread", false],
+        ["copy-path", "Copy Path", false],
+        ["copy-thread-id", "Copy Thread ID", false],
+        ["delete", "Delete", true],
+      ],
     );
   });
 });

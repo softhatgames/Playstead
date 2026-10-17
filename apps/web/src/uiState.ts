@@ -1,16 +1,42 @@
-import type { ProjectId } from "@playstead/contracts/baseSchemas";
+import { identity } from "@playstead/shared/identity";
+import * as Schema from "effect/Schema";
 import { useSyncExternalStore } from "react";
 
 /**
- * The interface's own state, kept in the page (T3 Code keeps it in
- * `apps/web/src/uiStateStore.ts` at 2577baf): the project the person last
- * opened, which the sidebar marks, and the project the sidebar is filtered
- * to (T3 Code's `sidebarProjectScopeKey`), or null for every project.
+ * The interface's own state (T3 Code's `apps/web/src/uiStateStore.ts` at
+ * 2577baf). In the page only: the project the person last opened, which the
+ * project tree marks and **New thread** starts in. Kept in the browser's
+ * storage, as T3 Code's store persists it: the project scope of the inbox
+ * sidebar (`sidebarProjectScopeKey`, null for every project), and whether
+ * the sidebar is shown. Project order and expansion join it with #40.
  */
 
+const STORAGE_KEY = `${identity.urlScheme.production}:ui-state:v1`;
+
+const PersistedUiState = Schema.Struct({
+  sidebarProjectScopeKey: Schema.NullOr(Schema.String),
+  sidebarOpen: Schema.Boolean,
+});
+type PersistedUiState = typeof PersistedUiState.Type;
+
+const DEFAULT_PERSISTED: PersistedUiState = { sidebarProjectScopeKey: null, sidebarOpen: true };
+const decode = Schema.decodeUnknownSync(Schema.fromJsonString(PersistedUiState));
+const encode = Schema.encodeSync(Schema.fromJsonString(PersistedUiState));
+
+function readPersisted(): PersistedUiState {
+  try {
+    const raw = window.localStorage.getItem(STORAGE_KEY);
+    return raw === null ? DEFAULT_PERSISTED : decode(raw);
+  } catch {
+    return DEFAULT_PERSISTED;
+  }
+}
+
 let activeProjectId: string | undefined;
-let sidebarProjectFilter: ProjectId | null = null;
+let persisted: PersistedUiState | undefined;
 const listeners = new Set<() => void>();
+
+const current = (): PersistedUiState => (persisted ??= readPersisted());
 
 const subscribe = (listener: () => void) => {
   listeners.add(listener);
@@ -21,23 +47,45 @@ const publish = () => {
   for (const listener of listeners) listener();
 };
 
+function persist(patch: Partial<PersistedUiState>): void {
+  persisted = { ...current(), ...patch };
+  try {
+    window.localStorage.setItem(STORAGE_KEY, encode(persisted));
+  } catch {
+    // Storage may be full or off; the state still holds for this page.
+  }
+  publish();
+}
+
 export function openProject(projectId: string): void {
   activeProjectId = projectId;
   publish();
 }
 
+export const readActiveProjectId = (): string | undefined => activeProjectId;
+
 export function useActiveProjectId(): string | undefined {
-  return useSyncExternalStore(subscribe, () => activeProjectId);
+  return useSyncExternalStore(subscribe, readActiveProjectId);
 }
 
-/** Shows only this project in the sidebar, or every project with null. */
-export function setSidebarProjectFilter(projectId: ProjectId | null): void {
-  sidebarProjectFilter = projectId;
-  publish();
+/** Scopes the inbox sidebar to one project group, or to every project with null. */
+export function setSidebarProjectScopeKey(key: string | null): void {
+  persist({ sidebarProjectScopeKey: key });
 }
 
-export const readSidebarProjectFilter = (): ProjectId | null => sidebarProjectFilter;
+export const readSidebarProjectScopeKey = (): string | null => current().sidebarProjectScopeKey;
 
-export function useSidebarProjectFilter(): ProjectId | null {
-  return useSyncExternalStore(subscribe, readSidebarProjectFilter);
+export function useSidebarProjectScopeKey(): string | null {
+  return useSyncExternalStore(subscribe, readSidebarProjectScopeKey);
+}
+
+/** Shows or hides the sidebar (`sidebar.toggle`, `mod+b`). */
+export function toggleSidebarOpen(): void {
+  persist({ sidebarOpen: !current().sidebarOpen });
+}
+
+const readSidebarOpen = (): boolean => current().sidebarOpen;
+
+export function useSidebarOpen(): boolean {
+  return useSyncExternalStore(subscribe, readSidebarOpen);
 }

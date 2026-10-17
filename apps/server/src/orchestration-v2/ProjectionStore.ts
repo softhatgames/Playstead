@@ -127,6 +127,7 @@ const toThreadShell = (
     updatedAt: thread.updatedAt,
     archivedAt: thread.archivedAt,
     deletedAt: thread.deletedAt,
+    latestRunRequestedAt: latest?.requestedAt ?? null,
     latestRunCompletedAt: latest?.completedAt ?? null,
     lastVisitedAt: thread.lastVisitedAt,
     settledOverride: thread.settledOverride,

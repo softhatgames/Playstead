@@ -13,6 +13,10 @@ import type { OrchestrationV2ThreadShell } from "@playstead/contracts/orchestrat
  * T3 Code's "New thread on (branch)" and **Copy → Branch** never show.
  */
 export type ThreadActionMenuId =
+  | "pin"
+  | "unpin"
+  | "settle"
+  | "unsettle"
   | "rename"
   | "mark-unread"
   | "filter-by-project"
@@ -31,12 +35,18 @@ export interface ThreadActionMenuState {
    * whether the sidebar is already filtered to it.
    */
   readonly projectFilter: { readonly label: string; readonly isActive: boolean } | null;
+  readonly isPinned: boolean;
+  readonly isSettled: boolean;
 }
 
 export function buildThreadActionMenuItems(
   state: ThreadActionMenuState,
 ): ReadonlyArray<ContextMenuItem<ThreadActionMenuId>> {
   return [
+    state.isPinned ? { id: "unpin", label: "Unpin thread" } : { id: "pin", label: "Pin thread" },
+    state.isSettled
+      ? { id: "unsettle", label: "Un-settle thread" }
+      : { id: "settle", label: "Settle thread" },
     { id: "rename", label: "Rename thread", separatorBefore: true },
     { id: "mark-unread", label: "Mark unread" },
     ...(state.projectFilter === null
@@ -75,6 +85,26 @@ export function buildThreadActionMenuItems(
  */
 export const threadRuntimeCanArchive = (status: OrchestrationV2ThreadShell["status"]): boolean =>
   status !== "starting" && status !== "running";
+
+export type LegacyThreadMenuId =
+  | "rename"
+  | "mark-unread"
+  | "copy-path"
+  | "copy-thread-id"
+  | "delete";
+
+/**
+ * A thread's menu in the project tree (**Sidebar (legacy)**), flat as T3
+ * Code's `LegacySidebar.tsx` builds it; archiving is the row's hover button
+ * there. **Project settings** joins before Delete with #44.
+ */
+export const legacyThreadMenuItems: ReadonlyArray<ContextMenuItem<LegacyThreadMenuId>> = [
+  { id: "rename", label: "Rename thread" },
+  { id: "mark-unread", label: "Mark unread" },
+  { id: "copy-path", label: "Copy Path" },
+  { id: "copy-thread-id", label: "Copy Thread ID" },
+  { id: "delete", label: "Delete", destructive: true },
+];
 
 export type ArchivedThreadMenuId = "unarchive" | "delete";
 

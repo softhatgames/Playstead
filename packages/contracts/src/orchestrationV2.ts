@@ -79,7 +79,7 @@ const NullOrOrderKeyDefaultNull = Schema.NullOr(TrimmedNonEmptyString).pipe(
 );
 
 /** The person settled the thread, or brought it back to active work (T3 Code's). */
-export const ThreadSettledOverride = Schema.NullOr(Schema.Literals(["settled", "active"]));
+const ThreadSettledOverride = Schema.NullOr(Schema.Literals(["settled", "active"]));
 export type ThreadSettledOverride = typeof ThreadSettledOverride.Type;
 
 /**
@@ -479,6 +479,8 @@ export const OrchestrationV2ThreadShell = Schema.Struct({
   archivedAt: Schema.NullOr(IsoDateTime),
   deletedAt: Schema.NullOr(IsoDateTime),
   /** When the latest run completed, or null while it has not (T3 Code's `latestRunCompletedAt`). */
+  /** When the latest run was asked for, or null before the first message. */
+  latestRunRequestedAt: Schema.NullOr(IsoDateTime),
   latestRunCompletedAt: Schema.NullOr(IsoDateTime),
   lastVisitedAt: Schema.NullOr(IsoDateTime),
   settledOverride: ThreadSettledOverride,

@@ -33,6 +33,7 @@ const thread = (
   updatedAt: archivedAt,
   archivedAt,
   deletedAt: null,
+  latestRunRequestedAt: null,
   latestRunCompletedAt: null,
   lastVisitedAt: null,
   settledOverride: null,
