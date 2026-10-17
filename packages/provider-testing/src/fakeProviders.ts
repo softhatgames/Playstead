@@ -14,6 +14,18 @@ export interface FakeCodexModel {
   readonly model: string;
   readonly displayName: string;
   readonly isDefault?: boolean;
+  /** `medium` unless given. */
+  readonly defaultReasoningEffort?: string;
+  /** None unless given. */
+  readonly supportedReasoningEfforts?: ReadonlyArray<string>;
+  readonly serviceTiers?: ReadonlyArray<{
+    readonly id: string;
+    readonly name: string;
+    readonly description: string;
+  }>;
+  /** The older form of `serviceTiers`: ids only. */
+  readonly additionalSpeedTiers?: ReadonlyArray<string>;
+  readonly defaultServiceTier?: string;
 }
 
 const FAKE_CODEX_MODEL_PAGE_SIZE = 2;
@@ -47,8 +59,18 @@ const models = ${JSON.stringify(
     description: model.displayName,
     hidden: false,
     isDefault: model.isDefault ?? false,
-    defaultReasoningEffort: "medium",
-    supportedReasoningEfforts: [],
+    defaultReasoningEffort: model.defaultReasoningEffort ?? "medium",
+    supportedReasoningEfforts: (model.supportedReasoningEfforts ?? []).map((reasoningEffort) => ({
+      reasoningEffort,
+      description: reasoningEffort,
+    })),
+    ...(model.serviceTiers === undefined ? {} : { serviceTiers: model.serviceTiers }),
+    ...(model.additionalSpeedTiers === undefined
+      ? {}
+      : { additionalSpeedTiers: model.additionalSpeedTiers }),
+    ...(model.defaultServiceTier === undefined
+      ? {}
+      : { defaultServiceTier: model.defaultServiceTier }),
   })),
 )};
 const answer = (method, params) => {

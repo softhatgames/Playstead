@@ -27,6 +27,10 @@ import {
   type ProviderAdapterV2SessionRuntime,
   type ProviderAdapterV2TurnInput,
 } from "@playstead/provider-core/server/ProviderAdapter";
+import {
+  getModelSelectionBooleanOptionValue,
+  getModelSelectionStringOptionValue,
+} from "@playstead/shared/model";
 import type { ProcessEnvironment } from "@playstead/shared/shell";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -54,7 +58,9 @@ import { codexClientInfo, spawnCodexAppServer } from "../../provider/CodexProvid
  *   policy, approvals reviewer and sandbox (T3 Code's
  *   `codexRuntimeModeTurnDefaults`), so a mode change applies from the next
  *   turn in the same session (`supportsRuntimeModeSwitchInSession`). Full
- *   access never asks; Auto leaves approvals to Codex's own review.
+ *   access never asks; Auto leaves approvals to Codex's own review. Each
+ *   `turn/start` also asks for detailed reasoning summaries and carries the
+ *   reasoning effort and service tier the person chose, as T3 Code's does.
  * - Assistant text streams from `item/agentMessage/delta`, one update per
  *   delta (T3 Code coalesces them every 50 ms).
  * - A file Codex adds is a `file_change` item carrying the file's name and
@@ -74,7 +80,7 @@ import { codexClientInfo, spawnCodexAppServer } from "../../provider/CodexProvid
  *   the request itself when the turn ends.
  *
  * Absent: resuming a thread after a restart; and, as in the slice as a
- * whole, MCP, plans, reasoning, collaboration modes, subagents, goals,
+ * whole, MCP, plans, showing reasoning, collaboration modes, subagents, goals,
  * approvals and usage. A server request nobody handles gets "method not
  * found" from the client, so an unexpected approval fails loudly.
  */
@@ -177,17 +183,38 @@ const codexTurnPolicyForRuntimeMode = (
   }
 };
 
-/** `buildCodexTurnStartParams` at 2577baf, without effort, service tier, summaries or context. */
+/**
+ * The service tier chosen, or `fast` for a fast-mode choice (T3 Code's
+ * `getCodexServiceTierOptionValue`, `apps/server/src/codexModelOptions.ts`).
+ */
+const codexServiceTier = (turn: ProviderAdapterV2TurnInput) =>
+  getModelSelectionStringOptionValue(turn.modelSelection, "serviceTier") ??
+  (getModelSelectionBooleanOptionValue(turn.modelSelection, "fastMode") === true
+    ? "fast"
+    : undefined);
+
+/**
+ * `buildCodexTurnStartParams` at 2577baf without context or collaboration
+ * modes: detailed reasoning summaries on every turn, and the reasoning
+ * effort and service tier when chosen. Codex keeps both for later turns.
+ */
 const buildCodexTurnStartParams = (
   nativeThreadId: string,
   turn: ProviderAdapterV2TurnInput,
-): CodexSchema.V2TurnStartParams => ({
-  threadId: nativeThreadId,
-  input: [{ type: "text", text: turn.message.text }],
-  cwd: turn.runtimePolicy.cwd,
-  model: turn.modelSelection.model,
-  ...codexTurnPolicyForRuntimeMode(turn.runtimePolicy.runtimeMode),
-});
+): CodexSchema.V2TurnStartParams => {
+  const effort = getModelSelectionStringOptionValue(turn.modelSelection, "reasoningEffort");
+  const serviceTier = codexServiceTier(turn);
+  return {
+    threadId: nativeThreadId,
+    input: [{ type: "text", text: turn.message.text }],
+    cwd: turn.runtimePolicy.cwd,
+    model: turn.modelSelection.model,
+    summary: "detailed",
+    ...codexTurnPolicyForRuntimeMode(turn.runtimePolicy.runtimeMode),
+    ...(effort === undefined ? {} : { effort }),
+    ...(serviceTier === undefined ? {} : { serviceTier }),
+  };
+};
 
 type CodexThreadItem = CodexSchema.V2ThreadItem;
 

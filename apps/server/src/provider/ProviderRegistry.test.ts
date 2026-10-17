@@ -252,13 +252,117 @@ describe("ProviderRegistry", () => {
             label: "ChatGPT Plus Subscription",
             email: "person@example.com",
           },
+          // Without efforts or tiers in model/list, a model has no options.
           models: [
-            { slug: "gpt-6.1-sol", name: "GPT-6.1-Sol", isDefault: true },
-            { slug: "gpt-6-astra", name: "GPT-6-Astra" },
-            { slug: "gpt-6-luna", name: "GPT-6-Luna" },
+            {
+              slug: "gpt-6.1-sol",
+              name: "GPT-6.1-Sol",
+              isDefault: true,
+              capabilities: { optionDescriptors: [] },
+            },
+            { slug: "gpt-6-astra", name: "GPT-6-Astra", capabilities: { optionDescriptors: [] } },
+            { slug: "gpt-6-luna", name: "GPT-6-Luna", capabilities: { optionDescriptors: [] } },
           ],
         });
         assert.notProperty(providerById(providers, "codex"), "message");
+      }).pipe(Effect.scoped),
+    );
+
+    it.effect("offers each Codex model's reasoning efforts and service tiers from model/list", () =>
+      Effect.gen(function* () {
+        const bin = yield* makeTempDirectoryScoped("playstead-bin-");
+        yield* writeFakeCodex({
+          directory: bin,
+          version: "0.163.0",
+          models: [
+            {
+              model: "gpt-6.1-sol",
+              displayName: "GPT-6.1-Sol",
+              isDefault: true,
+              defaultReasoningEffort: "high",
+              supportedReasoningEfforts: ["low", "medium", "high", "xhigh"],
+              serviceTiers: [
+                { id: "priority", name: "Fast", description: "Faster responses" },
+                { id: "ultrafast", name: "Ultrafast", description: "" },
+              ],
+            },
+            {
+              // T3 Code starts this family on medium, whatever Codex says.
+              model: "gpt-6-astra",
+              displayName: "GPT-6-Astra",
+              defaultReasoningEffort: "high",
+              supportedReasoningEfforts: ["low", "medium", "high"],
+              additionalSpeedTiers: ["fast"],
+            },
+            { model: "gpt-6-luna", displayName: "GPT-6-Luna" },
+          ],
+        });
+        const { registry } = yield* startRegistry([bin]);
+
+        const providers = yield* registry.refresh("codex");
+
+        assert.deepStrictEqual(
+          providerById(providers, "codex")?.models.map((model) => model.capabilities),
+          [
+            {
+              optionDescriptors: [
+                {
+                  id: "reasoningEffort",
+                  label: "Reasoning",
+                  type: "select",
+                  options: [
+                    { id: "low", label: "Low" },
+                    { id: "medium", label: "Medium" },
+                    { id: "high", label: "High", isDefault: true },
+                    { id: "xhigh", label: "Extra High" },
+                  ],
+                  currentValue: "high",
+                },
+                {
+                  id: "serviceTier",
+                  label: "Service Tier",
+                  type: "select",
+                  options: [
+                    { id: "default", label: "Standard", isDefault: true },
+                    { id: "priority", label: "Fast", description: "Faster responses" },
+                    {
+                      id: "ultrafast",
+                      label: "Ultrafast",
+                      description: "Even faster, more expensive",
+                    },
+                  ],
+                  currentValue: "default",
+                },
+              ],
+            },
+            {
+              optionDescriptors: [
+                {
+                  id: "reasoningEffort",
+                  label: "Reasoning",
+                  type: "select",
+                  options: [
+                    { id: "low", label: "Low" },
+                    { id: "medium", label: "Medium", isDefault: true },
+                    { id: "high", label: "High" },
+                  ],
+                  currentValue: "medium",
+                },
+                {
+                  id: "serviceTier",
+                  label: "Service Tier",
+                  type: "select",
+                  options: [
+                    { id: "default", label: "Standard", isDefault: true },
+                    { id: "fast", label: "Fast" },
+                  ],
+                  currentValue: "default",
+                },
+              ],
+            },
+            { optionDescriptors: [] },
+          ],
+        );
       }).pipe(Effect.scoped),
     );
 
@@ -385,13 +489,20 @@ describe("ProviderRegistry", () => {
           installed: true,
           status: "ready",
           auth: { status: "authenticated", type: "max", label: "Claude Max Subscription" },
-          models: [
+        });
+        assert.deepStrictEqual(
+          providerById(providers, "claudeAgent")?.models.map(({ slug, name, isDefault }) => ({
+            slug,
+            name,
+            ...(isDefault === undefined ? {} : { isDefault }),
+          })),
+          [
             { slug: "claude-opus-5-5", name: "Claude Opus 5.5" },
             { slug: "claude-sonnet-5-5", name: "Claude Sonnet 5.5" },
             { slug: "claude-fable-5-1", name: "Claude Fable 5.1", isDefault: true },
             { slug: "claude-haiku-5-5", name: "Claude Haiku 5.5" },
           ],
-        });
+        );
         assert.notProperty(providerById(providers, "claudeAgent"), "message");
       }).pipe(Effect.scoped),
     );
@@ -422,12 +533,44 @@ describe("ProviderRegistry", () => {
 
         const providers = yield* registry.refresh("claudeAgent");
 
-        assert.deepInclude(providerById(providers, "claudeAgent"), {
-          models: [
-            { slug: "claude-opus-5-5", name: "Claude Opus 5.5" },
-            { slug: "claude-fable-5-1", name: "Claude Fable 5.1", isDefault: true },
-          ],
-        });
+        assert.deepStrictEqual(
+          providerById(providers, "claudeAgent")?.models.map((model) => model.slug),
+          ["claude-opus-5-5", "claude-fable-5-1"],
+        );
+      }).pipe(Effect.scoped),
+    );
+
+    it.effect("offers each Claude model's options from T3 Code's catalog", () =>
+      Effect.gen(function* () {
+        const bin = yield* makeTempDirectoryScoped("playstead-bin-");
+        yield* writeFakeClaude({ directory: bin, version: "2.1.301", signedIn: true });
+        const { registry } = yield* startRegistry([bin]);
+
+        const providers = yield* registry.refresh("claudeAgent");
+        const options = (slug: string) =>
+          providerById(providers, "claudeAgent")
+            ?.models.find((model) => model.slug === slug)
+            ?.capabilities?.optionDescriptors?.map((descriptor) =>
+              descriptor.type === "select"
+                ? `${descriptor.label}: ${descriptor.options
+                    .map((choice) => (choice.isDefault === true ? `${choice.id}*` : choice.id))
+                    .join(" ")}`
+                : `${descriptor.label} (on/off)`,
+            );
+
+        assert.deepStrictEqual(options("claude-opus-5-5"), [
+          "Reasoning: low medium* high xhigh max ultracode ultrathink",
+          "Fast Mode (on/off)",
+        ]);
+        assert.deepStrictEqual(options("claude-sonnet-5-5"), [
+          "Reasoning: low medium high* xhigh max ultrathink",
+        ]);
+        assert.deepStrictEqual(options("claude-fable-5-1"), [
+          "Reasoning: low medium* high xhigh max ultracode ultrathink",
+        ]);
+        assert.deepStrictEqual(options("claude-haiku-5-5"), [
+          "Reasoning: low medium* high xhigh max ultrathink",
+        ]);
       }).pipe(Effect.scoped),
     );
 

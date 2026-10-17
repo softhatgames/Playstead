@@ -22,8 +22,8 @@ import {
  * `makeReplayQueryRunner` and `recordClaudeAgentSdkReplayTranscript`).
  *
  * A recording is the frames the adapter sent (`query.open` with the options
- * it decides, then each `query.set_model`, `prompt.offer` and
- * `query.interrupt`) and every message Claude Code sent back, in order. A
+ * it decides, then each `query.set_model`, `query.apply_flag_settings`,
+ * `prompt.offer` and `query.interrupt`) and every message Claude Code sent back, in order. A
  * replay compares each frame the adapter sends with the next recorded one,
  * strictly, and plays Claude's messages up to the next frame it expects.
  * Claude Code's calls to the adapter's `canUseTool` are recorded as
@@ -315,6 +315,10 @@ export const makeClaudeReplay = Effect.fn("makeClaudeReplay")(function* (
             expectOutbound({ type: "prompt.offer", message }).pipe(Effect.mapError(asRunnerError)),
           setModel: (model: string) =>
             expectOutbound({ type: "query.set_model", model }).pipe(Effect.mapError(asRunnerError)),
+          applyFlagSettings: (settings: unknown) =>
+            expectOutbound({ type: "query.apply_flag_settings", settings }).pipe(
+              Effect.mapError(asRunnerError),
+            ),
           interrupt: expectOutbound({ type: "query.interrupt" }).pipe(
             Effect.andThen(
               Effect.sync(() => {
@@ -436,6 +440,16 @@ export const makeRecordingQueryRunner = (inner: ClaudeAgentSdkQueryRunner["Servi
                 }),
               ),
               session.setModel(model),
+            ),
+          applyFlagSettings: (settings: Parameters<typeof session.applyFlagSettings>[0]) =>
+            Effect.andThen(
+              Effect.sync(() =>
+                entries.push({
+                  type: "expect_outbound",
+                  frame: asJson({ type: "query.apply_flag_settings", settings }),
+                }),
+              ),
+              session.applyFlagSettings(settings),
             ),
           interrupt: Effect.andThen(
             Effect.sync(() =>

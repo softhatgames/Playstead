@@ -1,7 +1,9 @@
 import {
   type CanUseTool,
   type Options as ClaudeQueryOptions,
+  type EffortLevel,
   type PermissionResult,
+  type Query,
   query,
   type SDKAssistantMessage,
   type SDKMessage,
@@ -17,7 +19,6 @@ import {
   TurnItemId,
 } from "@playstead/contracts/baseSchemas";
 import type {
-  ModelSelection,
   OrchestrationV2ExecutionNode,
   OrchestrationV2ProviderFailure,
   OrchestrationV2TurnItem,
@@ -34,6 +35,7 @@ import {
   type ProviderAdapterV2SessionRuntime,
   type ProviderAdapterV2TurnInput,
 } from "@playstead/provider-core/server/ProviderAdapter";
+import { applyClaudePromptEffortPrefix } from "@playstead/shared/model";
 import type { ProcessEnvironment } from "@playstead/shared/shell";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
@@ -49,6 +51,10 @@ import * as Schema from "effect/Schema";
 import type * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 
+import {
+  type CompiledClaudeModelSelection,
+  compileClaudeModelSelection,
+} from "../../provider/ClaudeModelCatalog.ts";
 import { resolveClaudeSdkExecutablePath } from "../../provider/Drivers/ClaudeExecutable.ts";
 
 /**
@@ -69,8 +75,14 @@ import { resolveClaudeSdkExecutablePath } from "../../provider/Drivers/ClaudeExe
  * - A file write is a `file_change` item carrying the file's name and the
  *   content the Write tool was given, which T3 Code's item leaves out.
  *
- * - A turn whose model differs from the query's changes it first with the
- *   SDK's `setModel`, as T3 Code does when the selection can change live.
+ * - The model selection is compiled as T3 Code's `compileClaudeModelSelection`
+ *   compiles it: the query opens with the model, its effort (the model's
+ *   default unless chosen), Fast Mode and Ultracode as settings, and
+ *   summarised thinking. A turn whose selection differs from the query's
+ *   changes it first with the SDK's `setModel` and `applyFlagSettings`, as T3
+ *   Code does when the selection can change live; with Playstead's models it
+ *   always can. Ultrathink goes in the prompt as T3 Code's `Ultrathink:`
+ *   prefix.
  * - Each message goes out with its own uuid, and only the frames Claude Code
  *   stamps with it belong to the turn: Claude Code also runs turns of its
  *   own, for example when a background command finishes, and their `result`
@@ -90,11 +102,13 @@ import { resolveClaudeSdkExecutablePath } from "../../provider/Drivers/ClaudeExe
  *   in Auto and Full access, and refused in Supervised and Auto-accept
  *   edits, where T3 Code asks the person: approvals are absent.
  *
- * Absent, as in the slice as a whole: approvals, thinking, MCP, subagents,
- * attachments and usage.
+ * Absent, as in the slice as a whole: approvals, showing thinking, MCP,
+ * subagents, attachments and usage.
  */
 
 export type ClaudeAgentSdkQueryOptions = ClaudeQueryOptions;
+
+type ClaudeFlagSettings = Parameters<Query["applyFlagSettings"]>[0];
 
 export class ClaudeAgentSdkQueryRunnerError extends Schema.TaggedError<ClaudeAgentSdkQueryRunnerError>()(
   "ClaudeAgentSdkQueryRunnerError",
@@ -117,6 +131,10 @@ export interface ClaudeAgentSdkQuerySession {
   readonly offer: (message: SDKUserMessage) => Effect.Effect<void, ClaudeAgentSdkQueryRunnerError>;
   /** Changes the model for the query's next turns. */
   readonly setModel: (model: string) => Effect.Effect<void, ClaudeAgentSdkQueryRunnerError>;
+  /** Changes Claude Code's settings, such as effort and fast mode, for the next turns. */
+  readonly applyFlagSettings: (
+    settings: ClaudeFlagSettings,
+  ) => Effect.Effect<void, ClaudeAgentSdkQueryRunnerError>;
   /** Asks Claude Code to stop the turn it is running. */
   readonly interrupt: Effect.Effect<void, ClaudeAgentSdkQueryRunnerError>;
 }
@@ -182,6 +200,11 @@ export const layerQueryRunner: Layer.Layer<ClaudeAgentSdkQueryRunner, never, Cry
                   try: () => queryRuntime.setModel(model),
                   catch: runnerError("setModel"),
                 }),
+              applyFlagSettings: (settings) =>
+                Effect.tryPromise({
+                  try: () => queryRuntime.applyFlagSettings(settings),
+                  catch: runnerError("applyFlagSettings"),
+                }),
               interrupt: Effect.tryPromise({
                 try: () => queryRuntime.interrupt(),
                 catch: runnerError("interrupt"),
@@ -231,7 +254,7 @@ const requiresClaudeApproval = (runtimeMode: RuntimeMode) =>
  * person's `claude` with the server's environment, in the project's folder.
  */
 const makeClaudeQueryOptions = (input: {
-  readonly modelSelection: ModelSelection;
+  readonly selection: CompiledClaudeModelSelection;
   readonly runtimeMode: RuntimeMode;
   readonly nativeSessionId: string;
   /** Continue the session Claude Code saved under that id, instead of starting it. */
@@ -241,17 +264,46 @@ const makeClaudeQueryOptions = (input: {
   readonly environment: ProcessEnvironment;
   readonly canUseTool: CanUseTool;
 }): ClaudeAgentSdkQueryOptions => ({
-  model: input.modelSelection.model,
+  model: input.selection.apiModelId,
   tools: { type: "preset", preset: "claude_code" },
   ...permissionModeForRuntimeMode(input.runtimeMode),
   includePartialMessages: true,
+  ...(input.selection.effort === undefined
+    ? {}
+    : { effort: input.selection.effort as EffortLevel }),
   ...(input.resume ? { resume: input.nativeSessionId } : { sessionId: input.nativeSessionId }),
+  // T3 Code asks for summarised thinking unless the selection turns
+  // thinking off, which none of Playstead's models offers.
+  thinking: { type: "adaptive", display: "summarized" },
+  settings: { ...input.selection.settings, showThinkingSummaries: true },
   systemPrompt: { type: "preset", preset: "claude_code" },
   cwd: input.cwd,
   additionalDirectories: [input.cwd],
   pathToClaudeCodeExecutable: input.executablePath,
   env: { ...input.environment },
   canUseTool: input.canUseTool,
+  extraArgs: { "thinking-display": "summarized" },
+});
+
+/**
+ * Whether a session can take the next selection without a new process (T3
+ * Code's `canApplyClaudeSelectionLive`): thinking is a launch flag, and
+ * clearing an explicit effort needs Claude Code to read its settings files
+ * again. Neither can happen with Playstead's models, whose effort always
+ * resolves and which offer no thinking choice.
+ */
+const canApplyClaudeSelectionLive = (
+  live: CompiledClaudeModelSelection,
+  next: CompiledClaudeModelSelection,
+) => next.effort !== undefined || live.effort === undefined;
+
+/** The flags a live change sets (T3 Code's `claudeLiveSelectionFlagSettings`). */
+const claudeLiveSelectionFlagSettings = (
+  selection: CompiledClaudeModelSelection,
+): ClaudeFlagSettings => ({
+  ...(selection.effort === undefined ? {} : { effortLevel: selection.effort as EffortLevel }),
+  fastMode: selection.settings.fastMode ?? null,
+  ultracode: selection.settings.ultracode ?? null,
 });
 
 /**
@@ -264,11 +316,15 @@ export const recordedQueryOptions = (options: ClaudeAgentSdkQueryOptions) => ({
   permissionMode: options.permissionMode,
   allowDangerouslySkipPermissions: options.allowDangerouslySkipPermissions,
   includePartialMessages: options.includePartialMessages,
+  effort: options.effort,
   sessionId: options.sessionId,
   resume: options.resume,
+  thinking: options.thinking,
+  settings: options.settings,
   systemPrompt: options.systemPrompt,
   cwd: options.cwd,
   additionalDirectories: options.additionalDirectories,
+  extraArgs: options.extraArgs,
 });
 
 /**
@@ -569,8 +625,9 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (input
             } satisfies PermissionResult);
       });
 
+      const openedSelection = compileClaudeModelSelection(open.modelSelection);
       const options = makeClaudeQueryOptions({
-        modelSelection: open.modelSelection,
+        selection: openedSelection,
         runtimeMode: open.runtimePolicy.runtimeMode,
         nativeSessionId,
         resume,
@@ -582,7 +639,8 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (input
       });
       const session = yield* runner.open({ options, threadId: open.threadId });
       const live = yield* Ref.make(true);
-      const model = yield* Ref.make(open.modelSelection.model);
+      /** The selection the query runs now. */
+      const liveSelection = yield* Ref.make(openedSelection);
       const createdAt = yield* nowIso;
 
       const itemBase = (turn: ActiveTurn, id: TurnItemId, nodeId: NodeId, now: string) => ({
@@ -953,10 +1011,23 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (input
             if (!(yield* Ref.get(live))) {
               return yield* adapterError("start-turn")("Claude Code is no longer running.");
             }
-            const nextModel = turnInput.modelSelection.model;
-            if ((yield* Ref.get(model)) !== nextModel) {
-              yield* session.setModel(nextModel).pipe(Effect.mapError(adapterError("start-turn")));
-              yield* Ref.set(model, nextModel);
+            // T3 Code's `openQuery`: a different selection changes the
+            // running query's model and flags, when it can live.
+            const next = compileClaudeModelSelection(turnInput.modelSelection);
+            const current = yield* Ref.get(liveSelection);
+            if (current.queryIdentity !== next.queryIdentity) {
+              if (!canApplyClaudeSelectionLive(current, next)) {
+                return yield* adapterError("start-turn")(
+                  "Claude Code cannot change to this model selection without a new session.",
+                );
+              }
+              yield* session
+                .setModel(next.apiModelId)
+                .pipe(
+                  Effect.andThen(session.applyFlagSettings(claudeLiveSelectionFlagSettings(next))),
+                  Effect.mapError(adapterError("start-turn")),
+                );
+              yield* Ref.set(liveSelection, next);
             }
             const promptUuid = promptUuidFor(turnInput.providerTurnId);
             yield* Ref.set(activeTurn, {
@@ -969,7 +1040,8 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (input
               interrupting: false,
               ended: yield* Deferred.make<void>(),
             });
-            yield* session.offer(makeClaudeUserMessage(turnInput.message.text, promptUuid)).pipe(
+            const text = applyClaudePromptEffortPrefix(turnInput.message.text, next.promptEffort);
+            yield* session.offer(makeClaudeUserMessage(text, promptUuid)).pipe(
               Effect.tapError(() => Ref.set(activeTurn, undefined)),
               Effect.mapError(adapterError("start-turn")),
             );

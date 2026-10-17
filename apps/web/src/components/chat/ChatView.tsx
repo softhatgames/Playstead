@@ -18,6 +18,12 @@ import { useMemo } from "react";
 import { requestPrimary, usePrimaryConnectionState } from "../../connection/runtime.ts";
 import { useThreadState } from "../../connection/useThread.ts";
 import {
+  clearComposerTraits,
+  recallTraits,
+  setComposerTraits,
+  useComposerTraits,
+} from "../../composerTraits.ts";
+import {
   clearComposerRuntimeMode,
   discardDraft,
   setComposerRuntimeMode,
@@ -33,8 +39,10 @@ import {
   defaultModelSelection,
   deriveComposerAction,
   deriveModelPickerEntries,
+  resolveComposerSelection,
   type SendTarget,
 } from "./composer.logic.ts";
+import { traitsForDispatch } from "./traits.logic.ts";
 import { MessagesTimeline } from "./MessagesTimeline.tsx";
 import { derivePendingUserInputs } from "./pendingUserInput.logic.ts";
 import { deriveTimelineRows } from "./timeline.logic.ts";
@@ -132,10 +140,31 @@ export function ChatView(
   );
   const lockedInstanceId = projection?.thread.providerInstanceId;
   const entries = deriveModelPickerEntries(providers, lockedInstanceId);
-  const selection =
-    props.kind === "draft"
-      ? (props.draft.modelSelection ?? defaultModelSelection(providers))
-      : projection?.thread.modelSelection;
+  const composerKey = props.kind === "draft" ? props.draft.draftId : props.threadId;
+  const chosenTraits = useComposerTraits(composerKey);
+  const selection = resolveComposerSelection({
+    selection:
+      props.kind === "draft"
+        ? (props.draft.modelSelection ?? defaultModelSelection(providers))
+        : projection?.thread.modelSelection,
+    chosen: chosenTraits,
+    recall: recallTraits,
+    isDraft: props.kind === "draft",
+  });
+  // What a message carries: only the traits chosen, read against the model's options.
+  const capabilities = entries
+    .find((entry) => entry.instanceId === selection?.instanceId)
+    ?.models.find((model) => model.slug === selection?.model)?.capabilities;
+  const dispatchOptions =
+    selection === undefined ? undefined : traitsForDispatch(capabilities, selection.options);
+  const dispatchSelection =
+    selection === undefined
+      ? undefined
+      : {
+          instanceId: selection.instanceId,
+          model: selection.model,
+          ...(dispatchOptions === undefined ? {} : { options: dispatchOptions }),
+        };
   // The mode chosen in the composer, else the thread's own (T3 Code's
   // composer draft over the thread's `runtimeMode`).
   const composerRuntimeMode = useComposerRuntimeMode(threadId);
@@ -144,6 +173,7 @@ export function ChatView(
     props.kind === "draft" ? props.draft.runtimeMode : (composerRuntimeMode ?? threadRuntimeMode);
 
   const onSend = async (text: string) => {
+    if (dispatchSelection === undefined) return;
     if (props.kind === "thread") {
       await sendCommands(
         {
@@ -151,27 +181,29 @@ export function ChatView(
           threadId: props.threadId,
           hasMessages: (projection?.messages.length ?? 0) > 0,
           runtimeMode: threadRuntimeMode,
+          modelSelection: dispatchSelection,
         },
         runtimeMode,
         text,
         CommandId.make(`command:${newId()}`),
       );
+      clearComposerTraits(composerKey);
       clearComposerRuntimeMode(props.threadId);
       return;
     }
-    if (selection === undefined) return;
     const { draft } = props;
     await sendCommands(
       {
         kind: "new",
         threadId: draft.threadId,
         projectId: draft.projectId,
-        modelSelection: selection,
+        modelSelection: dispatchSelection,
       },
       runtimeMode,
       text,
       draft.threadCommandId,
     );
+    clearComposerTraits(composerKey);
     await navigate({
       to: "/threads/$threadId",
       params: { threadId: draft.threadId },
@@ -201,11 +233,18 @@ export function ChatView(
       <ChatComposer
         entries={entries}
         selection={selection}
-        onSelectModel={
-          props.kind === "draft"
-            ? (next) => setDraftModelSelection(props.draft.draftId, next)
-            : (next) => setThreadModelSelection(props.threadId, next).then(() => undefined)
-        }
+        onSelectModel={(picked) => {
+          // A model picked comes with the traits remembered for it, as T3 Code's does.
+          const remembered = recallTraits(picked.instanceId, picked.model);
+          const next = remembered === undefined ? picked : { ...picked, options: remembered };
+          clearComposerTraits(composerKey);
+          return props.kind === "draft"
+            ? setDraftModelSelection(props.draft.draftId, next)
+            : setThreadModelSelection(props.threadId, next).then(() => undefined);
+        }}
+        onTraitsChange={(options) => {
+          if (selection !== undefined) setComposerTraits(composerKey, selection, options);
+        }}
         runtimeMode={runtimeMode}
         onSelectRuntimeMode={(next) =>
           props.kind === "draft"

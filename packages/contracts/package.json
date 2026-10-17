@@ -36,6 +36,10 @@
       "types": "./src/ipc.ts",
       "import": "./src/ipc.ts"
     },
+    "./model": {
+      "types": "./src/model.ts",
+      "import": "./src/model.ts"
+    },
     "./orchestrationProject": {
       "types": "./src/orchestrationProject.ts",
       "import": "./src/orchestrationProject.ts"

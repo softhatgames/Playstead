@@ -36,6 +36,10 @@ import {
   runTurnInterruptScenario,
 } from "../src/orchestration-v2/testkit/fixtures/turnInterrupt.ts";
 import {
+  CODEX_TRAITS_CHANGE_SCENARIO,
+  runTraitsChangeScenario,
+} from "../src/orchestration-v2/testkit/fixtures/traitsChange.ts";
+import {
   readMachineIdentity,
   recordingReplacements,
   scrubbed,
@@ -51,11 +55,12 @@ import {
  * `codex` on PATH, in a temporary empty folder, and writes
  * `src/orchestration-v2/testkit/fixtures/<scenario>.codex.ndjson`.
  *
- *   node apps/server/scripts/record-codex-replay.ts [file_create | turn_interrupt | auto_mode | --help]
+ *   node apps/server/scripts/record-codex-replay.ts [file_create | turn_interrupt | auto_mode | traits_change | --help]
  *
  * `turn_interrupt` interrupts a long command once it runs, then sends one
  * more message. `auto_mode` writes a file in Auto, then sends one more
- * message after the change to Full access.
+ * message after the change to Full access. `traits_change` sends turns that
+ * each carry another reasoning effort and service tier.
  *
  * `question_answer` and `question_interrupt` cannot be recorded, and the
  * recorder says so when asked for them: Codex 0.163.0 refuses
@@ -115,6 +120,22 @@ const recordTurnInterrupt = (harness: Harness) =>
     return workspace;
   });
 
+/** Turns that each carry other traits. */
+const recordTraitsChange = (harness: Harness) =>
+  Effect.gen(function* () {
+    const { workspace, runs } = yield* runTraitsChangeScenario(
+      harness,
+      CODEX_TRAITS_CHANGE_SCENARIO,
+    );
+    yield* Effect.logInfo("The turns ended.").pipe(
+      Effect.annotateLogs({ runs: runs.map((run) => run.status).join(", ") }),
+    );
+    if (runs.some((run) => run.status !== "completed")) {
+      return yield* Effect.die("A traits turn did not complete.");
+    }
+    return workspace;
+  });
+
 /** A file written in Auto, then a turn after the change to Full access. */
 const recordAutoMode = (harness: Harness) =>
   Effect.gen(function* () {
@@ -133,6 +154,13 @@ const recordAutoMode = (harness: Harness) =>
 
 /** Each scenario: how it is recorded, and what the header says about it. */
 const SCENARIOS = {
+  [CODEX_TRAITS_CHANGE_SCENARIO.scenario]: {
+    record: recordTraitsChange,
+    metadata: {
+      model: CODEX_TRAITS_CHANGE_SCENARIO.model,
+      turns: CODEX_TRAITS_CHANGE_SCENARIO.turns,
+    },
+  },
   [CODEX_AUTO_MODE_SCENARIO.scenario]: {
     record: recordAutoMode,
     metadata: {
