@@ -17,7 +17,8 @@ import { useEffect, useMemo, useRef } from "react";
 import { requestPrimary, usePrimaryConnectionState } from "../../connection/runtime.ts";
 import { useThreadState } from "../../connection/useThread.ts";
 import { discardDraft, setDraftModelSelection, type ThreadDraft } from "../../drafts.ts";
-import { type ThreadActionTarget, visitThread } from "../../hooks/useThreadActions.ts";
+import { type ThreadLifecycleTarget, visitThread } from "../../hooks/useThreadActions.ts";
+import { useThreadShortcuts } from "../../hooks/useThreadShortcuts.ts";
 import { newId } from "../../ids.ts";
 import { ChatComposer } from "./ChatComposer.tsx";
 import { ChatHeader } from "./ChatHeader.tsx";
@@ -207,7 +208,7 @@ export function ChatView(
     undefined,
   );
   const target = useMemo(
-    (): ThreadActionTarget | null =>
+    (): ThreadLifecycleTarget | null =>
       projection === undefined
         ? null
         : {
@@ -215,10 +216,14 @@ export function ChatView(
             projectId: projection.thread.projectId,
             title: projection.thread.title,
             status: latestRun?.status ?? "idle",
+            pinnedAt: projection.thread.pinnedAt,
+            pinOrderKey: projection.thread.pinOrderKey,
+            settledOverride: projection.thread.settledOverride,
             titleRegeneration: projection.thread.titleRegeneration,
           },
     [projection, latestRun?.status],
   );
+  useThreadShortcuts(target);
   useThreadVisits(
     props.kind === "thread"
       ? connection?.shell?.threads.find((candidate) => candidate.id === props.threadId)

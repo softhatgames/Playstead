@@ -123,7 +123,8 @@ const reject = (command: OrchestrationV2ServerCommand, reason: string) =>
  *   answerable, once every question has an answer; the provider is given
  *   the answers. There are no approval decisions.
  * - `thread.archive`, `thread.unarchive`, `thread.model-selection.set`,
- *   `thread.metadata.update`, `thread.mark-unread` and the internal
+ *   `thread.metadata.update`, `thread.mark-unread`, `thread.pin`,
+ *   `thread.unpin`, `thread.settle`, `thread.unsettle` and the internal
  *   `thread.title.regeneration.complete` change the thread itself, through
  *   `dispatchThreadMutation`.
  * - `thread.visit` moves the read marker forward (`dispatchThreadVisit`).
@@ -166,6 +167,12 @@ export function decideThreadCommand(input: {
       archivedAt: null,
       deletedAt: null,
       lastVisitedAt: null,
+      settledOverride: null,
+      settledAt: null,
+      unsettledAt: null,
+      pinnedAt: null,
+      pinOrderKey: null,
+      activeOrderKey: null,
       titleRegeneration: null,
     };
     return Result.succeed({
@@ -186,6 +193,10 @@ export function decideThreadCommand(input: {
     case "thread.unarchive":
     case "thread.metadata.update":
     case "thread.mark-unread":
+    case "thread.pin":
+    case "thread.unpin":
+    case "thread.settle":
+    case "thread.unsettle":
     case "thread.title.regeneration.complete":
       return dispatchThreadMutation(command, projection, now);
     case "thread.visit":
@@ -269,6 +280,10 @@ type ThreadMutationCommand = Extract<
       | "thread.unarchive"
       | "thread.metadata.update"
       | "thread.mark-unread"
+      | "thread.pin"
+      | "thread.unpin"
+      | "thread.settle"
+      | "thread.unsettle"
       | "thread.title.regeneration.complete";
   }
 >;
@@ -289,11 +304,38 @@ const threadTitleGenerationEffect = (
 });
 
 /**
- * The commands an archived thread refuses (T3 Code's list: settle, snooze,
- * pin, reordering and automatic settlement). None has arrived yet; each
- * joins the list as it does.
+ * The commands an archived thread refuses (T3 Code's list). Snooze, wake,
+ * the per-thread auto-settle switch and reordering join it as they arrive.
  */
-const REFUSED_WHILE_ARCHIVED: ReadonlySet<ThreadMutationCommand["type"]> = new Set();
+const REFUSED_WHILE_ARCHIVED: ReadonlySet<ThreadMutationCommand["type"]> = new Set([
+  "thread.pin",
+  "thread.unpin",
+  "thread.settle",
+  "thread.unsettle",
+]);
+
+/**
+ * Why the thread cannot be settled now, or null (T3 Code's settle guard):
+ * a provider waiting on the person, a run still working, or a message
+ * waiting in the queue. T3 Code lets a question answerable by a later
+ * message through, and cancels it; every question Playstead's providers ask
+ * is answered live, so each one blocks. Approvals and the queue arrive with
+ * slice 1 (permission modes and turn control) and fall under the same rules:
+ * a pending request of any kind blocks, and so does a run in
+ * `QUEUED_RUN_STATUSES`.
+ */
+function settleBlocker(projection: OrchestrationV2ThreadProjection): string | null {
+  if (projection.runtimeRequests.some((request) => request.status === "pending")) {
+    return "is waiting on an approval or question. Answer it before settling.";
+  }
+  if (projection.runs.some((run) => ACTIVE_RUN_STATUSES.has(run.status))) {
+    return "is still running. Stop it before settling.";
+  }
+  if (projection.runs.some((run) => QUEUED_RUN_STATUSES.has(run.status))) {
+    return "has a queued message. Send it or remove it from the queue before settling.";
+  }
+  return null;
+}
 
 /**
  * The one handler for every command that changes the thread itself (T3 Code's
@@ -318,6 +360,17 @@ const REFUSED_WHILE_ARCHIVED: ReadonlySet<ThreadMutationCommand["type"]> = new S
  * - `thread.mark-unread` moves the read marker to just before the latest
  *   run completed, so the thread shows as unread; it is refused until a run
  *   has completed. Like a visit, it is not activity: `updatedAt` stays.
+ * - `thread.pin` pins the thread, keeping the order key of its first pin;
+ *   a settled thread comes back to active work. Snooze, when it arrives, is
+ *   cleared by a pin too.
+ * - `thread.unpin` drops the pin and its order key.
+ * - `thread.settle` is refused while `settleBlocker` says so. It drops the
+ *   pin and both order keys, and detaches every live provider session
+ *   ("Thread settled."); settling a settled thread keeps its time.
+ * - `thread.unsettle` brings the thread back to active work and holds it
+ *   there, so automatic settlement leaves it alone until a message.
+ *
+ * An archived thread refuses the commands in `REFUSED_WHILE_ARCHIVED`.
  */
 function dispatchThreadMutation(
   command: ThreadMutationCommand,
@@ -353,6 +406,10 @@ function dispatchThreadMutation(
       DateTime.subtract(DateTime.makeUnsafe(latestRunCompletedAt), { milliseconds: 1 }),
     );
   }
+  if (command.type === "thread.settle") {
+    const blocker = settleBlocker(projection);
+    if (blocker !== null) return reject(command, `Thread ${thread.id} ${blocker}`);
+  }
 
   const updated: OrchestrationV2AppThread = (() => {
     switch (command.type) {
@@ -384,6 +441,53 @@ function dispatchThreadMutation(
           : thread;
       case "thread.mark-unread":
         return { ...thread, lastVisitedAt: markUnreadVisitedAt };
+      case "thread.pin": {
+        const alreadyPinned = thread.pinnedAt !== null;
+        const promotes = thread.settledOverride === "settled";
+        return {
+          ...thread,
+          pinnedAt: alreadyPinned ? thread.pinnedAt : now,
+          ...(alreadyPinned || command.orderKey === undefined
+            ? {}
+            : { pinOrderKey: command.orderKey }),
+          settledOverride: promotes ? "active" : thread.settledOverride,
+          settledAt: promotes ? null : thread.settledAt,
+          updatedAt: alreadyPinned && !promotes ? thread.updatedAt : now,
+        };
+      }
+      case "thread.unpin":
+        return {
+          ...thread,
+          pinnedAt: null,
+          pinOrderKey: null,
+          updatedAt: thread.pinnedAt === null ? thread.updatedAt : now,
+        };
+      case "thread.settle": {
+        const alreadySettled =
+          thread.settledOverride === "settled" &&
+          thread.settledAt !== null &&
+          thread.pinnedAt === null;
+        return {
+          ...thread,
+          settledOverride: "settled",
+          settledAt: alreadySettled ? thread.settledAt : (command.settledAt ?? now),
+          unsettledAt: null,
+          pinnedAt: null,
+          pinOrderKey: null,
+          activeOrderKey: null,
+          updatedAt: alreadySettled ? thread.updatedAt : now,
+        };
+      }
+      case "thread.unsettle": {
+        const alreadyActive = thread.settledOverride === "active";
+        return {
+          ...thread,
+          settledOverride: "active",
+          settledAt: null,
+          unsettledAt: alreadyActive ? thread.unsettledAt : now,
+          updatedAt: alreadyActive ? thread.updatedAt : now,
+        };
+      }
     }
   })();
   const eventType = (() => {
@@ -399,6 +503,14 @@ function dispatchThreadMutation(
         return "thread.metadata-updated" as const;
       case "thread.mark-unread":
         return "thread.marked-unread" as const;
+      case "thread.pin":
+        return "thread.pinned" as const;
+      case "thread.unpin":
+        return "thread.unpinned" as const;
+      case "thread.settle":
+        return "thread.settled" as const;
+      case "thread.unsettle":
+        return "thread.unsettled" as const;
     }
   })();
   const events: Array<NewDomainEvent> = [
@@ -445,10 +557,15 @@ function dispatchThreadMutation(
         payload: { ...node, status: "cancelled", completedAt: now },
       });
     }
+  }
+  // Archive and settle both mean "done with this thread": no live provider
+  // session keeps running for it (T3 Code's detach after either). The settle
+  // guard already refused a working thread, so this only stops idle sessions.
+  if (command.type === "thread.archive" || command.type === "thread.settle") {
     const detached = detachProviderSessions({
       projection,
       commandId: command.commandId,
-      reason: "Thread archived.",
+      reason: command.type === "thread.archive" ? "Thread archived." : "Thread settled.",
       now,
     });
     events.push(...detached.events);
@@ -653,11 +770,25 @@ function dispatchMessage(
   ids: ThreadCommandIds,
   now: string,
 ): ThreadCommandDecision {
-  const { thread } = projection;
-  const threadId = thread.id;
+  const threadId = projection.thread.id;
   const runId = ids.runId;
   const ordinal = projection.runs.reduce((highest, run) => Math.max(highest, run.ordinal), 0) + 1;
   const events: Array<NewDomainEvent> = [];
+
+  // Sending a message brings the thread back to active work and clears the
+  // person's override (T3 Code's `dispatchMessage`), so automatic settlement
+  // follows its usual rules again. Snooze's wake joins here when it arrives.
+  let thread = projection.thread;
+  if (thread.settledOverride !== null) {
+    thread = {
+      ...thread,
+      settledOverride: null,
+      settledAt: null,
+      unsettledAt: thread.settledOverride === "active" ? thread.unsettledAt : now,
+      updatedAt: now,
+    };
+    events.push({ type: "thread.unsettled", threadId, occurredAt: now, payload: thread });
+  }
 
   // The first message titles the thread with its seed at once, and asks a
   // provider for a better title beside the turn (T3 Code's first-title trigger).

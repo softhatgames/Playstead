@@ -23,6 +23,10 @@
       "types": "./src/identity.ts",
       "import": "./src/identity.ts"
     },
+    "./keybindings": {
+      "types": "./src/keybindings.ts",
+      "import": "./src/keybindings.ts"
+    },
     "./keyedLock": {
       "types": "./src/keyedLock.ts",
       "import": "./src/keyedLock.ts"

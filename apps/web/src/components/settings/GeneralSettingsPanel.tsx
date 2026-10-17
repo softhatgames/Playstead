@@ -8,15 +8,17 @@ import { requestPrimary, usePrimaryConnectionState } from "../../connection/runt
 import { failureToast } from "../../toast.ts";
 import { deriveModelPickerEntries } from "../chat/composer.logic.ts";
 import { ProviderModelPicker } from "../chat/ProviderModelPicker.tsx";
+import { ChevronRightIcon } from "../icons.tsx";
 import { resolveTextGenerationSelection } from "./textGenerationSettings.logic.ts";
 
 /**
  * **Settings → General**, with only the rows Playstead has so far (T3 Code's
  * `GeneralSettingsPanel` in `apps/web/src/components/settings/SettingsPanels.tsx`
- * at 2577baf): the **Confirmations** section's archive and delete rows, and
- * **Text generation**, the provider and model that write thread titles. The
- * slice's other rows (automatic settlement, the sidebar) join it with their
- * features; the rest of General waits for slice 5.
+ * at 2577baf): **Organization**'s Working section (beta), the
+ * **Confirmations** section's archive and delete rows, **Text generation**
+ * (the provider and model that write thread titles), and **Sidebar
+ * (legacy)** under the folded **Legacy features**. Automatic settlement
+ * joins it with #39; the rest of General waits for slice 5.
  */
 export function GeneralSettingsPanel() {
   const settings = useClientSettings();
@@ -28,6 +30,27 @@ export function GeneralSettingsPanel() {
   return (
     <div className="flex flex-col gap-6">
       <h1 className="text-xl font-semibold">General</h1>
+      <section aria-labelledby="settings-organization" className="flex flex-col gap-2">
+        <h2
+          id="settings-organization"
+          className="text-sm font-medium text-neutral-600 dark:text-neutral-300"
+        >
+          Organization
+        </h2>
+        <div className="divide-y divide-neutral-200 rounded-lg border border-neutral-200 dark:divide-neutral-800 dark:border-neutral-800">
+          <SettingsSwitchRow
+            title="Working section (beta)"
+            description="Fold working and monitoring threads into a Working section. They return to the top of the inbox when they need you."
+            ariaLabel="Working section (beta)"
+            checked={settings.sidebarWorkingShelfEnabled}
+            isDefault={
+              settings.sidebarWorkingShelfEnabled ===
+              DEFAULT_CLIENT_SETTINGS.sidebarWorkingShelfEnabled
+            }
+            onChange={(sidebarWorkingShelfEnabled) => save({ sidebarWorkingShelfEnabled })}
+          />
+        </div>
+      </section>
       <section aria-labelledby="settings-confirmations" className="flex flex-col gap-2">
         <h2
           id="settings-confirmations"
@@ -57,6 +80,24 @@ export function GeneralSettingsPanel() {
         </div>
       </section>
       <TextGenerationSection />
+      <details className="group flex flex-col gap-2">
+        <summary className="flex cursor-pointer list-none items-center gap-2 text-sm text-neutral-600 hover:text-neutral-900 dark:text-neutral-300 dark:hover:text-neutral-100">
+          <h2 className="font-normal">Legacy features</h2>
+          <ChevronRightIcon className="size-4 transition-transform group-open:rotate-90 motion-reduce:transition-none" />
+        </summary>
+        <div className="mt-2 divide-y divide-neutral-200 rounded-lg border border-neutral-200 dark:divide-neutral-800 dark:border-neutral-800">
+          <SettingsSwitchRow
+            title="Sidebar (legacy)"
+            description="Restore per-project thread trees instead of the default flat sidebar."
+            ariaLabel="Sidebar (legacy)"
+            checked={settings.legacySidebarEnabled}
+            isDefault={
+              settings.legacySidebarEnabled === DEFAULT_CLIENT_SETTINGS.legacySidebarEnabled
+            }
+            onChange={(legacySidebarEnabled) => save({ legacySidebarEnabled })}
+          />
+        </div>
+      </details>
     </div>
   );
 }
