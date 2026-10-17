@@ -43,6 +43,11 @@ Steps:
    - **Architecture to consider.**
    - **Interface to consider**, for the followed parts only.
    - **Not relevant:** a count only, including changes under the paths [ARCHITECTURE.md](ARCHITECTURE.md#left-out) leaves out.
-4. Open one issue in softhatgames/playstead, titled `T3 Code review: <from, 7 characters>..<to, 7 characters>` and labelled `t3-review`. Summarise each group by theme, with what changed, why it matters to Playstead and links to the T3 Code commits. End with proposed follow-ups as a checklist for the founder. When nothing is relevant, say so and close the issue at once, so the next review starts from `to`.
+4. Check the standing items below, and put what you find under provider behaviour.
+5. Open one issue in softhatgames/playstead, titled `T3 Code review: <from, 7 characters>..<to, 7 characters>` and labelled `t3-review`. Summarise each group by theme, with what changed, why it matters to Playstead and links to the T3 Code commits. End with proposed follow-ups as a checklist for the founder. When nothing is relevant, say so and close the issue at once, so the next review starts from `to`.
+
+### Standing items
+
+- **Stopping a Codex turn's commands.** Interrupt stops the commands a Codex turn left running with `thread/backgroundTerminals/terminate` and `/list`, as T3 Code's `terminateBackgroundTerminal` in `apps/server/src/orchestration-v2/Adapters/CodexAdapterV2.ts` does. Codex has these calls only in its experimental schema, so a Codex release can rename or remove them. Flag any T3 Code commit that changes how `terminateBackgroundTerminal` stops commands, and any Codex release note that mentions `backgroundTerminals`. To act on one, run `pnpm --filter @playstead/effect-codex-app-server generate` with the new Codex, which refuses when the calls are gone or have become stable. Then re-record with `node apps/server/scripts/record-codex-replay.ts turn_interrupt`, and run `RunInterrupt.test.ts`, which checks the terminate frames are sent.
 
 The review's only output is that issue; the founder decides what Playstead adopts.
