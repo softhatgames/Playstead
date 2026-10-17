@@ -67,6 +67,10 @@
     "./settings": {
       "types": "./src/settings.ts",
       "import": "./src/settings.ts"
+    },
+    "./threadSearch": {
+      "types": "./src/threadSearch.ts",
+      "import": "./src/threadSearch.ts"
     }
   },
   "scripts": {

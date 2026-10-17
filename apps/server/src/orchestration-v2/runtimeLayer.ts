@@ -11,10 +11,11 @@ import * as ProjectStore from "./ProjectStore.ts";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
 import * as ProviderTurnStartService from "./ProviderTurnStartService.ts";
 import * as RunExecutionService from "./RunExecutionService.ts";
+import * as ThreadSearch from "./ThreadSearch.ts";
 import * as ThreadTitleRegenerationService from "./ThreadTitleRegenerationService.ts";
 
 /**
- * Orchestration's stores and event sink over the server's SQLite, assembled
+ * Orchestration's stores, event sink and thread search over the server's SQLite, assembled
  * once for the server and its tests (T3 Code's
  * `apps/server/src/orchestration-v2/runtimeLayer.ts` at 2577baf). The sink
  * and the stream readers must share one event store, whose publishing is in
@@ -28,6 +29,7 @@ export const layer = EventSink.layer.pipe(
       ProjectStore.layer,
       ProjectionStore.layer,
       EffectOutbox.layer,
+      ThreadSearch.layer,
     ),
   ),
 );
