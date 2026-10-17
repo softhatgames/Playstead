@@ -11,7 +11,7 @@ import {
   resolveAutoSettlementAt,
   type ThreadSnoozeState,
   threadHasQueuedTurnStart,
-} from "./ThreadSettlementService.ts";
+} from "./ThreadSettlementPolicy.ts";
 
 /**
  * The settlement rules as T3 Code's `ThreadSettlementService.test.ts` at

@@ -68,6 +68,8 @@ export const makeOrchestrationHarness = Effect.fn("makeOrchestrationHarness")(fu
   readonly config?: ServerConfig.ServerConfig["Service"];
   /** Runs startup recovery before anything is dispatched, as the server's startup does. */
   readonly recoverOnStartup?: boolean;
+  /** Persisted events from before recovery, for command-boundary fixtures. */
+  readonly recoveredEvents?: ReadonlyArray<EventSink.NewDomainEvent>;
   /** Stands in for spawning processes, such as the Git check of threads without a project. */
   readonly childProcessSpawner?: ChildProcessSpawner.ChildProcessSpawner["Service"];
   /**
@@ -175,6 +177,12 @@ export const makeOrchestrationHarness = Effect.fn("makeOrchestrationHarness")(fu
     threadSearch: ThreadSearch.ThreadSearch,
     folders: ManagedProjectFolders.ManagedProjectFolders,
   }).pipe(Effect.provideContext(context));
+  if (input.recoveredEvents !== undefined) {
+    const events = input.recoveredEvents;
+    yield* Effect.flatMap(EventSink.EventSinkV2, (sink) => sink.write(events)).pipe(
+      Effect.provideContext(context),
+    );
+  }
   if (input.recoverOnStartup === true) yield* services.recovery.recover;
 
   /**
@@ -214,5 +222,5 @@ export const makeOrchestrationHarness = Effect.fn("makeOrchestrationHarness")(fu
     };
   });
 
-  return { ...services, home: config.baseDir, awaitRunEnded, holdNextTurnEnd };
+  return { ...services, config, home: config.baseDir, awaitRunEnded, holdNextTurnEnd };
 });

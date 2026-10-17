@@ -16,7 +16,7 @@ import {
   QUESTION_IDS,
   sendQuestionMessage,
 } from "./testkit/fixtures/questionAnswer.ts";
-import { isSnoozed, snoozeStateOf } from "./ThreadSettlementService.ts";
+import { isSnoozed, snoozeStateOf } from "./ThreadSettlementPolicy.ts";
 import { refusal, threadOf } from "./testkit/ThreadCommands.ts";
 import { replayClaude } from "./testkit/ProviderReplay.ts";
 

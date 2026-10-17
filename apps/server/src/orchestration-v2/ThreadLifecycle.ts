@@ -19,6 +19,8 @@ import {
   type ThreadCommandInput,
   type ThreadCommandResult,
 } from "./ThreadCommandDecision.ts";
+import { isAutoSettlementCandidate, snoozeStateOf } from "./ThreadSettlementPolicy.ts";
+import { cancelRuns } from "./RunCancellation.ts";
 import { planThreadDeletion } from "./ThreadDeletion.ts";
 
 /**
@@ -250,7 +252,14 @@ export const decideThreadMutation = (
     if (command.type === "thread.metadata.update" && command.regenerateTitle === true) {
       effects.push(threadTitleGenerationEffect(command.commandId, { type: "regenerate" }));
     }
-    if (command.type === "thread.archive") events.push(...cancelQueuedRuns(projection, now));
+    if (command.type === "thread.archive")
+      events.push(
+        ...cancelRuns(
+          projection,
+          projection.runs.filter((run) => QUEUED_RUN_STATUSES.has(run.status)),
+          now,
+        ),
+      );
     // Archive and settle both mean "done with this thread": no live provider
     // session keeps running for it (T3 Code's detach after either). The settle
     // guard already refused a working thread, so this only stops idle sessions.
@@ -438,51 +447,6 @@ function mutationEventType(command: ThreadMutationCommand) {
 }
 
 /**
- * Archiving drops the queue (T3 Code's archive branch): each queued run is
- * cancelled and leaves the queue, with its unfinished attempts and nodes.
- */
-function cancelQueuedRuns(
-  projection: OrchestrationV2ThreadProjection,
-  now: string,
-): ReadonlyArray<NewDomainEvent> {
-  const threadId = projection.thread.id;
-  const queued = projection.runs.filter((run) => QUEUED_RUN_STATUSES.has(run.status));
-  const queuedIds = new Set(queued.map((run) => run.id));
-  const events: Array<NewDomainEvent> = queued.map((run) => ({
-    type: "run.updated",
-    threadId,
-    runId: run.id,
-    occurredAt: now,
-    payload: { ...run, status: "cancelled", queuePosition: null, completedAt: now },
-  }));
-  for (const attempt of projection.attempts) {
-    if (!queuedIds.has(attempt.runId)) continue;
-    if (attempt.status !== "pending" && attempt.status !== "running") continue;
-    events.push({
-      type: "run-attempt.updated",
-      threadId,
-      runId: attempt.runId,
-      occurredAt: now,
-      payload: { ...attempt, status: "cancelled", completedAt: now },
-    });
-  }
-  for (const node of projection.nodes) {
-    if (node.runId === null || !queuedIds.has(node.runId)) continue;
-    if (node.status !== "pending" && node.status !== "running" && node.status !== "waiting") {
-      continue;
-    }
-    events.push({
-      type: "node.updated",
-      threadId,
-      runId: node.runId,
-      occurredAt: now,
-      payload: { ...node, status: "cancelled", completedAt: now },
-    });
-  }
-  return events;
-}
-
-/**
  * The settlement sweep's settle (T3 Code's `thread.auto-settle` case in
  * `dispatchCommand`): the sweep decided on what it read, so any change
  * since, or any override the person set (an un-settle's "active" too), wins
@@ -492,15 +456,45 @@ export const decideThreadAutoSettle = (
   input: ThreadCommandInput<Extract<OrchestrationV2ServerCommand, { type: "thread.auto-settle" }>>,
 ): ThreadCommandResult =>
   Result.gen(function* () {
-    const { command, state } = input;
-    const { thread } = yield* requireThread(command, state);
-    if (
-      thread.settledOverride !== null ||
-      DateTime.toEpochMillis(DateTime.makeUnsafe(thread.updatedAt)) >
-        DateTime.toEpochMillis(DateTime.makeUnsafe(command.snapshotAt))
-    ) {
+    const { command, state, now } = input;
+    const projection = yield* requireThread(command, state);
+    const { thread } = projection;
+    if (thread.settledOverride !== null || thread.updatedAt !== command.snapshotAt) {
       return yield* reject(command, `Thread ${thread.id} changed before automatic settlement.`);
     }
+    const latest = latestRunOf(projection.runs);
+    const latestUserMessageAt = projection.messages
+      .filter((message) => message.role === "user")
+      .reduce<string | null>(
+        (latest, message) =>
+          latest === null || message.createdAt > latest ? message.createdAt : latest,
+        null,
+      );
+    const eligible = isAutoSettlementCandidate(
+      {
+        ...thread,
+        thread,
+        status: latest?.status ?? "idle",
+        latestRunId: latest?.id ?? null,
+        latestRunRequestedAt: latest?.requestedAt ?? null,
+        latestRunStartedAt: latest?.startedAt ?? null,
+        latestRunCompletedAt: latest?.completedAt ?? null,
+        latestUserMessageAt,
+        hasPendingRuntimeRequest: projection.runtimeRequests.some(
+          (request) => request.status === "pending",
+        ),
+        hasActiveRun: projection.runs.some(
+          (run) => ACTIVE_RUN_STATUSES.has(run.status) || QUEUED_RUN_STATUSES.has(run.status),
+        ),
+      },
+      snoozeStateOf(thread),
+      DateTime.toEpochMillis(DateTime.makeUnsafe(now)),
+    );
+    if (!eligible)
+      return yield* reject(
+        command,
+        `Thread ${thread.id} is not eligible for automatic settlement.`,
+      );
     return yield* decideThreadMutation({
       ...input,
       command: {

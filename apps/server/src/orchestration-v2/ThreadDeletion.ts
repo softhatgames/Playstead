@@ -6,11 +6,9 @@ import {
 } from "@playstead/contracts/orchestrationV2";
 
 import type { NewDomainEvent } from "./EventSink.ts";
+import { cancelRuns } from "./RunCancellation.ts";
 import { detachProviderSessions } from "./ProviderSessionDetach.ts";
 import type { ThreadCommandDecision } from "./ThreadCommandDecision.ts";
-
-const isUnfinished = (status: string) =>
-  status === "pending" || status === "running" || status === "waiting";
 
 /**
  * A thread's deletion (T3 Code's `planThreadDeletion`,
@@ -49,39 +47,7 @@ export function planThreadDeletion(input: {
   const activeRuns = projection.runs.filter(
     (run) => ACTIVE_RUN_STATUSES.has(run.status) || QUEUED_RUN_STATUSES.has(run.status),
   );
-  const activeRunIds = new Set(activeRuns.map((run) => run.id));
-  for (const run of activeRuns) {
-    events.push({
-      type: "run.updated",
-      threadId,
-      runId: run.id,
-      occurredAt: now,
-      payload: { ...run, status: "cancelled", queuePosition: null, completedAt: now },
-    });
-  }
-  for (const attempt of projection.attempts) {
-    if (!activeRunIds.has(attempt.runId)) continue;
-    if (attempt.status !== "pending" && attempt.status !== "running") continue;
-    events.push({
-      type: "run-attempt.updated",
-      threadId,
-      runId: attempt.runId,
-      occurredAt: now,
-      payload: { ...attempt, status: "cancelled", completedAt: now },
-    });
-  }
-  for (const node of projection.nodes) {
-    if (node.runId === null || !activeRunIds.has(node.runId) || !isUnfinished(node.status)) {
-      continue;
-    }
-    events.push({
-      type: "node.updated",
-      threadId,
-      runId: node.runId,
-      occurredAt: now,
-      payload: { ...node, status: "cancelled", completedAt: now },
-    });
-  }
+  events.push(...cancelRuns(projection, activeRuns, now));
   for (const request of projection.runtimeRequests) {
     if (request.status !== "pending") continue;
     const runId = projection.nodes.find((node) => node.id === request.nodeId)?.runId ?? null;

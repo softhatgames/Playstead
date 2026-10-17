@@ -152,6 +152,15 @@ describe("Settle, snooze, archive and delete with approvals and queued messages"
       Effect.gen(function* () {
         const { harness } = yield* threadWaitingOnApproval;
         const threadId = SUPERVISED_IDS.threadId;
+        const pending = yield* projectionOf(harness, threadId);
+        yield* refusal(
+          harness.orchestrator.dispatch({
+            type: "thread.auto-settle",
+            commandId: CommandId.make("auto-pending"),
+            threadId,
+            snapshotAt: pending.thread.updatedAt,
+          }),
+        );
 
         assert.strictEqual(
           yield* refusal(dispatch(harness, threadId, { type: "thread.settle" })),
@@ -177,6 +186,16 @@ describe("Settle, snooze, archive and delete with approvals and queued messages"
         Effect.gen(function* () {
           const harness = yield* harnessWithThread;
           const queued = yield* holdOneQueuedMessage(harness);
+          const pending = yield* projectionOf(harness, THREAD_ID);
+          yield* refusal(
+            harness.orchestrator.dispatch({
+              type: "thread.auto-settle",
+              commandId: CommandId.make("auto-queued"),
+              threadId: THREAD_ID,
+              snapshotAt: pending.thread.updatedAt,
+            }),
+          );
+          assert.isNull((yield* projectionOf(harness, THREAD_ID)).thread.settledOverride);
 
           assert.strictEqual(
             yield* refusal(dispatch(harness, THREAD_ID, { type: "thread.settle" })),

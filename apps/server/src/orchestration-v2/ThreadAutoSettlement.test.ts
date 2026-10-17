@@ -20,7 +20,7 @@ import {
   QUESTION_IDS,
   sendQuestionMessage,
 } from "./testkit/fixtures/questionAnswer.ts";
-import { refusal, threadOf } from "./testkit/ThreadCommands.ts";
+import { refusal, threadOf, projectionOf } from "./testkit/ThreadCommands.ts";
 import { replayClaude } from "./testkit/ProviderReplay.ts";
 
 /**
@@ -67,6 +67,71 @@ const elapse = (harness: Harness, duration: Parameters<typeof TestClock.adjust>[
 
 describe("Automatic settlement", () => {
   it.layer(NodeServices.layer)((it) => {
+    for (const direction of [-1, 1]) {
+      it.effect(
+        `dispatch protects persisted fresh messages through the grace boundary (${direction})`,
+        () =>
+          Effect.gen(function* () {
+            const { harness } = yield* replayClaude("file_create.claude.ndjson");
+            yield* runFileCreateScenario(harness);
+            const projection = yield* projectionOf(harness, FILE_CREATE_IDS.threadId);
+            yield* TestClock.adjust("4 days");
+            const messageAt = DateTime.formatIso(yield* DateTime.now);
+            const recovered = yield* makeOrchestrationHarness({
+              config: harness.config,
+              recoveredEvents: projection.messages
+                .filter((message) => message.role === "user")
+                .map((message) => ({
+                  type: "message.updated" as const,
+                  threadId: projection.thread.id,
+                  occurredAt: messageAt,
+                  payload: { ...message, createdAt: messageAt },
+                })),
+            });
+            const thread = yield* threadOf(recovered, projection.thread.id);
+            const settle = () =>
+              send(recovered, {
+                type: "thread.auto-settle",
+                snapshotAt: thread.updatedAt,
+                settledAt: thread.updatedAt,
+              });
+            yield* refusal(settle());
+            yield* TestClock.setTime(Date.parse(messageAt) + direction * 120_000);
+            yield* refusal(settle());
+            assert.isNull((yield* threadOf(recovered, thread.id)).settledOverride);
+            yield* TestClock.setTime(Date.parse(messageAt) + direction * 120_001);
+            const sequence = yield* recovered.eventStore.latestApplicationSequence;
+            yield* settle();
+            assert.isTrue(Option.isSome(yield* awaitSettled(recovered, thread.id, sequence)));
+            assert.strictEqual((yield* threadOf(recovered, thread.id)).settledOverride, "settled");
+          }).pipe(Effect.ensuring(TestClock.setTime(0)), Effect.scoped),
+      );
+    }
+    for (const change of ["pin", "opt-out", "snooze", "future-snapshot"] as const) {
+      it.effect(`dispatch rechecks ${change} even without a clock tick`, () =>
+        Effect.gen(function* () {
+          const { harness } = yield* replayClaude("file_create.claude.ndjson");
+          yield* runFileCreateScenario(harness);
+          const thread = yield* threadOf(harness, FILE_CREATE_IDS.threadId);
+          if (change === "pin") yield* send(harness, { type: "thread.pin" });
+          if (change === "opt-out")
+            yield* send(harness, { type: "thread.auto-settle.set", enabled: false });
+          if (change === "snooze")
+            yield* send(harness, {
+              type: "thread.snooze",
+              snoozedUntil: "1970-01-02T00:00:00.000Z",
+            });
+          yield* refusal(
+            send(harness, {
+              type: "thread.auto-settle",
+              snapshotAt:
+                change === "future-snapshot" ? "1970-01-02T00:00:00.000Z" : thread.updatedAt,
+            }),
+          );
+          assert.isNull((yield* threadOf(harness, thread.id)).settledOverride);
+        }).pipe(Effect.ensuring(TestClock.setTime(0)), Effect.scoped),
+      );
+    }
     it.effect(
       "an idle thread settles on the minute sweep once it has had no activity for the setting's days, at its last activity",
       () =>
