@@ -15,7 +15,12 @@ import {
   removeFromThreadSelection,
 } from "../threadSelection.ts";
 import { failureToast } from "../toast.ts";
-import { markThreadUnread, confirmAndUnpinThread, useThreadActions } from "./useThreadActions.ts";
+import {
+  regenerateThreadTitle,
+  markThreadUnread,
+  confirmAndUnpinThread,
+  useThreadActions,
+} from "./useThreadActions.ts";
 
 /** Asked before deleting several threads, with T3 Code's words. */
 const bulkThreadDeleteConfirmation = (count: number) =>
@@ -62,8 +67,11 @@ export function useBulkThreadMenu(input: {
               pinnedCount: pinned.length,
               settleableCount: settleable.length,
               hasRunningThread: targets.some((thread) => !threadRuntimeCanArchive(thread.status)),
-              // Generated titles (#36) bring Regenerate titles here.
-              titleRegeneration: null,
+              titleRegeneration: {
+                supportedCount: targets.length,
+                actionableCount: targets.filter((thread) => thread.titleRegeneration == null)
+                  .length,
+              },
             }),
             position,
           )
@@ -136,6 +144,13 @@ export function useBulkThreadMenu(input: {
             return;
           }
           case "regenerate-title":
+            clearThreadSelection();
+            for (const thread of targets.filter((thread) => thread.titleRegeneration == null)) {
+              void regenerateThreadTitle(thread.id).catch((error: unknown) =>
+                failureToast("Failed to regenerate title", error),
+              );
+            }
+            return;
           case null:
             return;
         }

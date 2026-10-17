@@ -1,3 +1,4 @@
+import type { ProviderTextGeneration } from "@playstead/provider-core/server/textGeneration";
 import {
   PROVIDER_INSTANCE_IDS,
   type ProviderInstanceId,
@@ -41,6 +42,9 @@ import { applyProviderCompatibility } from "./providerCompatibility.ts";
 export class ProviderRegistry extends Context.Service<
   ProviderRegistry,
   {
+    readonly getTextGeneration: (
+      instanceId: ProviderInstanceId,
+    ) => Effect.Effect<Option.Option<ProviderTextGeneration>>;
     readonly getProviders: Effect.Effect<ServerProviders>;
     /** Checks one instance, or both, again and returns every status. */
     readonly refresh: (instanceId?: ProviderInstanceId) => Effect.Effect<ServerProviders>;
@@ -154,6 +158,8 @@ export const layer = Layer.effect(
 
     return ProviderRegistry.of({
       getProviders,
+      getTextGeneration: (instanceId) =>
+        Effect.sync(() => Option.fromUndefinedOr(live.get(instanceId)?.instance.textGeneration)),
       refresh: (instanceId) =>
         Effect.gen(function* () {
           const ids = instanceId === undefined ? PROVIDER_INSTANCE_IDS : [instanceId];

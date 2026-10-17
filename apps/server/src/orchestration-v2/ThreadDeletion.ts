@@ -5,6 +5,7 @@ import {
   QUEUED_RUN_STATUSES,
 } from "@playstead/contracts/orchestrationV2";
 
+import { PROCESS_BOUND_EFFECT_TYPES } from "./EffectOutbox.ts";
 import type { NewDomainEvent } from "./EventSink.ts";
 import { detachProviderSessions } from "./ProviderSessionDetach.ts";
 import type { ThreadCommandDecision } from "./ThreadCommands.ts";
@@ -39,6 +40,7 @@ export function planThreadDeletion(input: {
       payload: {
         ...projection.thread,
         deletedAt: projection.thread.deletedAt ?? now,
+        titleRegeneration: null,
         updatedAt: now,
       },
     },
@@ -106,6 +108,9 @@ export function planThreadDeletion(input: {
   return {
     events: [...events, ...detached.events],
     effects: detached.effects,
-    cancelUnsettledEffects: { reason: "The thread was deleted." },
+    cancelUnsettledEffects: {
+      reason: "The thread was deleted.",
+      effectTypes: [...PROCESS_BOUND_EFFECT_TYPES, "thread-title.generate"],
+    },
   };
 }

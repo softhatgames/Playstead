@@ -1,3 +1,4 @@
+import * as TextGeneration from "./textGeneration/TextGeneration.ts";
 // @effect-diagnostics nodeBuiltinImport:off -- The listener is a plain Node HTTP server.
 import * as NodeHttp from "node:http";
 
@@ -95,6 +96,7 @@ const layerRuntimeServices = Layer.mergeAll(
   ServerLifecycleEvents.layer,
   layerOrchestration,
 ).pipe(
+  Layer.provide(TextGeneration.layer),
   Layer.provideMerge(ProviderRegistry.layer.pipe(Layer.provideMerge(ServerSettings.layer))),
   Layer.provideMerge(ServerEnvironment.layer),
   Layer.provideMerge(ServerSecretStore.layer),

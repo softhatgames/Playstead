@@ -245,6 +245,7 @@ export function ChatView(
             snoozedUntil: projection.thread.snoozedUntil,
             snoozedAt: projection.thread.snoozedAt,
             latestRunCompletedAt: latestRun?.completedAt ?? null,
+            titleRegeneration: projection.thread.titleRegeneration ?? null,
             pinnedAt: projection.thread.pinnedAt,
             pinOrderKey: projection.thread.pinOrderKey,
             settledOverride: projection.thread.settledOverride,

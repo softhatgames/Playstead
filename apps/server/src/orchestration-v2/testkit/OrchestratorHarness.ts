@@ -1,4 +1,11 @@
 import { streamShell } from "../ShellStream.ts";
+import * as Path from "effect/Path";
+import * as Schema from "effect/Schema";
+import { writeFakeCli } from "@playstead/provider-testing/fakeCli";
+import * as FileSystem from "effect/FileSystem";
+import * as ProviderRegistry from "../../provider/ProviderRegistry.ts";
+import * as ServerSettings from "../../serverSettings.ts";
+import * as TextGeneration from "../../textGeneration/TextGeneration.ts";
 import type { ThreadId } from "@playstead/contracts/baseSchemas";
 import { ACTIVE_RUN_STATUSES, type OrchestrationV2Run } from "@playstead/contracts/orchestrationV2";
 import * as HostProcess from "@playstead/shared/hostProcess";
@@ -33,6 +40,7 @@ import * as OrchestrationRuntime from "../runtimeLayer.ts";
  * second harness over the first one's `config`.
  */
 export const makeOrchestrationHarness = Effect.fn("makeOrchestrationHarness")(function* (input: {
+  readonly titleCliSource?: string;
   readonly claudeRunner?: ClaudeAgentSdkQueryRunner["Service"];
   readonly codexClients?: CodexAppServerClientFactory["Service"];
   /** The recorders run the person's CLI with their environment; replays need neither. */
@@ -80,6 +88,35 @@ export const makeOrchestrationHarness = Effect.fn("makeOrchestrationHarness")(fu
       ProviderAdapterRegistry.layerFromAdapters(lists.flat()),
     ),
   );
+  const fs = yield* FileSystem.FileSystem;
+  const titleDirectory = yield* fs.makeTempDirectoryScoped({ prefix: "playstead-test-titles-" });
+  const titleBinary = yield* writeFakeCli({
+    directory: titleDirectory,
+    name: "title-provider",
+    source:
+      input.titleCliSource ??
+      `
+    import { writeFileSync } from 'node:fs';
+    const args = process.argv.slice(2);
+    if (args.includes('mcp')) console.log('[]');
+    else if (args[0] === 'exec') {
+      for await (const chunk of process.stdin) {}
+      writeFileSync(args[args.indexOf('--output-last-message') + 1], JSON.stringify({title:'New thread'}));
+    } else if (args.includes('--version')) console.log('codex-cli 0.120.0');
+    else if (args.includes('status')) console.log('Logged in using ChatGPT');
+  `,
+  });
+  const path = yield* Path.Path;
+  yield* fs.makeDirectory(path.dirname(config.settingsPath), { recursive: true });
+  yield* fs.writeFileString(
+    config.settingsPath,
+    yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))({
+      providerInstances: {
+        codex: { driver: "codex", config: { binaryPath: titleBinary } },
+        claudeAgent: { driver: "claudeAgent", config: { binaryPath: titleBinary } },
+      },
+    }),
+  );
   const context = yield* Layer.build(
     Layer.mergeAll(
       OrchestrationRuntime.layerCore,
@@ -87,6 +124,9 @@ export const makeOrchestrationHarness = Effect.fn("makeOrchestrationHarness")(fu
       ProviderRuntimeRecoveryService.layer,
     ).pipe(
       Layer.provide(adapters),
+      Layer.provide(TextGeneration.layer),
+      Layer.provide(ProviderRegistry.layer),
+      Layer.provide(ServerSettings.layer),
       Layer.provideMerge(OrchestrationRuntime.layer),
       Layer.provide(WorkspacePaths.layer),
       Layer.provideMerge(SqlitePersistence.layerConfig),

@@ -1,3 +1,4 @@
+import * as ThreadTitleRegeneration from "./ThreadTitleRegenerationService.ts";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -15,7 +16,7 @@ const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
  * Runs the outbox's effects (T3 Code's
  * `apps/server/src/orchestration-v2/EffectWorker.ts` at 2577baf): starting a
  * run's provider turn, interrupting it, giving it the person's answers, and
- * stopping a thread's provider session; there is no checkpoint step. An effect a command cancels while it runs is
+ * stopping a thread's provider session and generating its title; there is no checkpoint step. An effect a command cancels while it runs is
  * stopped, as T3 Code's `runOnce` races `execute` against
  * `awaitCancellation`. The server runs `runDaemon`; tests call `drain` and
  * then wait for the events they expect.
@@ -27,7 +28,7 @@ export class OrchestrationEffectWorkerV2 extends Context.Service<
     readonly runOnce: Effect.Effect<boolean, EffectOutbox.EffectOutboxError>;
     /** Runs effects until none is claimable, and says how many ran. */
     readonly drain: Effect.Effect<number, EffectOutbox.EffectOutboxError>;
-    /** Drains, then waits for more, for as long as it runs. */
+    /** Claims independent lanes concurrently, then waits for new work or a lane to finish. */
     readonly runDaemon: Effect.Effect<never, EffectOutbox.EffectOutboxError>;
   }
 >()("@playstead/server/orchestration-v2/EffectWorker/OrchestrationEffectWorkerV2") {}
@@ -36,12 +37,17 @@ const make = Effect.gen(function* () {
   const outbox = yield* EffectOutbox.EffectOutboxV2;
   const turnStart = yield* ProviderTurnStartService.ProviderTurnStartServiceV2;
   const runs = yield* RunExecutionService.RunExecutionServiceV2;
+  const titles = yield* ThreadTitleRegeneration.ThreadTitleRegenerationService;
+  const workerScope = yield* Effect.scope;
   const sessions = yield* ProviderSessionManager.ProviderSessionManagerV2;
 
   const execute = (
     effect: EffectOutbox.ClaimedEffect,
   ): Effect.Effect<
     void,
+    | Effect.Error<
+        ReturnType<ThreadTitleRegeneration.ThreadTitleRegenerationService["Service"]["execute"]>
+      >
     | ProviderTurnStartService.ProviderTurnStartError
     | Effect.Error<ReturnType<RunExecutionService.RunExecutionServiceV2["Service"]["interruptRun"]>>
     | Effect.Error<
@@ -49,6 +55,12 @@ const make = Effect.gen(function* () {
       >
   > => {
     switch (effect.request.type) {
+      case "thread-title.generate":
+        return titles.execute({
+          threadId: effect.threadId,
+          requestId: effect.commandId,
+          kind: effect.request.kind,
+        });
       case "provider-turn.start":
         return turnStart.start({ threadId: effect.threadId, runId: effect.request.runId });
       case "provider-turn.interrupt":
@@ -72,10 +84,9 @@ const make = Effect.gen(function* () {
     }
   };
 
-  const runOnce = Effect.gen(function* () {
-    const claimed = yield* outbox.claimNext(yield* nowIso);
-    if (Option.isNone(claimed)) return false;
-    const effect = claimed.value;
+  const runClaimed = Effect.fn("EffectWorker.runClaimed")(function* (
+    effect: EffectOutbox.ClaimedEffect,
+  ) {
     const outcome = yield* Effect.raceFirst(
       Effect.exit(execute(effect)),
       Effect.as(outbox.awaitCancellation(effect.id), "cancelled" as const),
@@ -98,6 +109,10 @@ const make = Effect.gen(function* () {
     return true;
   });
 
+  const runOnce = Effect.gen(function* () {
+    const claimed = yield* outbox.claimNext(yield* nowIso);
+    return Option.isNone(claimed) ? false : yield* runClaimed(claimed.value);
+  });
   const drain = Effect.gen(function* () {
     let count = 0;
     while (yield* runOnce) count += 1;
@@ -107,7 +122,19 @@ const make = Effect.gen(function* () {
   return OrchestrationEffectWorkerV2.of({
     runOnce,
     drain,
-    runDaemon: Effect.forever(Effect.andThen(drain, outbox.awaitAvailable)),
+    runDaemon: Effect.forever(
+      Effect.gen(function* () {
+        const claimed = yield* outbox.claimNext(yield* nowIso);
+        if (Option.isNone(claimed)) {
+          yield* outbox.awaitAvailable;
+          return;
+        }
+        yield* runClaimed(claimed.value).pipe(
+          Effect.ensuring(outbox.notifyAvailable),
+          Effect.forkIn(workerScope),
+        );
+      }),
+    ),
   });
 });
 

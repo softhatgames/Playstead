@@ -1,5 +1,10 @@
+import type { ModelSelection } from "@playstead/contracts/orchestrationV2";
 import type { ProviderInstanceMutation } from "@playstead/contracts/providerInstance";
-import { ServerSettings, ServerSettingsError } from "@playstead/contracts/settings";
+import {
+  DEFAULT_TEXT_GENERATION_MODELS,
+  ServerSettings,
+  ServerSettingsError,
+} from "@playstead/contracts/settings";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -15,11 +20,14 @@ import * as ServerConfig from "./config.ts";
 /**
  * The server's settings, in `settings.json` in its state folder, following
  * T3 Code's `ServerSettingsService` (`apps/server/src/serverSettings.ts` at
- * 2577baf) trimmed to provider instances' **Binary path**.
+ * 2577baf), for provider binary paths and the text generation selection.
  */
 export class ServerSettingsService extends Context.Service<
   ServerSettingsService,
   {
+    readonly updateTextGeneration: (
+      selection: ModelSelection,
+    ) => Effect.Effect<ServerSettings, ServerSettingsError>;
     readonly getSettings: Effect.Effect<ServerSettings>;
     readonly updateProviderInstance: (
       mutation: ProviderInstanceMutation,
@@ -29,7 +37,10 @@ export class ServerSettingsService extends Context.Service<
   }
 >()("@playstead/server/serverSettings/ServerSettingsService") {}
 
-const DEFAULT_SETTINGS: ServerSettings = { providerInstances: {} };
+const DEFAULT_SETTINGS: ServerSettings = {
+  providerInstances: {},
+  textGenerationModelSelection: DEFAULT_TEXT_GENERATION_MODELS.codex,
+};
 
 const SettingsJson = Schema.fromJsonString(ServerSettings);
 const decodeSettings = Schema.decodeUnknownEffect(SettingsJson);
@@ -47,7 +58,7 @@ const applyMutation = (
   } else {
     instances[mutation.instanceId] = { driver: mutation.instance.driver, config: { binaryPath } };
   }
-  return { providerInstances: instances };
+  return { ...settings, providerInstances: instances };
 };
 
 export const layer = Layer.effect(
@@ -59,6 +70,11 @@ export const layer = Layer.effect(
 
     const read = fs.readFileString(config.settingsPath).pipe(
       Effect.flatMap(decodeSettings),
+      Effect.map((saved) => ({
+        ...saved,
+        textGenerationModelSelection:
+          saved.textGenerationModelSelection ?? DEFAULT_TEXT_GENERATION_MODELS.codex,
+      })),
       Effect.catchTag("PlatformError", (error) =>
         error.reason._tag === "NotFound" ? Effect.succeed(DEFAULT_SETTINGS) : Effect.fail(error),
       ),
@@ -90,6 +106,16 @@ export const layer = Layer.effect(
 
     return ServerSettingsService.of({
       getSettings: SubscriptionRef.get(settings),
+      updateTextGeneration: (selection) =>
+        Effect.gen(function* () {
+          const next = {
+            ...(yield* SubscriptionRef.get(settings)),
+            textGenerationModelSelection: selection,
+          };
+          yield* write(next);
+          yield* SubscriptionRef.set(settings, next);
+          return next;
+        }).pipe(writes.withPermit),
       updateProviderInstance: (mutation) =>
         Effect.gen(function* () {
           if (mutation.instance.driver !== mutation.instanceId) {

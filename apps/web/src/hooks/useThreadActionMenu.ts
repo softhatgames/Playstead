@@ -22,6 +22,7 @@ import { readSidebarProjectScopeKey, setSidebarProjectScopeKey } from "../uiStat
 import {
   snoozeThread,
   unsnoozeThread,
+  regenerateThreadTitle,
   markThreadUnread,
   pinThread,
   settleThread,
@@ -92,6 +93,7 @@ export function useThreadActionMenu(
                   presets,
                 },
                 isRunning: !threadRuntimeCanArchive(thread.status),
+                isTitleRegenerating: thread.titleRegeneration != null,
                 isPinned: thread.pinnedAt !== null,
                 isSettled: thread.settledOverride === "settled",
                 projectFilter:
@@ -144,6 +146,11 @@ export function useThreadActionMenu(
             return;
           case "rename":
             onStartRename();
+            return;
+          case "regenerate-title":
+            await regenerateThreadTitle(thread.id).catch((error: unknown) =>
+              failureToast("Failed to regenerate title", error),
+            );
             return;
           case "mark-unread":
             await markThreadUnread(thread.id).catch(() => undefined);

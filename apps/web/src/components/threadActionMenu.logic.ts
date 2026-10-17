@@ -22,6 +22,7 @@ export type ThreadActionMenuId =
   | "unpin"
   | "settle"
   | "unsettle"
+  | "regenerate-title"
   | "rename"
   | "mark-unread"
   | "filter-by-project"
@@ -34,6 +35,7 @@ export type ThreadActionMenuId =
 export interface ThreadActionMenuState {
   /** Archive is disabled while the thread's run works, rather than let it stop the run. */
   readonly isRunning: boolean;
+  readonly isTitleRegenerating?: boolean;
   /**
    * The sidebar's filter to the thread's project, offered from a sidebar row
    * only (T3 Code's header menu passes none): the project's name, and
@@ -54,6 +56,11 @@ export function buildThreadActionMenuItems(
       ? { id: "unsettle", label: "Un-settle thread" }
       : { id: "settle", label: "Settle thread" },
     { id: "rename", label: "Rename thread", separatorBefore: true },
+    {
+      id: "regenerate-title",
+      label: state.isTitleRegenerating ? "Regenerating…" : "Regenerate title",
+      disabled: state.isTitleRegenerating === true,
+    },
     ...(state.snooze === undefined ? [] : buildSnoozeMenuItems(state.snooze)),
     { id: "mark-unread", label: "Mark unread" },
     ...(state.projectFilter === null
