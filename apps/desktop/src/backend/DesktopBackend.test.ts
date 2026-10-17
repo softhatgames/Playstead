@@ -3,10 +3,12 @@ import * as NodeProcess from "node:process";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
+import * as SubscriptionRef from "effect/SubscriptionRef";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
@@ -23,8 +25,10 @@ const serverEntry = Effect.gen(function* () {
   return path.join(import.meta.dirname, "..", "..", "..", "server", "src", "bin.ts");
 });
 
-const startBackend = Effect.gen(function* () {
-  const home = yield* makeTempDirectoryScoped("playstead-desktop-home-");
+const startBackend = Effect.fn("startBackend")(function* (
+  options: { readonly home?: string; readonly onHomeOwned?: Effect.Effect<void> } = {},
+) {
+  const home = options.home ?? (yield* makeTempDirectoryScoped("playstead-desktop-home-"));
   const port = yield* findAvailablePort(24773);
   const backend = yield* makeDesktopBackend({
     executablePath: process.execPath,
@@ -36,6 +40,7 @@ const startBackend = Effect.gen(function* () {
       desktopBootstrapToken: "desktop-bootstrap-secret",
     },
     output: "ignore",
+    ...(options.onHomeOwned === undefined ? {} : { onHomeOwned: options.onHomeOwned }),
   });
   return { backend, home, port };
 });
@@ -48,7 +53,7 @@ describe("desktop backend", () => {
       "starts the server with its settings on a private descriptor and is ready once the descriptor answers",
       () =>
         Effect.gen(function* () {
-          const { backend, home, port } = yield* startBackend;
+          const { backend, home, port } = yield* startBackend();
           const path = yield* Path.Path;
           const fs = yield* FileSystem.FileSystem;
 
@@ -75,7 +80,7 @@ describe("desktop backend", () => {
 
     it.effect("starts the server again when it exits", () =>
       Effect.gen(function* () {
-        const { backend } = yield* startBackend;
+        const { backend } = yield* startBackend();
         const first = yield* awaitBackendReady(backend);
 
         NodeProcess.kill(first.pid);
@@ -87,6 +92,29 @@ describe("desktop backend", () => {
           `${second.httpBaseUrl}/.well-known/playstead/environment`,
         );
         assert.strictEqual(descriptor.status, 200);
+      }).pipe(Effect.scoped),
+    );
+
+    it.effect("stops and reports it when another server already uses the Playstead home", () =>
+      Effect.gen(function* () {
+        const { backend: first, home } = yield* startBackend();
+        yield* awaitBackendReady(first);
+
+        const reported = yield* Deferred.make<void>();
+        const { backend: second } = yield* startBackend({
+          home,
+          onHomeOwned: Deferred.succeed(reported, undefined),
+        });
+        yield* Deferred.await(reported);
+
+        assert.deepStrictEqual(yield* SubscriptionRef.get(second.state), { _tag: "HomeOwned" });
+        yield* Effect.sleep("1 second");
+        assert.deepStrictEqual(
+          yield* SubscriptionRef.get(second.state),
+          { _tag: "HomeOwned" },
+          "the second server is not started again",
+        );
+        assert.strictEqual((yield* SubscriptionRef.get(first.state))._tag, "Ready");
       }).pipe(Effect.scoped),
     );
   });

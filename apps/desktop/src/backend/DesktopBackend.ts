@@ -1,6 +1,7 @@
 import {
   type DesktopBackendBootstrap,
   DesktopBackendBootstrap as DesktopBackendBootstrapSchema,
+  SERVER_EXIT_CODE_STATE_DIR_OWNED,
 } from "@playstead/contracts/desktopBootstrap";
 import { identity } from "@playstead/shared/identity";
 import * as Duration from "effect/Duration";
@@ -28,7 +29,9 @@ export type BackendState =
       readonly _tag: "Exited";
       readonly exitCode: number | undefined;
       readonly restartIn: Duration.Duration;
-    };
+    }
+  /** Another server owns the Playstead home; it is not started again. */
+  | { readonly _tag: "HomeOwned" };
 
 export interface DesktopBackend {
   readonly httpBaseUrl: string;
@@ -44,6 +47,8 @@ export interface DesktopBackendConfig {
   readonly bootstrap: DesktopBackendBootstrap;
   /** Where the server's own output goes: the app's terminal, or nowhere in tests. */
   readonly output?: "inherit" | "ignore";
+  /** Runs once the server refuses to start because another server owns the home. */
+  readonly onHomeOwned?: Effect.Effect<void>;
 }
 
 /**
@@ -93,7 +98,8 @@ const awaitDescriptor = (httpBaseUrl: string) =>
 /**
  * The desktop app's server: started as a child process with its settings on
  * a private descriptor, ready once its descriptor answers, and started again
- * after it exits, until the scope closes. Follows T3 Code's
+ * after it exits, until the scope closes or another server turns out to own
+ * the home. Follows T3 Code's
  * `apps/desktop/src/backend/DesktopBackendManager.ts`, with one server and no
  * pool.
  */
@@ -153,6 +159,13 @@ export const makeDesktopBackend = Effect.fn("makeDesktopBackend")(function* (
           ),
         ),
       );
+      if (run.exitCode === SERVER_EXIT_CODE_STATE_DIR_OWNED) {
+        // Starting it again would only succeed once the other server stops.
+        yield* SubscriptionRef.set(state, { _tag: "HomeOwned" });
+        yield* Effect.logError("Another server owns the Playstead home; not starting it again.");
+        yield* config.onHomeOwned ?? Effect.void;
+        return;
+      }
       attempt = run.ready ? 0 : attempt + 1;
       const restartIn = restartDelay(attempt);
       yield* SubscriptionRef.set(state, { _tag: "Exited", exitCode: run.exitCode, restartIn });
