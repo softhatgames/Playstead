@@ -11,11 +11,13 @@ import {
 } from "./threadActionMenu.logic.ts";
 
 describe("buildThreadActionMenuItems", () => {
-  it("offers Archive thread, then Delete as the destructive item", () => {
+  it("offers rename and mark unread before Archive thread and Delete", () => {
     const items = buildThreadActionMenuItems({ isRunning: false });
     assert.deepStrictEqual(
       items.map((item) => [item.id, item.label, item.disabled === true, item.destructive === true]),
       [
+        ["rename", "Rename thread", false, false],
+        ["mark-unread", "Mark unread", false, false],
         ["archive", "Archive thread", false, false],
         ["delete", "Delete", false, true],
       ],
@@ -27,6 +29,8 @@ describe("buildThreadActionMenuItems", () => {
     assert.deepStrictEqual(
       items.map((item) => [item.id, item.disabled === true]),
       [
+        ["rename", false],
+        ["mark-unread", false],
         ["archive", true],
         ["delete", false],
       ],

@@ -8,12 +8,12 @@ import {
 /**
  * The thread menu (T3 Code's `apps/web/src/components/threadActionMenu.logic.ts`
  * at 2577baf), opened from a sidebar row and the thread view's header. It
- * has T3 Code's items in T3 Code's order as each arrives: so far **Archive
- * thread** and **Delete**. Rename, pin, settle, snooze, regenerate title,
- * mark unread, filter by project, auto-settle and copy come with their
+ * has T3 Code's items in T3 Code's order as each arrives: **Rename thread**,
+ * **Mark unread**, **Archive thread** and **Delete**. Pin, settle, snooze,
+ * regenerate title, filter by project, auto-settle and copy come with their
  * features, as fields of the state and ids here.
  */
-export type ThreadActionMenuId = "archive" | "delete";
+export type ThreadActionMenuId = "rename" | "mark-unread" | "archive" | "delete";
 
 export interface ThreadActionMenuState {
   /** Archive is disabled while the thread's run works, rather than let it stop the run. */
@@ -24,6 +24,8 @@ export function buildThreadActionMenuItems(
   state: ThreadActionMenuState,
 ): ReadonlyArray<ContextMenuItem<ThreadActionMenuId>> {
   return [
+    { id: "rename", label: "Rename thread", separatorBefore: true },
+    { id: "mark-unread", label: "Mark unread" },
     {
       id: "archive",
       label: "Archive thread",

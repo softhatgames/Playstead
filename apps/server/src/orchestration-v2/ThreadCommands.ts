@@ -18,6 +18,7 @@ import {
   type OrchestrationV2TurnItem,
   QUEUED_RUN_STATUSES,
 } from "@playstead/contracts/orchestrationV2";
+import * as DateTime from "effect/DateTime";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 
@@ -118,8 +119,10 @@ const reject = (command: OrchestrationV2Command, reason: string) =>
  * - `runtime-request.respond` answers a question still pending and
  *   answerable, once every question has an answer; the provider is given
  *   the answers. There are no approval decisions.
- * - `thread.archive`, `thread.unarchive` and `thread.model-selection.set`
- *   change the thread itself, through `dispatchThreadMutation`.
+ * - `thread.archive`, `thread.unarchive`, `thread.model-selection.set`,
+ *   `thread.metadata.update` and `thread.mark-unread` change the thread
+ *   itself, through `dispatchThreadMutation`.
+ * - `thread.visit` moves the read marker forward (`dispatchThreadVisit`).
  * - `thread.delete` deletes the thread (`planThreadDeletion`).
  *
  * Every command but `thread.create` needs the thread, and a deleted thread
@@ -158,6 +161,7 @@ export function decideThreadCommand(input: {
       updatedAt: now,
       archivedAt: null,
       deletedAt: null,
+      lastVisitedAt: null,
     };
     return Result.succeed({
       events: [{ type: "thread.created", threadId: thread.id, occurredAt: now, payload: thread }],
@@ -175,7 +179,11 @@ export function decideThreadCommand(input: {
     case "thread.model-selection.set":
     case "thread.archive":
     case "thread.unarchive":
+    case "thread.metadata.update":
+    case "thread.mark-unread":
       return dispatchThreadMutation(command, projection, now);
+    case "thread.visit":
+      return Result.succeed(dispatchThreadVisit(command, projection, now));
     case "thread.delete":
       return Result.succeed(planThreadDeletion({ command, projection, now }));
     case "message.dispatch": {
@@ -248,7 +256,14 @@ export function decideThreadCommand(input: {
 /** The commands that change the thread itself, decided by `dispatchThreadMutation`. */
 type ThreadMutationCommand = Extract<
   OrchestrationV2Command,
-  { readonly type: "thread.model-selection.set" | "thread.archive" | "thread.unarchive" }
+  {
+    readonly type:
+      | "thread.model-selection.set"
+      | "thread.archive"
+      | "thread.unarchive"
+      | "thread.metadata.update"
+      | "thread.mark-unread";
+  }
 >;
 
 /**
@@ -272,6 +287,10 @@ const REFUSED_WHILE_ARCHIVED: ReadonlySet<ThreadMutationCommand["type"]> = new S
  *   queued runs with their attempts and nodes, and detaches every live
  *   provider session.
  * - `thread.unarchive` is refused for a thread that is not archived.
+ * - `thread.metadata.update` renames the thread.
+ * - `thread.mark-unread` moves the read marker to just before the latest
+ *   run completed, so the thread shows as unread; it is refused until a run
+ *   has completed. Like a visit, it is not activity: `updatedAt` stays.
  */
 function dispatchThreadMutation(
   command: ThreadMutationCommand,
@@ -297,6 +316,16 @@ function dispatchThreadMutation(
       `Thread ${thread.id} runs on ${thread.providerInstanceId}. Choose one of its models; switching provider is not available yet.`,
     );
   }
+  let markUnreadVisitedAt: string | null = null;
+  if (command.type === "thread.mark-unread") {
+    const latestRunCompletedAt = latestRunOf(projection.runs)?.completedAt ?? null;
+    if (latestRunCompletedAt === null) {
+      return reject(command, `Thread ${thread.id} has no completed run to mark unread.`);
+    }
+    markUnreadVisitedAt = DateTime.formatIso(
+      DateTime.subtract(DateTime.makeUnsafe(latestRunCompletedAt), { milliseconds: 1 }),
+    );
+  }
 
   const updated: OrchestrationV2AppThread = (() => {
     switch (command.type) {
@@ -306,6 +335,14 @@ function dispatchThreadMutation(
         return { ...thread, archivedAt: now, updatedAt: now };
       case "thread.unarchive":
         return { ...thread, archivedAt: null, updatedAt: now };
+      case "thread.metadata.update":
+        return {
+          ...thread,
+          ...(command.title === undefined ? {} : { title: command.title }),
+          updatedAt: now,
+        };
+      case "thread.mark-unread":
+        return { ...thread, lastVisitedAt: markUnreadVisitedAt };
     }
   })();
   const eventType = (() => {
@@ -316,6 +353,10 @@ function dispatchThreadMutation(
         return "thread.archived" as const;
       case "thread.unarchive":
         return "thread.unarchived" as const;
+      case "thread.metadata.update":
+        return "thread.metadata-updated" as const;
+      case "thread.mark-unread":
+        return "thread.marked-unread" as const;
     }
   })();
   const events: Array<NewDomainEvent> = [
@@ -369,6 +410,44 @@ function dispatchThreadMutation(
     effects.push(...detached.effects);
   }
   return Result.succeed({ events, effects });
+}
+
+/** The run with the highest ordinal, which the sidebar shows (T3 Code's `projection.runs.at(-1)`). */
+export const latestRunOf = (
+  runs: ReadonlyArray<OrchestrationV2Run>,
+): OrchestrationV2Run | undefined =>
+  runs.reduce<OrchestrationV2Run | undefined>(
+    (found, run) => (found === undefined || run.ordinal > found.ordinal ? run : found),
+    undefined,
+  );
+
+/**
+ * The thread was viewed (T3 Code's `dispatchThreadVisit`): its read marker
+ * moves to the visit, never back, so a late visit from another window does
+ * not mark a newer completion read twice over. Viewing is not activity:
+ * `updatedAt` stays, and the event is written even when nothing moves.
+ */
+function dispatchThreadVisit(
+  command: Extract<OrchestrationV2Command, { type: "thread.visit" }>,
+  projection: OrchestrationV2ThreadProjection,
+  now: string,
+): ThreadCommandDecision {
+  const { thread } = projection;
+  const movesForward =
+    thread.lastVisitedAt === null ||
+    DateTime.toEpochMillis(DateTime.makeUnsafe(command.visitedAt)) >
+      DateTime.toEpochMillis(DateTime.makeUnsafe(thread.lastVisitedAt));
+  return {
+    events: [
+      {
+        type: "thread.visited",
+        threadId: thread.id,
+        occurredAt: now,
+        payload: movesForward ? { ...thread, lastVisitedAt: command.visitedAt } : thread,
+      },
+    ],
+    effects: [],
+  };
 }
 
 /**

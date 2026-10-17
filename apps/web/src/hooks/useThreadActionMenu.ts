@@ -9,7 +9,7 @@ import {
 } from "../components/threadActionMenu.logic.ts";
 import { readLocalApi } from "../localApi.ts";
 import { failureToast } from "../toast.ts";
-import { type ThreadActionTarget, useThreadActions } from "./useThreadActions.ts";
+import { markThreadUnread, type ThreadActionTarget, useThreadActions } from "./useThreadActions.ts";
 
 /**
  * Opens a thread's menu and runs what is chosen (T3 Code's
@@ -18,7 +18,11 @@ import { type ThreadActionTarget, useThreadActions } from "./useThreadActions.ts
  * **Confirm before archiving** is on, deleting when **Confirm before
  * deleting** is; a failure shows as a notice.
  */
-export function useThreadActionMenu(thread: ThreadActionTarget | null) {
+export function useThreadActionMenu(
+  thread: ThreadActionTarget | null,
+  options: { readonly onStartRename: () => void },
+) {
+  const { onStartRename } = options;
   const { archiveThread, confirmAndDeleteThread } = useThreadActions();
 
   const openMenu = useCallback(
@@ -31,6 +35,12 @@ export function useThreadActionMenu(thread: ThreadActionTarget | null) {
         });
         const chosen = await api.contextMenu.show(items, position).catch(() => null);
         switch (chosen) {
+          case "rename":
+            onStartRename();
+            return;
+          case "mark-unread":
+            await markThreadUnread(thread.id).catch(() => undefined);
+            return;
           case "archive": {
             const settings = await readClientSettings();
             if (
@@ -54,8 +64,9 @@ export function useThreadActionMenu(thread: ThreadActionTarget | null) {
         }
       })();
     },
-    [archiveThread, confirmAndDeleteThread, thread],
+    [archiveThread, confirmAndDeleteThread, onStartRename, thread],
   );
 
-  return { openMenu };
+  const closeMenu = useCallback(() => readLocalApi().contextMenu.close(), []);
+  return { openMenu, closeMenu };
 }

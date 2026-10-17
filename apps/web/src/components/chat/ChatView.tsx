@@ -8,18 +8,19 @@ import {
 import {
   ACTIVE_RUN_STATUSES,
   type ModelSelection,
+  type OrchestrationV2ThreadShell,
   type ProviderUserInputAnswers,
 } from "@playstead/contracts/orchestrationV2";
 import { useNavigate } from "@tanstack/react-router";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { requestPrimary, usePrimaryConnectionState } from "../../connection/runtime.ts";
 import { useThreadState } from "../../connection/useThread.ts";
 import { discardDraft, setDraftModelSelection, type ThreadDraft } from "../../drafts.ts";
-import { useThreadActionMenu } from "../../hooks/useThreadActionMenu.ts";
-import { ChevronDownIcon } from "../icons.tsx";
+import { type ThreadActionTarget, visitThread } from "../../hooks/useThreadActions.ts";
 import { newId } from "../../ids.ts";
 import { ChatComposer } from "./ChatComposer.tsx";
+import { ChatHeader } from "./ChatHeader.tsx";
 import {
   buildSendCommands,
   defaultModelSelection,
@@ -29,7 +30,51 @@ import {
 } from "./composer.logic.ts";
 import { MessagesTimeline } from "./MessagesTimeline.tsx";
 import { derivePendingUserInputs } from "./pendingUserInput.logic.ts";
+import { resolveThreadVisit } from "./threadVisit.logic.ts";
 import { deriveTimelineRows } from "./timeline.logic.ts";
+
+/**
+ * Sends `thread.visit` while the thread is in view, as `resolveThreadVisit`
+ * decides from the sidebar's copy of the thread (T3 Code's visit effect in
+ * `ChatView.tsx` at 2577baf, which reads the shell too). A failed visit is
+ * not reported, as in T3 Code.
+ */
+function useThreadVisits(thread: OrchestrationV2ThreadShell | undefined) {
+  const lastDispatchedKey = useRef<string | null>(null);
+  const lastDispatchAt = useRef(0);
+  const threadId = thread?.id;
+  const updatedAt = thread?.updatedAt;
+  const lastVisitedAt = thread?.lastVisitedAt;
+  const latestRunCompletedAt = thread?.latestRunCompletedAt;
+  useEffect(() => {
+    if (
+      threadId === undefined ||
+      updatedAt === undefined ||
+      lastVisitedAt === undefined ||
+      latestRunCompletedAt === undefined
+    ) {
+      return;
+    }
+    const decision = resolveThreadVisit({
+      thread: { id: threadId, updatedAt, lastVisitedAt, latestRunCompletedAt },
+      lastDispatchedKey: lastDispatchedKey.current,
+      lastDispatchAt: lastDispatchAt.current,
+      now: Date.now(),
+    });
+    if (decision.kind === "none") return;
+    const dispatch = () => {
+      lastDispatchedKey.current = decision.key;
+      lastDispatchAt.current = Date.now();
+      visitThread(threadId, decision.visitedAt).catch(() => undefined);
+    };
+    if (decision.kind === "now") {
+      dispatch();
+      return;
+    }
+    const timer = setTimeout(dispatch, decision.delayMs);
+    return () => clearTimeout(timer);
+  }, [threadId, updatedAt, lastVisitedAt, latestRunCompletedAt]);
+}
 
 const sendCommands = async (target: SendTarget, text: string, threadCommandId: CommandId) => {
   const commands = buildSendCommands({
@@ -187,47 +232,26 @@ export function ChatView(
     (found, run) => (found === undefined || run.ordinal > found.ordinal ? run : found),
     undefined,
   );
-  const { openMenu } = useThreadActionMenu(
-    projection === undefined
-      ? null
-      : {
-          id: projection.thread.id,
-          projectId: projection.thread.projectId,
-          title: projection.thread.title,
-          status: latestRun?.status ?? "idle",
-        },
+  const target = useMemo(
+    (): ThreadActionTarget | null =>
+      projection === undefined
+        ? null
+        : {
+            id: projection.thread.id,
+            projectId: projection.thread.projectId,
+            title: projection.thread.title,
+            status: latestRun?.status ?? "idle",
+          },
+    [projection, latestRun?.status],
+  );
+  useThreadVisits(
+    props.kind === "thread"
+      ? connection?.shell?.threads.find((candidate) => candidate.id === props.threadId)
+      : undefined,
   );
   return (
     <div className="flex h-full flex-col">
-      <header
-        onContextMenu={(event) => {
-          if (projection === undefined) return;
-          event.preventDefault();
-          openMenu({ x: event.clientX, y: event.clientY });
-        }}
-        className="flex items-center gap-2 border-b border-neutral-200 px-6 py-3 dark:border-neutral-800"
-      >
-        <h1 className="truncate text-sm font-medium">{title}</h1>
-        {projection === undefined ? null : (
-          <button
-            type="button"
-            aria-label={`Thread actions for ${title}`}
-            title="Thread actions"
-            onClick={(event) => {
-              const rect = event.currentTarget.getBoundingClientRect();
-              openMenu({ x: rect.left, y: rect.bottom + 4 });
-            }}
-            className="-ml-1 rounded p-0.5 text-neutral-500 hover:bg-neutral-100 hover:text-neutral-900 dark:text-neutral-400 dark:hover:bg-neutral-800 dark:hover:text-neutral-100"
-          >
-            <ChevronDownIcon className="size-3.5" />
-          </button>
-        )}
-        {project === undefined ? null : (
-          <span className="truncate text-xs text-neutral-500 dark:text-neutral-400">
-            {project.title}
-          </span>
-        )}
-      </header>
+      <ChatHeader title={title} projectTitle={project?.title} thread={target} />
       <div className="min-h-0 flex-1 overflow-y-auto">
         {error === undefined ? (
           <MessagesTimeline rows={rows} working={working} />

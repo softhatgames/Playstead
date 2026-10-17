@@ -7,6 +7,7 @@ import { CommandId, ProjectId, ThreadId } from "@playstead/contracts/baseSchemas
 import type {
   OrchestrationV2ArchivedShellSnapshot,
   OrchestrationV2Command,
+  OrchestrationV2ThreadShell,
 } from "@playstead/contracts/orchestrationV2";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -161,6 +162,62 @@ describe("archive and delete over RPC", () => {
             client["orchestration.getArchivedShellSnapshot"]({}),
           );
           assert.deepStrictEqual(after.threads, []);
+        }).pipe(Effect.scoped),
+    );
+
+    it.effect(
+      "the sidebar shows a renamed thread's new title and its read marker after a visit",
+      () =>
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const server = yield* startTestServer();
+          const folder = path.join(server.config.baseDir, "space-game");
+          yield* fs.makeDirectory(folder);
+          const { connection } = yield* connectSignedIn(server);
+          const projectId = ProjectId.make("project:space-game");
+          const threadId = ThreadId.make("thread:renamed");
+          const dispatch = (command: OrchestrationV2Command) =>
+            connection.request((client) => client["orchestration.dispatchCommand"](command));
+          yield* connection.request((client) =>
+            client["projects.mutate"]({
+              type: "project.create",
+              commandId: CommandId.make("command:space-game"),
+              projectId,
+              title: "space-game",
+              workspaceRoot: folder,
+            }),
+          );
+          yield* dispatch({
+            type: "thread.create",
+            commandId: CommandId.make("command:create"),
+            threadId,
+            projectId,
+            title: "New thread",
+            modelSelection: { instanceId: "claudeAgent", model: "claude-haiku-5-5" },
+          });
+          const sidebarThread = (matches: (thread: OrchestrationV2ThreadShell) => boolean) =>
+            awaitConnectionState(connection, (state) =>
+              (state.shell?.threads ?? []).some(
+                (thread) => thread.id === threadId && matches(thread),
+              ),
+            );
+          yield* sidebarThread((thread) => thread.lastVisitedAt === null);
+
+          yield* dispatch({
+            type: "thread.metadata.update",
+            commandId: CommandId.make("command:rename"),
+            threadId,
+            title: "Asteroid field",
+          });
+          yield* sidebarThread((thread) => thread.title === "Asteroid field");
+          yield* dispatch({
+            type: "thread.visit",
+            commandId: CommandId.make("command:visit"),
+            threadId,
+            visitedAt: "2026-10-17T12:00:00.000Z",
+          });
+          yield* sidebarThread((thread) => thread.lastVisitedAt === "2026-10-17T12:00:00.000Z");
         }).pipe(Effect.scoped),
     );
   });
