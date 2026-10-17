@@ -1,9 +1,6 @@
 import { CommandId, type ProjectId, ThreadId } from "@playstead/contracts/baseSchemas";
-import {
-  DEFAULT_RUNTIME_MODE,
-  type ModelSelection,
-  type RuntimeMode,
-} from "@playstead/contracts/orchestrationV2";
+import type { ModelSelection, RuntimeMode } from "@playstead/contracts/orchestrationV2";
+import type { ServerSettings } from "@playstead/contracts/settings";
 import { useSyncExternalStore } from "react";
 
 import { newId } from "./ids.ts";
@@ -27,7 +24,11 @@ export interface ThreadDraft {
   readonly threadCommandId: CommandId;
   /** Chosen in the model picker; the provider's default until then. */
   readonly modelSelection: ModelSelection | undefined;
-  /** Chosen in the mode picker; Full access until then. */
+  /**
+   * Chosen in the mode picker; until then the default permissions for new
+   * threads when the draft was made, so a later change to the default leaves
+   * it alone (T3 Code's `useHandleNewThread.ts` at 2577baf).
+   */
   readonly runtimeMode: RuntimeMode;
 }
 
@@ -44,7 +45,10 @@ const subscribe = (listener: () => void) => {
   return () => listeners.delete(listener);
 };
 
-export function createDraft(projectId: ProjectId): string {
+export function createDraft(
+  projectId: ProjectId,
+  settings: Pick<ServerSettings, "defaultRuntimeMode">,
+): string {
   const draftId = newId();
   drafts.set(draftId, {
     draftId,
@@ -52,7 +56,7 @@ export function createDraft(projectId: ProjectId): string {
     threadId: ThreadId.make(`thread:${newId()}`),
     threadCommandId: CommandId.make(`command:${newId()}`),
     modelSelection: undefined,
-    runtimeMode: DEFAULT_RUNTIME_MODE,
+    runtimeMode: settings.defaultRuntimeMode,
   });
   notify();
   return draftId;
@@ -77,8 +81,12 @@ export function discardDraft(draftId: string): void {
   if (drafts.delete(draftId)) notify();
 }
 
+export function readDraft(draftId: string): ThreadDraft | undefined {
+  return drafts.get(draftId);
+}
+
 export function useDraft(draftId: string): ThreadDraft | undefined {
-  return useSyncExternalStore(subscribe, () => drafts.get(draftId));
+  return useSyncExternalStore(subscribe, () => readDraft(draftId));
 }
 
 /** The mode chosen in a started thread's composer, for its next message. */

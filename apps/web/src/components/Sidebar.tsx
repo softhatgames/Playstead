@@ -1,4 +1,5 @@
 import { ACTIVE_RUN_STATUSES } from "@playstead/contracts/orchestrationV2";
+import { DEFAULT_SERVER_SETTINGS } from "@playstead/contracts/settings";
 import { Link, useNavigate, useParams } from "@tanstack/react-router";
 import { useEffect, useRef } from "react";
 
@@ -30,7 +31,8 @@ export function Sidebar() {
 
   const startThread = (projectId: (typeof threads)[number]["projectId"]) => {
     openProject(projectId);
-    void navigate({ to: "/draft/$draftId", params: { draftId: createDraft(projectId) } });
+    const draftId = createDraft(projectId, state?.config?.settings ?? DEFAULT_SERVER_SETTINGS);
+    void navigate({ to: "/draft/$draftId", params: { draftId } });
   };
 
   return (
