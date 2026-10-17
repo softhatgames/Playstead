@@ -6,7 +6,10 @@ import { useCallback } from "react";
 import { readClientSettings } from "../clientSettings.ts";
 import { requestCustomSnooze } from "../components/CustomSnoozeDialog.tsx";
 import { buildMultiSelectThreadContextMenuItems } from "../components/Sidebar.logic.ts";
-import { threadRuntimeCanArchive } from "../components/threadActionMenu.logic.ts";
+import {
+  requestBulkArchiveConfirmation,
+  threadRuntimeCanArchive,
+} from "../components/threadActionMenu.logic.ts";
 import { readLocalApi } from "../localApi.ts";
 import {
   clearThreadSelection,
@@ -108,6 +111,15 @@ export function useBulkThreadMenu(input: {
             for (const thread of targets) void markThreadUnread(thread.id).catch(() => undefined);
             return;
           case "archive": {
+            const settings = await readClientSettings();
+            if (
+              !(await requestBulkArchiveConfirmation({
+                enabled: settings.confirmThreadArchive,
+                count: targets.length,
+                confirm: (message) => api.dialogs.confirm(message),
+              }))
+            )
+              return;
             // T3 Code's `archiveSelectedThreadEntries`: one at a time, stopping at a failure.
             const archived: Array<string> = [];
             for (const thread of targets) {
@@ -132,18 +144,18 @@ export function useBulkThreadMenu(input: {
             ) {
               return;
             }
-            const deleted: Array<string> = [];
+            const deleted = new Set<string>();
             let failure: unknown = null;
             for (const thread of targets) {
               try {
-                await deleteThread(thread);
-                deleted.push(thread.id);
+                await deleteThread(thread, deleted);
+                deleted.add(thread.id);
               } catch (error) {
                 failure ??= error;
               }
             }
             if (failure !== null) failureToast("Failed to delete threads", failure);
-            removeFromThreadSelection(deleted);
+            removeFromThreadSelection([...deleted]);
             return;
           }
           case "regenerate-title":

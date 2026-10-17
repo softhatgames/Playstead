@@ -48,8 +48,11 @@ export function threadRaisedHandWhileSnoozed(shell: ThreadSnoozeShell): boolean 
  * turn (T3 Code's queued turn start; Playstead's run is `starting` then).
  * A working thread may be snoozed: a snooze never pauses the agent.
  */
-export function canSnooze(shell: Pick<ThreadSnoozeShell, "status" | "hasPendingUserInput">) {
-  return !shell.hasPendingUserInput && shell.status !== "starting";
+export function canSnooze(
+  shell: Pick<ThreadSnoozeShell, "status" | "hasPendingUserInput"> &
+    Pick<OrchestrationV2ThreadShell, "hasQueuedRun">,
+) {
+  return !shell.hasPendingUserInput && !shell.hasQueuedRun && shell.status !== "starting";
 }
 
 /** Whether the thread shows as snoozed at `now` (T3 Code's `effectiveSnoozed`). */

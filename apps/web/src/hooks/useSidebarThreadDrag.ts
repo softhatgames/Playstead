@@ -26,6 +26,7 @@ import {
   planSidebarThreadDrop,
   resolveSidebarDropTarget,
   resolveSidebarSweepKeys,
+  canApplySidebarSweep,
   sidebarListItemId,
   type SidebarListSection,
   sidebarMarkerId,
@@ -445,8 +446,13 @@ export function useSidebarThreadDrag(input: {
     (thread: SidebarThread, action: SidebarSweepAction, event: PointerEvent) => {
       const originSection = latest.current.sectionById.get(thread.id);
       const canApply = (key: string) =>
-        latest.current.threadsById.has(key) &&
-        latest.current.sectionById.get(key) === originSection;
+        canApplySidebarSweep({
+          thread: latest.current.threadsById.get(key),
+          action,
+          section: latest.current.sectionById.get(key),
+          originSection,
+        });
+      if (!canApply(thread.id)) return;
       let targetKey: string | null = null;
       let swept: string[] = [];
       const sweepTo = (key: string | null) => {
@@ -471,6 +477,7 @@ export function useSidebarThreadDrag(input: {
         onMove: ({ y }) =>
           sweepTo(threadListRef.current && sidebarThreadKeyAtY(threadListRef.current, y)),
         onEnd: () => {
+          if (!canApply(thread.id)) return;
           const targets = swept
             .filter(canApply)
             .flatMap((key) => latest.current.threadsById.get(key) ?? []);

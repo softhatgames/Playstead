@@ -7,6 +7,7 @@ import {
   fallbackThreadAfterDelete,
   legacyThreadMenuItems,
   requestThreadUnpinConfirmation,
+  requestBulkArchiveConfirmation,
   threadArchiveConfirmation,
   threadDeleteConfirmation,
   threadRuntimeCanArchive,
@@ -287,4 +288,45 @@ describe("fallbackThreadAfterDelete", () => {
     assert.isNull(fallbackThreadAfterDelete(threads, ThreadId.make("elsewhere")));
     assert.isNull(fallbackThreadAfterDelete(threads, ThreadId.make("unknown")));
   });
+});
+
+describe("bulk archive confirmation", () => {
+  for (const enabled of [true, false]) {
+    it(`respects archive confirmation ${enabled ? "on" : "off"}`, async () => {
+      const asked: string[] = [];
+      assert.strictEqual(
+        await requestBulkArchiveConfirmation({
+          enabled,
+          count: 3,
+          confirm: async (message) => {
+            asked.push(message);
+            return false;
+          },
+        }),
+        !enabled,
+      );
+      assert.deepStrictEqual(asked, enabled ? ["Archive 3 threads?"] : []);
+    });
+  }
+});
+
+it("bulk delete excludes successes but keeps a failed target as a fallback after the deleted row leaves the shell", () => {
+  const projectId = ProjectId.make("p");
+  const rows = ["failed", "success"].map((id) => ({
+    id: ThreadId.make(id),
+    projectId,
+    createdAt: id === "success" ? "2026-10-17" : "2026-10-16",
+  }));
+  assert.strictEqual(
+    fallbackThreadAfterDelete(rows, ThreadId.make("gone"), new Set(["success"]), projectId),
+    "failed",
+  );
+  assert.isNull(
+    fallbackThreadAfterDelete(
+      rows,
+      ThreadId.make("gone"),
+      new Set(["success", "failed"]),
+      projectId,
+    ),
+  );
 });

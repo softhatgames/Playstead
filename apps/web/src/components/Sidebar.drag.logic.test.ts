@@ -6,6 +6,7 @@ import {
   resolveSidebarDropTarget,
   resolveSidebarDropVerb,
   resolveSidebarSweepKeys,
+  canApplySidebarSweep,
   type SidebarListSection,
   sidebarMarkerId,
 } from "./Sidebar.drag.logic.ts";
@@ -236,4 +237,54 @@ describe("press-and-drag Settle", () => {
       [],
     );
   });
+});
+
+it("sweeps in either direction, skips busy rows, and refuses a busy origin or another shelf", () => {
+  const idle = {
+    status: "idle" as const,
+    hasPendingUserInput: false,
+    hasQueuedRun: false,
+    settledOverride: null,
+    snoozedUntil: null,
+  };
+  const allowed = (key: string) =>
+    canApplySidebarSweep({
+      thread: { ...idle, hasQueuedRun: key === "b" },
+      action: "settle",
+      section: key === "d" ? "pinned" : "active",
+      originSection: "active",
+    });
+  assert.deepStrictEqual(resolveSidebarSweepKeys(["a", "b", "c", "d"], "a", "d", allowed), [
+    "a",
+    "c",
+  ]);
+  assert.deepStrictEqual(resolveSidebarSweepKeys(["a", "b", "c", "d"], "c", "a", allowed), [
+    "a",
+    "c",
+  ]);
+  assert.deepStrictEqual(resolveSidebarSweepKeys(["a", "b", "c"], "b", "c", allowed), []);
+  assert.isFalse(
+    canApplySidebarSweep({
+      thread: { ...idle, hasPendingUserInput: true },
+      action: "settle",
+      section: "active",
+      originSection: "active",
+    }),
+  );
+  assert.isTrue(
+    canApplySidebarSweep({
+      thread: { ...idle, settledOverride: "settled" },
+      action: "unsettle",
+      section: "settled",
+      originSection: "settled",
+    }),
+  );
+  assert.isTrue(
+    canApplySidebarSweep({
+      thread: { ...idle, snoozedUntil: "2026-11-01" },
+      action: "unsnooze",
+      section: "snoozed",
+      originSection: "snoozed",
+    }),
+  );
 });

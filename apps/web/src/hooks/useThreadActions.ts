@@ -2,7 +2,7 @@ import { pinOrderKeyBetween } from "@playstead/client-runtime/state/threadSort";
 import { canSnooze } from "@playstead/client-runtime/state/threadSettled";
 import { CommandId, type ThreadId } from "@playstead/contracts/baseSchemas";
 import type { OrchestrationV2ThreadShell } from "@playstead/contracts/orchestrationV2";
-import { useNavigate, useParams } from "@tanstack/react-router";
+import { useNavigate, useParams, useRouter } from "@tanstack/react-router";
 import { useCallback, useMemo } from "react";
 
 import { readClientSettings } from "../clientSettings.ts";
@@ -16,7 +16,6 @@ import {
   readPrimaryServerSettings,
   readPrimaryShellThreads,
   requestPrimary,
-  usePrimaryConnectionState,
 } from "../connection/runtime.ts";
 import { createDraft } from "../drafts.ts";
 import { newId } from "../ids.ts";
@@ -42,6 +41,7 @@ export type ThreadLifecycleTarget = ThreadActionTarget &
     | "snoozedAt"
     | "latestRunCompletedAt"
     | "hasPendingUserInput"
+    | "hasQueuedRun"
   >;
 
 const commandId = () => CommandId.make(`command:${newId()}`);
@@ -253,7 +253,10 @@ const sendSnooze = (threadId: ThreadId, snoozedUntil: string) =>
  * not ahead. The promise rejects with the reason.
  */
 export async function snoozeThread(
-  thread: Pick<OrchestrationV2ThreadShell, "id" | "status" | "hasPendingUserInput">,
+  thread: Pick<
+    OrchestrationV2ThreadShell,
+    "id" | "status" | "hasPendingUserInput" | "hasQueuedRun"
+  >,
   snoozedUntil: string,
 ): Promise<void> {
   if (!canSnooze(thread)) {
@@ -323,7 +326,7 @@ export async function settleThread(
 export function useThreadActions() {
   const navigate = useNavigate();
   const { threadId: routeThreadId } = useParams({ strict: false });
-  const threads = usePrimaryConnectionState()?.shell?.threads;
+  const router = useRouter();
 
   const unarchiveThread = useCallback(
     async (threadId: ThreadId, options: { readonly navigate?: boolean } = {}) => {
@@ -366,15 +369,23 @@ export function useThreadActions() {
   );
 
   const deleteThread = useCallback(
-    async (thread: ThreadActionTarget) => {
-      const fallback = fallbackThreadAfterDelete(threads ?? [], thread.id);
+    async (thread: ThreadActionTarget, deletedThreadIds: ReadonlySet<string> = new Set()) => {
       await dispatchThreadCommand("thread.delete", thread.id);
-      if (routeThreadId !== thread.id) return;
+      const viewing = router.state.matches.some(
+        (match) => "threadId" in match.params && match.params.threadId === thread.id,
+      );
+      if (!viewing) return;
+      const fallback = fallbackThreadAfterDelete(
+        readPrimaryShellThreads(),
+        thread.id,
+        deletedThreadIds,
+        thread.projectId,
+      );
       await (fallback === null
         ? navigate({ to: "/", replace: true })
         : navigate({ to: "/threads/$threadId", params: { threadId: fallback }, replace: true }));
     },
-    [navigate, routeThreadId, threads],
+    [navigate, router],
   );
 
   /** Deletes after asking, when **Confirm before deleting** is on; false if the person declined. */

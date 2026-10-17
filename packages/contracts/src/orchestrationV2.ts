@@ -702,6 +702,8 @@ export const OrchestrationV2ThreadShell = Schema.Struct({
   snoozedAt: Schema.NullOr(IsoDateTime),
   /** A provider waits on the person's answer (T3 Code's `hasPendingUserInput`); it wakes a snooze. */
   hasPendingUserInput: Schema.Boolean,
+  /** A message waits in the queue; older server shells may omit this. */
+  hasQueuedRun: Schema.optional(Schema.Boolean),
   autoSettleDisabledAt: Schema.NullOr(IsoDateTime),
   /** Set while a title is being generated; the sidebar dims the title. */
   titleRegeneration: Schema.NullOr(OrchestrationV2TitleRegeneration),

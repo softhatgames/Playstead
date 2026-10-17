@@ -195,12 +195,29 @@ export const threadDeleteConfirmation = (title: string) =>
 export function fallbackThreadAfterDelete(
   threads: ReadonlyArray<Pick<OrchestrationV2ThreadShell, "id" | "projectId" | "createdAt">>,
   deletedThreadId: ThreadId,
+  deletedThreadIds: ReadonlySet<string> = new Set(),
+  projectId = threads.find((thread) => thread.id === deletedThreadId)?.projectId,
 ): ThreadId | null {
-  const deleted = threads.find((thread) => thread.id === deletedThreadId);
-  if (deleted === undefined) return null;
+  if (projectId === undefined) return null;
   return (
     threads
-      .filter((thread) => thread.projectId === deleted.projectId && thread.id !== deletedThreadId)
+      .filter(
+        (thread) =>
+          thread.projectId === projectId &&
+          thread.id !== deletedThreadId &&
+          !deletedThreadIds.has(thread.id),
+      )
       .toSorted((left, right) => right.createdAt.localeCompare(left.createdAt))[0]?.id ?? null
+  );
+}
+
+/** Ask once before the bulk archive mutates any selected thread. */
+export async function requestBulkArchiveConfirmation(input: {
+  readonly enabled: boolean;
+  readonly count: number;
+  readonly confirm: (message: string) => Promise<boolean>;
+}): Promise<boolean> {
+  return (
+    !input.enabled || input.confirm(`Archive ${input.count} thread${input.count === 1 ? "" : "s"}?`)
   );
 }

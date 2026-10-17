@@ -568,6 +568,7 @@ export function ChatView(
             snoozedUntil: projection.thread.snoozedUntil,
             snoozedAt: projection.thread.snoozedAt,
             latestRunCompletedAt: latestRun?.completedAt ?? null,
+            hasQueuedRun: projection.runs.some((run) => run.status === "queued"),
             hasPendingUserInput: projection.runtimeRequests.some(
               (request) => request.status === "pending",
             ),

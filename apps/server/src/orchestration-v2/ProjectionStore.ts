@@ -154,6 +154,7 @@ const toThreadShell = (
     activeOrderKey: thread.activeOrderKey,
     snoozedUntil: thread.snoozedUntil,
     snoozedAt: thread.snoozedAt,
+    hasQueuedRun: runs.some((run) => run.status === "queued"),
     hasPendingUserInput: runtimeRequests.some((request) => request.status === "pending"),
     autoSettleDisabledAt: thread.autoSettleDisabledAt,
     titleRegeneration: thread.titleRegeneration,

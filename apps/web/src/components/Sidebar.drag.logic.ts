@@ -269,7 +269,7 @@ export function resolveSidebarSweepKeys(
 ): string[] {
   const origin = orderedKeys.indexOf(originKey);
   const target = orderedKeys.indexOf(targetKey);
-  if (origin === -1 || target === -1) return [];
+  if (origin === -1 || target === -1 || !canApply(originKey)) return [];
   return orderedKeys.slice(Math.min(origin, target), Math.max(origin, target) + 1).filter(canApply);
 }
 
@@ -369,4 +369,30 @@ export function dropLanded(
         canonical.snoozedUntil === thread.snoozedUntil)
     );
   });
+}
+
+/** Eligibility is checked both while sweeping and on release. */
+export function canApplySidebarSweep(input: {
+  readonly thread:
+    | Pick<
+        SidebarThread,
+        "status" | "hasPendingUserInput" | "hasQueuedRun" | "settledOverride" | "snoozedUntil"
+      >
+    | undefined;
+  readonly action: "settle" | "unsettle" | "unsnooze";
+  readonly section: SidebarListSection | undefined;
+  readonly originSection: SidebarListSection | undefined;
+}): boolean {
+  const { thread, action, section, originSection } = input;
+  if (thread === undefined || section === undefined || section !== originSection) return false;
+  if (action === "unsnooze") return section === "snoozed" && thread.snoozedUntil !== null;
+  if (action === "unsettle") return section === "settled" && thread.settledOverride === "settled";
+  return (
+    thread.status !== "starting" &&
+    thread.status !== "running" &&
+    thread.status !== "waiting" &&
+    !thread.hasPendingUserInput &&
+    !thread.hasQueuedRun &&
+    thread.settledOverride !== "settled"
+  );
 }
