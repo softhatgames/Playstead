@@ -142,6 +142,12 @@ const dispatchQueueCommand = (
       }
     | { readonly type: "queued-run.cancel"; readonly threadId: ThreadId; readonly runId: RunId }
     | {
+        readonly type: "queued-message.promote-to-steer";
+        readonly threadId: ThreadId;
+        readonly queuedRunId: RunId;
+        readonly targetRunId: RunId;
+      }
+    | {
         readonly type: "queued-run.edit";
         readonly threadId: ThreadId;
         readonly runId: RunId;
@@ -217,8 +223,9 @@ export function ChatView(
       deriveThreadQueueWorkflowState({
         runs: projection?.runs ?? [],
         messages: projection?.messages ?? [],
+        providerTurns: projection?.providerTurns ?? [],
       }),
-    [projection?.runs, projection?.messages],
+    [projection?.runs, projection?.messages, projection?.providerTurns],
   );
   const resumableRunId =
     projection === undefined ? null : resolveResumableRunId({ runs: projection.runs });
@@ -527,6 +534,17 @@ export function ChatView(
         }
         onUpdateQueuedRun={(runId, text) =>
           dispatchQueueCommand({ type: "queued-run.edit", threadId, runId, text })
+        }
+        canPromoteToSteer={queue.canPromoteToSteer}
+        onSteerQueuedRun={(queuedRunId) =>
+          queue.activeRun === null
+            ? Promise.resolve()
+            : dispatchQueueCommand({
+                type: "queued-message.promote-to-steer",
+                threadId,
+                queuedRunId,
+                targetRunId: queue.activeRun.id,
+              })
         }
         pendingApprovals={pendingApprovals}
         onRespondToApproval={(requestId, decision) =>

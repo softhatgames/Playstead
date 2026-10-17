@@ -1,7 +1,12 @@
 import type { ThreadId } from "@playstead/contracts/baseSchemas";
 import { ACTIVE_RUN_STATUSES, type OrchestrationV2Run } from "@playstead/contracts/orchestrationV2";
 import * as HostProcess from "@playstead/shared/hostProcess";
+import type {
+  ProviderAdapterV2,
+  ProviderAdapterV2Event,
+} from "@playstead/provider-core/server/ProviderAdapter";
 import type { ProcessEnvironment } from "@playstead/shared/shell";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
@@ -75,9 +80,31 @@ export const makeOrchestrationHarness = Effect.fn("makeOrchestrationHarness")(fu
           Effect.provideService(CodexAppServerClientFactory, input.codexClients),
           Effect.map((adapter) => [adapter]),
         );
+  // A turn's end can be held back from the server, as when the provider's
+  // last events are still on their way while the person sends a message.
+  let turnEndHold:
+    | { readonly reached: Deferred.Deferred<void>; readonly release: Deferred.Deferred<void> }
+    | undefined;
+  const gateTurnEnd = (event: ProviderAdapterV2Event) =>
+    Effect.suspend(() => {
+      const hold = turnEndHold;
+      if (event.type !== "turn.terminal" || hold === undefined) return Effect.void;
+      turnEndHold = undefined;
+      return Deferred.succeed(hold.reached, undefined).pipe(
+        Effect.andThen(Deferred.await(hold.release)),
+      );
+    });
+  const gated = (adapter: ProviderAdapterV2): ProviderAdapterV2 => ({
+    ...adapter,
+    openSession: (open) =>
+      Effect.map(adapter.openSession(open), (session) => ({
+        ...session,
+        subscribeEvents: Effect.map(session.subscribeEvents, Stream.tap(gateTurnEnd)),
+      })),
+  });
   const adapters = Layer.unwrap(
     Effect.map(Effect.all([claude, codex]), (lists) =>
-      ProviderAdapterRegistry.layerFromAdapters(lists.flat()),
+      ProviderAdapterRegistry.layerFromAdapters(lists.flat().map(gated)),
     ),
   );
   const context = yield* Layer.build(
@@ -126,5 +153,19 @@ export const makeOrchestrationHarness = Effect.fn("makeOrchestrationHarness")(fu
       ),
     );
 
-  return { ...services, home: config.baseDir, awaitRunEnded };
+  /**
+   * Holds back the next turn's end from the server: the provider has ended
+   * the turn, but its run stays running until `release`. `reached` waits
+   * until the end is being held.
+   */
+  const holdNextTurnEnd = Effect.gen(function* () {
+    const hold = { reached: yield* Deferred.make<void>(), release: yield* Deferred.make<void>() };
+    turnEndHold = hold;
+    return {
+      reached: Deferred.await(hold.reached),
+      release: Deferred.succeed(hold.release, undefined).pipe(Effect.asVoid),
+    };
+  });
+
+  return { ...services, home: config.baseDir, awaitRunEnded, holdNextTurnEnd };
 });

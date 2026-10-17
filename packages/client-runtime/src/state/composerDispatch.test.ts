@@ -18,12 +18,12 @@ describe("resolveComposerDispatchMode", () => {
       resolveComposerDispatchMode({
         running: false,
         alternateModifier: true,
-        activeTurnDefault: "queue",
+        activeTurnDefault: "steer",
       }),
     ).toBe("auto");
   });
 
-  it("queues while a run is active", () => {
+  it("does the follow-up behaviour while a run is active", () => {
     expect(
       resolveComposerDispatchMode({
         running: true,
@@ -31,16 +31,31 @@ describe("resolveComposerDispatchMode", () => {
         activeTurnDefault: "queue",
       }),
     ).toBe("queue");
+    expect(
+      resolveComposerDispatchMode({
+        running: true,
+        alternateModifier: false,
+        activeTurnDefault: "steer",
+      }),
+    ).toBe("steer");
   });
 
-  it("queues with Mod held too, while queueing is the only follow-up", () => {
-    expect(alternateComposerDispatchAction("queue")).toBeUndefined();
+  it("does the other follow-up with Mod held", () => {
     expect(
       resolveComposerDispatchMode({
         running: true,
         alternateModifier: true,
         activeTurnDefault: "queue",
       }),
+    ).toBe("steer");
+    expect(
+      resolveComposerDispatchMode({
+        running: true,
+        alternateModifier: true,
+        activeTurnDefault: "steer",
+      }),
     ).toBe("queue");
+    expect(alternateComposerDispatchAction("queue")).toBe("steer");
+    expect(alternateComposerDispatchAction("steer")).toBe("queue");
   });
 });

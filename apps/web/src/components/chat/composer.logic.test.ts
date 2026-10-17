@@ -23,6 +23,7 @@ import {
   isComposerModeShortcut,
   isEditQueuedMessageShortcut,
   isSendAlternateShortcut,
+  isSteerQueuedMessageShortcut,
   resolveComposerSelection,
 } from "./composer.logic.ts";
 
@@ -238,6 +239,35 @@ describe("buildSendCommands", () => {
     ]);
   });
 
+  it("sends a steer for the server to put into the active run", () => {
+    const commands = buildSendCommands({
+      target: {
+        kind: "existing",
+        threadId: ThreadId.make("thread:1"),
+        hasMessages: true,
+        runtimeMode: "full-access",
+        modelSelection: { instanceId: "codex", model: "gpt-5.6-terra" },
+      },
+      runtimeMode: "full-access",
+      dispatchMode: "steer",
+      text: "Use blue instead",
+      ids,
+    });
+
+    assert.deepStrictEqual<unknown>(commands, [
+      {
+        type: "message.dispatch",
+        commandId: "command:message",
+        threadId: "thread:1",
+        messageId: "message:1",
+        text: "Use blue instead",
+        modelSelection: { instanceId: "codex", model: "gpt-5.6-terra" },
+        dispatchMode: { type: "start_immediately" },
+        deliveryIntent: "steer",
+      },
+    ]);
+  });
+
   it("creates a new thread in plan mode when the draft is in plan mode", () => {
     const commands = buildSendCommands({
       target: {
@@ -398,6 +428,7 @@ describe("deriveComposerAction", () => {
     readonly hasContent?: boolean;
     readonly editingQueuedMessage?: boolean;
     readonly canResume?: boolean;
+    readonly followUp?: "queue" | "steer";
   }) =>
     deriveComposerAction({
       runs: input.runs,
@@ -406,9 +437,16 @@ describe("deriveComposerAction", () => {
       editingQueuedMessage: input.editingQueuedMessage ?? false,
       canResume: input.canResume ?? false,
       dispatchMode: input.runs.some((candidate) => candidate.status === "running")
-        ? "queue"
+        ? (input.followUp ?? "queue")
         : "auto",
     });
+
+  it("steers with what is typed while a run is active, when that is the follow-up", () => {
+    assert.deepStrictEqual(
+      action({ runs: [run("run:2", "running")], hasContent: true, followUp: "steer" }),
+      { kind: "steer" },
+    );
+  });
 
   it("offers sending while no run is active", () => {
     assert.deepStrictEqual(action({ runs: [run("run:1", "completed")], hasContent: true }), {
@@ -506,6 +544,19 @@ describe("queue shortcuts", () => {
         isSendAlternateShortcut(keys("Enter", ["meta", "shift"]), "MacIntel"),
       ],
       [true, true, false, false],
+    );
+  });
+
+  it("sends the first queued message as a steer with mod+shift+enter", () => {
+    assert.deepStrictEqual(
+      [
+        isSteerQueuedMessageShortcut(keys("Enter", ["meta", "shift"]), "MacIntel"),
+        isSteerQueuedMessageShortcut(keys("Enter", ["ctrl", "shift"]), "Win32"),
+        isSteerQueuedMessageShortcut(keys("Enter", ["meta"]), "MacIntel"),
+        isSteerQueuedMessageShortcut(keys("Enter", ["ctrl", "shift"]), "MacIntel"),
+        isSteerQueuedMessageShortcut(keys("Enter", ["meta", "shift", "alt"]), "MacIntel"),
+      ],
+      [true, true, false, false, false],
     );
   });
 

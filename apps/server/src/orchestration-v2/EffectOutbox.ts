@@ -1,6 +1,8 @@
 import {
   CommandId,
+  MessageId,
   ProviderSessionId,
+  ProviderThreadId,
   ProviderTurnId,
   RunId,
   RuntimeRequestId,
@@ -23,8 +25,9 @@ import * as SqlClient from "effect/sql/SqlClient";
 /**
  * The work a command leaves for the effect worker (T3 Code's
  * `OrchestrationEffectRequestV2` at 2577baf): starting a run's provider
- * turn, interrupting it, and giving the provider the person's decision on
- * its approval or answers to its question. There is no checkpoint, title generation or cleanup.
+ * turn, interrupting it, steering it with a message, and giving the
+ * provider the person's decision on its approval or answers to its
+ * question. There is no checkpoint, title generation or cleanup.
  */
 const OrchestrationEffectRequestV2 = Schema.Union([
   Schema.Struct({ type: Schema.Literal("provider-turn.start"), runId: RunId }),
@@ -32,6 +35,14 @@ const OrchestrationEffectRequestV2 = Schema.Union([
     type: Schema.Literal("provider-turn.interrupt"),
     runId: RunId,
     providerTurnId: ProviderTurnId,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("provider-turn.steer"),
+    runId: RunId,
+    providerSessionId: ProviderSessionId,
+    providerThreadId: ProviderThreadId,
+    providerTurnId: ProviderTurnId,
+    messageId: MessageId,
   }),
   Schema.Struct({
     type: Schema.Literal("runtime-request.respond"),
@@ -53,6 +64,7 @@ export type OrchestrationEffectRequestV2 = typeof OrchestrationEffectRequestV2.T
 const PROCESS_BOUND_EFFECT_TYPES: ReadonlyArray<OrchestrationEffectRequestV2["type"]> = [
   "provider-turn.start",
   "provider-turn.interrupt",
+  "provider-turn.steer",
   "runtime-request.respond",
 ];
 

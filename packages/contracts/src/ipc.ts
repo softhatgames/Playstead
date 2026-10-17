@@ -29,10 +29,11 @@ export interface DesktopEnvironmentBootstrap {
 
 /**
  * What Enter does while a run is active (T3 Code's `followUpBehavior` in
- * `packages/contracts/src/settings.ts` at 2577baf). Playstead has queueing
- * so far; steering adds `steer`.
+ * `packages/contracts/src/settings.ts` at 2577baf): queue the message
+ * behind the run, or steer the run with it. Queue is the default, as T3
+ * Code's code has it (its composer document says steer).
  */
-export const FollowUpBehavior = Schema.Literals(["queue"]);
+export const FollowUpBehavior = Schema.Literals(["queue", "steer"]);
 export type FollowUpBehavior = typeof FollowUpBehavior.Type;
 
 /**

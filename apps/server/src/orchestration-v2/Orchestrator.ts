@@ -135,6 +135,11 @@ const make = Effect.gen(function* () {
       if (Option.isSome(previous)) return previous.value;
 
       const projection = Option.getOrUndefined(yield* projections.getThread(command.threadId));
+      const turns =
+        command.type === "thread.create" || projection === undefined
+          ? undefined
+          : Option.getOrUndefined(yield* adapters.get(projection.thread.providerInstanceId))
+              ?.capabilities.turns;
       const state =
         command.type === "thread.create"
           ? {
@@ -144,18 +149,14 @@ const make = Effect.gen(function* () {
                 yield* adapters.get(command.modelSelection.instanceId),
               ),
               supportsQueuedMessages: false,
+              supportsActiveSteering: false,
             }
           : {
               projection,
               projectExists: true,
               instanceHasAdapter: true,
-              supportsQueuedMessages:
-                projection === undefined
-                  ? false
-                  : Option.match(yield* adapters.get(projection.thread.providerInstanceId), {
-                      onNone: () => false,
-                      onSome: (adapter) => adapter.capabilities.turns.supportsQueuedMessages,
-                    }),
+              supportsQueuedMessages: turns?.supportsQueuedMessages ?? false,
+              supportsActiveSteering: turns?.supportsActiveSteering ?? false,
               // A plan implemented in a new thread is the original thread's.
               sourcePlanThread:
                 command.type !== "message.dispatch" || command.sourcePlanRef === undefined

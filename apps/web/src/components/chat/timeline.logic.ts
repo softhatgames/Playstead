@@ -8,7 +8,17 @@ import type { OrchestrationV2TurnItem } from "@playstead/contracts/orchestration
  * `apps/web/src/components/chat/MessagesTimeline.logic.ts` at 2577baf.
  */
 export type TimelineRow =
-  | { readonly kind: "user"; readonly id: string; readonly text: string }
+  | {
+      readonly kind: "user";
+      readonly id: string;
+      readonly text: string;
+      /**
+       * How a message that did not simply start its turn reached it (T3
+       * Code's `UserMessageIntentMarker`): it steered the running turn, was
+       * queued and then steered, or waited in the queue.
+       */
+      readonly intent?: "steer" | "promoted_queued_to_steer" | "queued_turn";
+    }
   | {
       readonly kind: "assistant";
       readonly id: string;
@@ -118,7 +128,9 @@ export function deriveTimelineRows(
   return shown.map((item): TimelineRow => {
     switch (item.type) {
       case "user_message":
-        return { kind: "user", id: item.id, text: item.text };
+        return item.inputIntent === undefined || item.inputIntent === "turn_start"
+          ? { kind: "user", id: item.id, text: item.text }
+          : { kind: "user", id: item.id, text: item.text, intent: item.inputIntent };
       case "assistant_message":
         return { kind: "assistant", id: item.id, text: item.text, streaming: item.streaming };
       case "file_change":
