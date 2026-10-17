@@ -12,6 +12,7 @@ import {
   type OrchestrationV2Command,
   type OrchestrationV2Run,
   type OrchestrationV2TurnItem,
+  type RuntimeMode,
 } from "@playstead/contracts/orchestrationV2";
 import type { ProviderInstanceId } from "@playstead/contracts/providerInstance";
 import type { ServerProvider, ServerProviderModel } from "@playstead/contracts/server";
@@ -63,23 +64,36 @@ export type SendTarget =
       readonly projectId: ProjectId;
       readonly modelSelection: ModelSelection;
     }
-  | { readonly kind: "existing"; readonly threadId: ThreadId; readonly hasMessages: boolean };
+  | {
+      readonly kind: "existing";
+      readonly threadId: ThreadId;
+      readonly hasMessages: boolean;
+      /** The mode the thread runs in on the server. */
+      readonly runtimeMode: RuntimeMode;
+    };
 
 /**
  * The commands a send dispatches, in order. From a new thread that is
- * `thread.create` and then `message.dispatch`; T3 Code folds the first into
- * the message's `bootstrap`. The first message carries T3 Code's title seed.
+ * `thread.create` in the composer's mode and then `message.dispatch`; T3
+ * Code folds the first into the message's `bootstrap`. To a started thread
+ * whose mode was changed in the composer, the mode goes first
+ * (`thread.runtime-mode.set`), as T3 Code's
+ * `persistThreadSettingsForNextTurn` sends it. The first message carries T3
+ * Code's title seed.
  */
 export function buildSendCommands(input: {
   readonly target: SendTarget;
+  /** The mode chosen in the composer. */
+  readonly runtimeMode: RuntimeMode;
   readonly text: string;
   readonly ids: {
     readonly threadCommandId: CommandId;
     readonly messageCommandId: CommandId;
     readonly messageId: MessageId;
+    readonly runtimeModeCommandId: CommandId;
   };
 }): ReadonlyArray<OrchestrationV2Command> {
-  const { target, ids } = input;
+  const { target, ids, runtimeMode } = input;
   const text = input.text.trim();
   const firstMessage = target.kind === "new" || !target.hasMessages;
   const message: OrchestrationV2Command = {
@@ -90,7 +104,19 @@ export function buildSendCommands(input: {
     text,
     ...(firstMessage ? { titleSeed: deriveThreadTitleSeed(text) } : {}),
   };
-  if (target.kind === "existing") return [message];
+  if (target.kind === "existing") {
+    return target.runtimeMode === runtimeMode
+      ? [message]
+      : [
+          {
+            type: "thread.runtime-mode.set",
+            commandId: ids.runtimeModeCommandId,
+            threadId: target.threadId,
+            runtimeMode,
+          },
+          message,
+        ];
+  }
   return [
     {
       type: "thread.create",
@@ -99,6 +125,7 @@ export function buildSendCommands(input: {
       projectId: target.projectId,
       title: "New thread",
       modelSelection: target.modelSelection,
+      runtimeMode,
     },
     message,
   ];
@@ -132,4 +159,29 @@ export function deriveComposerAction(
  */
 export function canChooseModel(action: ComposerAction): boolean {
   return action.kind === "send";
+}
+
+/**
+ * Whether a key press is `mod+shift+a`, T3 Code's default keybinding for
+ * `composer.mode` (`packages/shared/src/keybindings.ts` at 2577baf), which
+ * opens the mode picker. `mod` is Command on a Mac and Control elsewhere;
+ * no other modifier may be held, as T3 Code's matcher requires.
+ */
+export function isComposerModeShortcut(
+  event: {
+    readonly key: string;
+    readonly metaKey: boolean;
+    readonly ctrlKey: boolean;
+    readonly shiftKey: boolean;
+    readonly altKey: boolean;
+  },
+  platform: string,
+): boolean {
+  const mac = /mac/i.test(platform);
+  return (
+    event.key.toLowerCase() === "a" &&
+    event.shiftKey &&
+    !event.altKey &&
+    (mac ? event.metaKey && !event.ctrlKey : event.ctrlKey && !event.metaKey)
+  );
 }

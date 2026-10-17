@@ -68,6 +68,7 @@ const entityKindOf = (event: OrchestrationV2StoredEvent["event"]): EntityKind | 
     case "thread.created":
     case "thread.metadata-updated":
     case "thread.model-selection-updated":
+    case "thread.runtime-mode-updated":
       return "thread";
     case "run.created":
     case "run.updated":

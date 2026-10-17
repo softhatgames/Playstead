@@ -30,8 +30,8 @@ import { ProviderDriverKind, ProviderInstanceId } from "./providerInstance.ts";
  * produce, and the thread and shell streams. Times are ISO strings, as the
  * project contract keeps them, so one schema serves the database and the wire.
  *
- * Runtime requests are only the provider's questions to the person; there
- * are no approvals, since every thread runs in Full access. Absent:
+ * A thread runs in its runtime mode. Runtime requests are only the
+ * provider's questions to the person; approvals are absent. Absent too:
  * subagents, plans, checkpoints and context handoffs.
  */
 
@@ -48,9 +48,22 @@ export const ModelSelection = Schema.Struct({
 });
 export type ModelSelection = typeof ModelSelection.Type;
 
-/** Every thread runs in Full access; T3 Code's other modes are absent. */
-export const RuntimeMode = Schema.Literal("full-access");
+/**
+ * How much a thread's agent may do without asking, shown as its permissions
+ * (T3 Code's `RuntimeMode` in `packages/contracts/src/providerPolicy.ts`):
+ * Supervised (`approval-required`) asks before commands and file changes;
+ * Auto-accept edits approves edits and asks before other actions; Auto lets
+ * the provider's own review approve routine actions; Full access runs
+ * everything without asking, and is the default.
+ */
+export const RuntimeMode = Schema.Literals([
+  "approval-required",
+  "auto-accept-edits",
+  "auto",
+  "full-access",
+]);
 export type RuntimeMode = typeof RuntimeMode.Type;
+export const DEFAULT_RUNTIME_MODE: RuntimeMode = "full-access";
 
 /** Every thread uses the default interaction mode; plan mode is absent. */
 export const ProviderInteractionMode = Schema.Literal("default");
@@ -360,6 +373,7 @@ export const OrchestrationV2DomainEvent = Schema.Union([
   event("thread.created", OrchestrationV2AppThread),
   event("thread.metadata-updated", OrchestrationV2AppThread),
   event("thread.model-selection-updated", OrchestrationV2AppThread),
+  event("thread.runtime-mode-updated", OrchestrationV2AppThread),
   event("run.created", OrchestrationV2Run),
   event("run.updated", OrchestrationV2Run),
   event("run-attempt.created", OrchestrationV2RunAttempt),
@@ -470,9 +484,10 @@ export type OrchestrationV2ThreadStreamItem = typeof OrchestrationV2ThreadStream
 
 /**
  * The commands a client sends, trimmed from T3 Code's `OrchestrationV2Command`.
- * A thread is created with its project, provider instance and model, always in
- * Full access and the default interaction mode. Its model can change to
- * another of the same provider instance's. A message is plain text; the
+ * A thread is created with its project, provider instance, model and runtime
+ * mode, in the default interaction mode. Its model can change to another of
+ * the same provider instance's, and its runtime mode to any other, both for
+ * its next run. A message is plain text; the
  * first one's `titleSeed` titles the thread. `run.interrupt` stops a run
  * that is still active. `runtime-request.respond` answers a provider's
  * question; there are no approval decisions.
@@ -485,6 +500,13 @@ export const OrchestrationV2Command = Schema.Union([
     projectId: ProjectId,
     title: TrimmedNonEmptyString,
     modelSelection: ModelSelection,
+    runtimeMode: RuntimeMode,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("thread.runtime-mode.set"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    runtimeMode: RuntimeMode,
   }),
   Schema.Struct({
     type: Schema.Literal("thread.model-selection.set"),

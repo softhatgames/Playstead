@@ -14,6 +14,7 @@ const SHELL_THREAD_EVENT_TYPES: ReadonlySet<string> = new Set([
   "thread.created",
   "thread.metadata-updated",
   "thread.model-selection-updated",
+  "thread.runtime-mode-updated",
   "run.created",
   "run.updated",
 ]);

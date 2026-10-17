@@ -54,10 +54,16 @@ import { resolveClaudeSdkExecutablePath } from "../../provider/Drivers/ClaudeExe
 /**
  * Claude through the Claude Agent SDK's `query()`, following T3 Code's
  * `apps/server/src/orchestration-v2/Adapters/ClaudeAdapterV2.ts` at 2577baf,
- * trimmed to starting turns in Full access.
+ * trimmed to starting, interrupting and answering turns.
  *
  * - One `query()` per session, fed messages through a streaming prompt; a
  *   thread's next turn offers its message to the same query.
+ * - The query opens in the session's runtime mode as the SDK's permission
+ *   mode (Supervised `default`, Auto-accept edits `acceptEdits`, Auto
+ *   `auto`, Full access `bypassPermissions`). It cannot change mode in
+ *   session, so a turn in another mode reopens it, resuming the same Claude
+ *   session, as T3 Code does; T3 Code's `setPermissionMode` only restores
+ *   a mode Claude Code changed itself, which needs plan mode.
  * - Assistant text streams from the SDK's partial messages. T3 Code asks for
  *   them too but shows text only when each whole message arrives.
  * - A file write is a `file_change` item carrying the file's name and the
@@ -80,7 +86,9 @@ import { resolveClaudeSdkExecutablePath } from "../../provider/Drivers/ClaudeExe
  *   under `bypassPermissions` (Claude 2.1.301, SDK 0.3.276; the SDK's
  *   warning that `canUseTool` is never called is wrong for this tool). The
  *   answers go back as the tool's `answers`; an interrupt releases the
- *   question unanswered. Every other tool is allowed.
+ *   question unanswered. Any other tool Claude Code asks about is allowed
+ *   in Auto and Full access, and refused in Supervised and Auto-accept
+ *   edits, where T3 Code asks the person: approvals are absent.
  *
  * Absent, as in the slice as a whole: approvals, thinking, MCP, subagents,
  * attachments and usage.
@@ -184,16 +192,37 @@ export const layerQueryRunner: Layer.Layer<ClaudeAgentSdkQueryRunner, never, Cry
     }),
   );
 
-/** Full access is the SDK's `bypassPermissions`, as T3 Code's `permissionModeForClaudeRuntimePolicy` maps it. */
-const permissionModeForRuntimeMode = (runtimeMode: RuntimeMode) => {
+/**
+ * Each runtime mode as the SDK's permission mode (T3 Code's
+ * `permissionModeForClaudeRuntimePolicy` and
+ * `claudeRuntimeQueryPolicyForRuntimePolicy`, without the project and
+ * instance overrides Playstead does not have). Only Full access skips
+ * Claude Code's permission checks.
+ */
+const permissionModeForRuntimeMode = (
+  runtimeMode: RuntimeMode,
+): Pick<ClaudeQueryOptions, "permissionMode" | "allowDangerouslySkipPermissions"> => {
   switch (runtimeMode) {
+    case "approval-required":
+      return { permissionMode: "default" };
+    case "auto-accept-edits":
+      return { permissionMode: "acceptEdits" };
+    case "auto":
+      return { permissionMode: "auto" };
     case "full-access":
-      return {
-        permissionMode: "bypassPermissions",
-        allowDangerouslySkipPermissions: true,
-      } as const;
+      return { permissionMode: "bypassPermissions", allowDangerouslySkipPermissions: true };
   }
 };
+
+/**
+ * Whether the person must approve the tools Claude Code asks about (T3
+ * Code's `installPermissionCallback`): in Supervised and Auto-accept edits.
+ * `acceptEdits` approves edits before asking; whatever else it asks about
+ * must be asked of the person, not allowed. In Auto and Full access Claude
+ * Code's own checks decide, and a tool it still asks about is allowed.
+ */
+const requiresClaudeApproval = (runtimeMode: RuntimeMode) =>
+  runtimeMode === "approval-required" || runtimeMode === "auto-accept-edits";
 
 /**
  * The options a session's query opens with (T3 Code's `makeClaudeQueryOptions`):
@@ -426,7 +455,8 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (input
        * T3 Code's `canUseToolEffect`, without approvals: `AskUserQuestion`
        * becomes a user-input request (its node, its item, then the request,
        * as T3 Code's `buildApprovalRequestArtifacts` builds them) and waits
-       * for the answers; every other tool is allowed as it is. The question
+       * for the answers; any other tool is allowed as it is, unless the
+       * mode needs the person's approval (`requiresClaudeApproval`). The question
        * belongs to the turn running now: a callback is not a frame Claude
        * Code stamps with the prompt.
        */
@@ -444,6 +474,15 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (input
           } satisfies PermissionResult;
         }
         if (toolName !== "AskUserQuestion") {
+          if (requiresClaudeApproval(open.runtimePolicy.runtimeMode)) {
+            // T3 Code asks the person here; until approvals exist the tool
+            // is refused, so these modes never run what they would ask about.
+            return {
+              behavior: "deny",
+              message: "Approvals are not available yet, so this tool was not run.",
+              toolUseID: callbackOptions.toolUseID,
+            } satisfies PermissionResult;
+          }
           return {
             behavior: "allow",
             updatedInput: toolInput,
@@ -979,6 +1018,8 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (input
   return {
     instanceId: input.instanceId,
     driver: "claudeAgent",
+    // A query keeps the permission mode it opened with; another mode reopens it.
+    capabilities: { sessions: { supportsRuntimeModeSwitchInSession: false } },
     openSession,
   } satisfies ProviderAdapterV2;
 });

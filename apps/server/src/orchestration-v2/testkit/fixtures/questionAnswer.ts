@@ -83,6 +83,7 @@ export const sendQuestionMessage = (harness: Harness, scenario: QuestionScenario
       projectId: QUESTION_IDS.projectId,
       title: "New thread",
       modelSelection: { instanceId: scenario.instanceId, model: scenario.model },
+      runtimeMode: "full-access",
     });
     const sent = yield* harness.orchestrator.dispatch({
       type: "message.dispatch",

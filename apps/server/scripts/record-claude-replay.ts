@@ -23,6 +23,10 @@ import {
 } from "../src/orchestration-v2/Adapters/ClaudeAdapterV2.testkit.ts";
 import { makeOrchestrationHarness } from "../src/orchestration-v2/testkit/OrchestratorHarness.ts";
 import {
+  CLAUDE_AUTO_MODE_SCENARIO,
+  runAutoModeScenario,
+} from "../src/orchestration-v2/testkit/fixtures/autoMode.ts";
+import {
   FILE_CREATE_SCENARIO,
   runFileCreateScenario,
 } from "../src/orchestration-v2/testkit/fixtures/fileCreate.ts";
@@ -61,8 +65,10 @@ import { makeTestServerConfig } from "../src/testUtils/testServer.ts";
  * adapter sends). It uses the signed-in `claude` on PATH, in a temporary
  * empty folder, and writes `src/orchestration-v2/testkit/fixtures/<scenario>.claude.ndjson`.
  *
- *   node apps/server/scripts/record-claude-replay.ts [file_create | restart_resume | turn_interrupt | question_answer | question_interrupt]
+ *   node apps/server/scripts/record-claude-replay.ts [file_create | restart_resume | turn_interrupt | question_answer | question_interrupt | auto_mode]
  *
+ * `auto_mode` writes a file in Auto, then changes the thread to Full access,
+ * which reopens the query with `resume`, and sends one more message.
  * `restart_resume` builds the services a second time over the same home
  * between its two turns, as a restarted server would. `turn_interrupt`
  * interrupts a long command once it runs, then sends one more message.
@@ -279,8 +285,33 @@ const recordRestartResume = (options: HarnessOptions) =>
     return { harness, workspace: first.workspace };
   });
 
+/** A file written in Auto, then a turn after the change to Full access. */
+const recordAutoMode = (options: HarnessOptions) =>
+  Effect.gen(function* () {
+    const harness = yield* makeOrchestrationHarness(options);
+    const { workspace, write, next } = yield* runAutoModeScenario(
+      harness,
+      CLAUDE_AUTO_MODE_SCENARIO,
+    );
+    yield* Effect.logInfo("The turns ended.").pipe(
+      Effect.annotateLogs({ write: write.status, next: next.status }),
+    );
+    if (write.status !== "completed" || next.status !== "completed") {
+      return yield* Effect.die(`The runs ended ${write.status} and ${next.status}.`);
+    }
+    return { harness, workspace };
+  });
+
 /** Each scenario: how it is recorded, and what the header says about it. */
 const SCENARIOS = {
+  [CLAUDE_AUTO_MODE_SCENARIO.scenario]: {
+    record: recordAutoMode,
+    metadata: {
+      model: CLAUDE_AUTO_MODE_SCENARIO.model,
+      prompts: [CLAUDE_AUTO_MODE_SCENARIO.writePrompt, CLAUDE_AUTO_MODE_SCENARIO.nextPrompt],
+      runtimeModes: ["auto", "full-access"],
+    },
+  },
   [FILE_CREATE_SCENARIO.scenario]: {
     record: recordFileCreate,
     metadata: { model: FILE_CREATE_SCENARIO.model, prompt: FILE_CREATE_SCENARIO.prompt },
