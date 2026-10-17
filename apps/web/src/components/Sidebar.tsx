@@ -1,3 +1,5 @@
+import { isScratchProject } from "@playstead/client-runtime/state/projects";
+import { useScratchProject } from "../hooks/useScratchProject.ts";
 import { canSnooze } from "@playstead/client-runtime/state/threadSnoozed";
 import { registerSnoozeAndAdvance } from "../snoozeAndAdvance.ts";
 import { buildSnoozeMenuItems, resolveSnoozePresets, snoozeWakeLabel } from "./Sidebar.snooze.ts";
@@ -91,6 +93,7 @@ const inboxReturns = createInboxReturnTracker();
  */
 export function Sidebar() {
   const state = usePrimaryConnectionState();
+  const { scratchWorkspaceRoot, startScratchThread } = useScratchProject();
   const projects = useMemo(() => state?.shell?.projects ?? [], [state?.shell?.projects]);
   const threads = useMemo(() => state?.shell?.threads ?? [], [state?.shell?.threads]);
   const settings = useClientSettings();
@@ -290,7 +293,15 @@ export function Sidebar() {
   });
 
   const startNewThread = (event: React.MouseEvent) => {
-    if (groups.length > 1 && !event.shiftKey) {
+    if (
+      groups.length +
+        (scratchWorkspaceRoot &&
+        !projects.some((project) => isScratchProject(project, scratchWorkspaceRoot))
+          ? 1
+          : 0) >
+        1 &&
+      !event.shiftKey
+    ) {
       openCommandPalette({ open: "new-thread-in" });
       return;
     }
@@ -303,7 +314,10 @@ export function Sidebar() {
       | ProjectId
       | undefined;
     const projectId = current ?? scopedGroup?.projectIds[0] ?? groups[0]?.projectIds[0];
-    if (projectId === undefined) return;
+    if (projectId === undefined) {
+      if (scratchWorkspaceRoot) void startScratchThread();
+      return;
+    }
     openProject(projectId);
     void navigate({ to: "/draft/$draftId", params: { draftId: createDraft(projectId) } });
   };
@@ -359,7 +373,7 @@ export function Sidebar() {
             ) : null}
             <HeaderButton
               label="New thread"
-              disabled={projects.length === 0}
+              disabled={projects.length === 0 && !scratchWorkspaceRoot}
               onClick={startNewThread}
             >
               <SquarePenIcon className="size-4" />
@@ -376,6 +390,15 @@ export function Sidebar() {
               {projects.length === 0 ? (
                 <>
                   <span>No projects yet</span>
+                  {scratchWorkspaceRoot ? (
+                    <button
+                      type="button"
+                      className="underline"
+                      onClick={() => void startScratchThread()}
+                    >
+                      Start without a project
+                    </button>
+                  ) : null}
                   <button
                     type="button"
                     onClick={() => openCommandPalette({ open: "add-project" })}

@@ -20,7 +20,13 @@ import {
   OrchestrationV2SubscribeThreadInput,
   OrchestrationV2ThreadStreamItem,
 } from "./orchestrationV2.ts";
-import { Project, ProjectConflictError, ProjectMutation, ProjectMutationError } from "./project.ts";
+import {
+  Project,
+  ProjectEnsureScratchResult,
+  ProjectConflictError,
+  ProjectMutation,
+  ProjectMutationError,
+} from "./project.ts";
 import { ProviderInstanceId, ProviderInstanceMutation } from "./providerInstance.ts";
 import {
   ServerConfig,
@@ -43,6 +49,7 @@ export const WS_METHODS = {
   subscribeServerConfig: "subscribeServerConfig",
   subscribeServerLifecycle: "subscribeServerLifecycle",
   projectsMutate: "projects.mutate",
+  projectsEnsureScratch: "projects.ensureScratch",
   filesystemBrowse: "filesystem.browse",
 } as const;
 
@@ -140,6 +147,11 @@ const WsOrchestrationSearchThreadsRpc = Rpc.make(ORCHESTRATION_V2_WS_METHODS.sea
  * no authorization middleware.
  */
 export const WsRpcGroup = RpcGroup.make(
+  Rpc.make(WS_METHODS.projectsEnsureScratch, {
+    payload: Schema.Struct({}),
+    success: ProjectEnsureScratchResult,
+    error: OrchestrationDispatchCommandError,
+  }),
   WsOrchestrationSearchThreadsRpc,
   WsServerGetConfigRpc,
   WsServerRefreshProvidersRpc,

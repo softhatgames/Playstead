@@ -61,3 +61,5 @@ export class ProjectConflictError extends Schema.TaggedError<ProjectConflictErro
     return `Workspace ${this.workspaceRoot} already belongs to project ${this.conflictingProjectId}.`;
   }
 }
+
+export const ProjectEnsureScratchResult = Schema.Struct({ projectId: ProjectId });

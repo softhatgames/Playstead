@@ -1,3 +1,4 @@
+import { DraftProjectPicker } from "./DraftProjectPicker.tsx";
 import {
   CommandId,
   MessageId,
@@ -16,7 +17,12 @@ import { useEffect, useMemo, useRef, useState } from "react";
 
 import { requestPrimary, usePrimaryConnectionState } from "../../connection/runtime.ts";
 import { useThreadState } from "../../connection/useThread.ts";
-import { discardDraft, setDraftModelSelection, type ThreadDraft } from "../../drafts.ts";
+import {
+  discardDraft,
+  setDraftModelSelection,
+  markDraftStarted,
+  type ThreadDraft,
+} from "../../drafts.ts";
 import { type ThreadLifecycleTarget, visitThread } from "../../hooks/useThreadActions.ts";
 import { useThreadShortcuts } from "../../hooks/useThreadShortcuts.ts";
 import { newId } from "../../ids.ts";
@@ -77,7 +83,12 @@ function useThreadVisits(thread: OrchestrationV2ThreadShell | undefined) {
   }, [threadId, updatedAt, lastVisitedAt, latestRunCompletedAt]);
 }
 
-const sendCommands = async (target: SendTarget, text: string, threadCommandId: CommandId) => {
+const sendCommands = async (
+  target: SendTarget,
+  text: string,
+  threadCommandId: CommandId,
+  onCreated?: () => void,
+) => {
   const commands = buildSendCommands({
     target,
     text,
@@ -89,6 +100,7 @@ const sendCommands = async (target: SendTarget, text: string, threadCommandId: C
   });
   for (const command of commands) {
     await requestPrimary((client) => client["orchestration.dispatchCommand"](command));
+    if (command.type === "thread.create") onCreated?.();
   }
 };
 
@@ -163,6 +175,7 @@ export function ChatView(
     | { readonly kind: "thread"; readonly threadId: ThreadId },
 ) {
   const navigate = useNavigate();
+  const [sendingDraft, setSendingDraft] = useState(false);
   const connection = usePrimaryConnectionState();
   // While the server is away the thread keeps its content, sending waits for
   // it, and after the grace a banner on the composer says it is reconnecting
@@ -178,8 +191,12 @@ export function ChatView(
   const project = connection?.shell?.projects.find((candidate) => candidate.id === projectId);
 
   const rows = useMemo(
-    () => deriveTimelineRows(projection?.turnItems ?? [], project?.workspaceRoot),
-    [projection?.turnItems, project?.workspaceRoot],
+    () =>
+      deriveTimelineRows(
+        projection?.turnItems ?? [],
+        projection?.thread.worktreePath ?? project?.workspaceRoot,
+      ),
+    [projection?.turnItems, projection?.thread.worktreePath, project?.workspaceRoot],
   );
   const working = projection?.runs.some((run) => ACTIVE_RUN_STATUSES.has(run.status)) ?? false;
   const action = deriveComposerAction(projection?.runs ?? [], projection?.turnItems ?? []);
@@ -210,22 +227,28 @@ export function ChatView(
     }
     if (selection === undefined) return;
     const { draft } = props;
-    await sendCommands(
-      {
-        kind: "new",
-        threadId: draft.threadId,
-        projectId: draft.projectId,
-        modelSelection: selection,
-      },
-      text,
-      draft.threadCommandId,
-    );
-    await navigate({
-      to: "/threads/$threadId",
-      params: { threadId: draft.threadId },
-      replace: true,
-    });
-    discardDraft(draft.draftId);
+    setSendingDraft(true);
+    try {
+      await sendCommands(
+        {
+          kind: "new",
+          threadId: draft.threadId,
+          projectId: draft.projectId,
+          modelSelection: selection,
+        },
+        text,
+        draft.threadCommandId,
+        () => markDraftStarted(draft.draftId),
+      );
+      await navigate({
+        to: "/threads/$threadId",
+        params: { threadId: draft.threadId },
+        replace: true,
+      });
+      discardDraft(draft.draftId);
+    } finally {
+      setSendingDraft(false);
+    }
   };
 
   const title = projection?.thread.title ?? "New thread";
@@ -260,6 +283,9 @@ export function ChatView(
   );
   return (
     <div className="flex h-full flex-col">
+      {props.kind === "draft" ? (
+        <DraftProjectPicker draft={props.draft} disabled={sendingDraft || serverUnavailable} />
+      ) : null}
       <ChatHeader title={title} projectTitle={project?.title} thread={target} />
       <div className="min-h-0 flex-1 overflow-y-auto">
         {error === undefined ? (

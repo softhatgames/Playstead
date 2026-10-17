@@ -37,3 +37,18 @@ it("mod+n asks for a project in the inbox with several projects, while local and
   });
   expect(newThreadDestination({ ...input, projectIds: [] })).toEqual({ kind: "add-project" });
 });
+
+it("starts scratch without projects and counts it once in the chooser", () => {
+  const input = {
+    projectIds: [],
+    preferredProjectIds: [],
+    local: false,
+    legacySidebarEnabled: false,
+    scratchAvailable: true,
+  };
+  expect(newThreadDestination(input)).toEqual({ kind: "scratch" });
+  expect(newThreadDestination({ ...input, projectIds: ["game"] })).toEqual({ kind: "picker" });
+  expect(
+    newThreadDestination({ ...input, projectIds: ["scratch"], scratchProjectId: "scratch" }),
+  ).toEqual({ kind: "project", projectId: "scratch" });
+});

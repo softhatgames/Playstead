@@ -1,8 +1,10 @@
+import { isScratchProject } from "@playstead/client-runtime/state/projects";
 import { searchThreads } from "@playstead/client-runtime/state/threadSearch";
 
 /** Palette groups, inspired by T3 Code's CommandPalette.logic.ts at 2577baf. */
 export type PaletteMode = "root" | "new-thread-in";
 export type PaletteAction =
+  | "new-thread-without-project"
   | "new-thread"
   | "new-thread-in"
   | "add-project"
@@ -10,6 +12,7 @@ export type PaletteAction =
   | "copy-reference";
 export type SettingsPath = "/settings/general" | "/settings/providers" | "/settings/archived";
 export type PaletteTarget =
+  | { readonly kind: "scratch" }
   | { readonly kind: "action"; readonly action: PaletteAction }
   | { readonly kind: "thread"; readonly threadId: string }
   | { readonly kind: "project"; readonly projectId: string }
@@ -63,6 +66,7 @@ const settings: ReadonlyArray<PaletteItem> = [
 ];
 
 export function buildPaletteGroups(input: {
+  readonly scratchWorkspaceRoot?: string | undefined;
   readonly mode: PaletteMode;
   readonly sortOrder?: "updated_at" | "created_at";
   readonly query: string;
@@ -80,14 +84,19 @@ export function buildPaletteGroups(input: {
         `${item.title} ${item.searchTerms ?? ""} ${item.description ?? ""}`.toLowerCase();
       return tokens.every((token) => text.includes(token));
     });
-  const projects = filter(
-    input.projects.map((project): PaletteItem => ({
-      id: project.id,
-      title: project.title,
-      description: project.workspaceRoot,
-      target: { kind: "project", projectId: project.id },
-    })),
-  );
+  const projects = filter([
+    ...input.projects
+      .filter((project) => !isScratchProject(project, input.scratchWorkspaceRoot))
+      .map((project): PaletteItem => ({
+        id: project.id,
+        title: project.title,
+        description: project.workspaceRoot,
+        target: { kind: "project", projectId: project.id },
+      })),
+    ...(input.scratchWorkspaceRoot
+      ? [{ id: "scratch", title: "No project", target: { kind: "scratch" as const } }]
+      : []),
+  ]);
   if (input.mode === "new-thread-in")
     return projects.length ? [{ label: "Projects", items: projects }] : [];
   const actions = filter(input.actions);

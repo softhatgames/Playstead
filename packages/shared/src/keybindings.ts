@@ -15,6 +15,7 @@ export type KeybindingCommand =
   | "thread.undo"
   | "commandPalette.toggle"
   | "chat.new"
+  | "chat.newWithoutProject"
   | "chat.newLocal"
   | "thread.previous"
   | "thread.next"
@@ -277,6 +278,7 @@ function compileResolvedKeybindingsConfig(
 /** T3 Code's default bindings, for the commands Playstead has. */
 const DEFAULT_KEYBINDINGS: ReadonlyArray<KeybindingRule> = [
   { key: "mod+k", command: "commandPalette.toggle", when: "!terminalFocus" },
+  { key: "mod+alt+n", command: "chat.newWithoutProject", when: "!terminalFocus" },
   { key: "mod+n", command: "chat.new", when: "!terminalFocus" },
   { key: "mod+shift+o", command: "chat.new", when: "!terminalFocus" },
   { key: "mod+shift+n", command: "chat.newLocal", when: "!terminalFocus" },

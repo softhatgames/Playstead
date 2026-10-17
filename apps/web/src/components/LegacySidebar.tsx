@@ -1,3 +1,4 @@
+import { useScratchProject } from "../hooks/useScratchProject.ts";
 import type { ProjectId } from "@playstead/contracts/baseSchemas";
 import type { OrchestrationV2ThreadShell } from "@playstead/contracts/orchestrationV2";
 import { isMacPlatform } from "@playstead/shared/keybindings";
@@ -71,6 +72,7 @@ const sortTreeThreads = (
  */
 export function LegacySidebar() {
   const state = usePrimaryConnectionState();
+  const { scratchWorkspaceRoot, startScratchThread } = useScratchProject();
   const projects = state?.shell?.projects;
   const threads = useMemo(() => state?.shell?.threads ?? [], [state?.shell?.threads]);
   const settings = useClientSettings();
@@ -198,6 +200,15 @@ export function LegacySidebar() {
       {projects !== undefined && projects.length === 0 ? (
         <div className="px-2 pt-4 text-center text-xs text-neutral-500 dark:text-neutral-400">
           No projects yet
+          {scratchWorkspaceRoot ? (
+            <button
+              type="button"
+              className="mt-2 block w-full underline"
+              onClick={() => void startScratchThread()}
+            >
+              Start without a project
+            </button>
+          ) : null}
         </div>
       ) : null}
     </nav>

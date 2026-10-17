@@ -12,6 +12,7 @@ import { newId } from "./ids.ts";
  * page only.
  */
 export interface ThreadDraft {
+  readonly started?: boolean;
   readonly draftId: string;
   readonly projectId: ProjectId;
   readonly threadId: ThreadId;
@@ -59,5 +60,21 @@ export function discardDraft(draftId: string): void {
 }
 
 export function useDraft(draftId: string): ThreadDraft | undefined {
-  return useSyncExternalStore(subscribe, () => drafts.get(draftId));
+  return useSyncExternalStore(subscribe, () => getDraft(draftId));
+}
+
+export const getDraft = (draftId: string): ThreadDraft | undefined => drafts.get(draftId);
+
+export function setDraftProject(draftId: string, projectId: ProjectId): void {
+  const draft = drafts.get(draftId);
+  if (!draft || draft.started) return;
+  drafts.set(draftId, { ...draft, projectId });
+  notify();
+}
+
+export function markDraftStarted(draftId: string): void {
+  const draft = drafts.get(draftId);
+  if (!draft) return;
+  drafts.set(draftId, { ...draft, started: true });
+  notify();
 }

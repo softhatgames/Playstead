@@ -180,3 +180,22 @@ export function usePrimaryConnectionState(): ConnectionState | undefined {
   startPrimaryConnection();
   return useSyncExternalStore(subscribe, () => current);
 }
+
+/** The shell can arrive after the RPC response; draft routing waits for its project. */
+export async function waitForPrimaryProject(projectId: string): Promise<void> {
+  if (current?.shell?.projects.some((project) => project.id === projectId)) return;
+  await new Promise<void>((resolve, reject) => {
+    const changed = () => {
+      if (!current?.shell?.projects.some((project) => project.id === projectId)) return;
+      clearTimeout(timer);
+      listeners.delete(changed);
+      resolve();
+    };
+    const timer = setTimeout(() => {
+      listeners.delete(changed);
+      reject(new Error("The project has not appeared in the connected environment."));
+    }, 10_000);
+    listeners.add(changed);
+    changed();
+  });
+}

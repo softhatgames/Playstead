@@ -1,3 +1,5 @@
+import { isScratchProject } from "@playstead/client-runtime/state/projects";
+import { useScratchProject } from "../hooks/useScratchProject.ts";
 import { ProjectId, ThreadId } from "@playstead/contracts/baseSchemas";
 import { useNavigate, useParams } from "@tanstack/react-router";
 import { useEffect, useRef, useState } from "react";
@@ -30,6 +32,7 @@ export function CommandPalette() {
   const navigate = useNavigate();
   const state = usePrimaryConnectionState();
   const projects = state?.shell?.projects ?? [];
+  const { scratchWorkspaceRoot, startScratchThread } = useScratchProject();
   const threads = state?.shell?.threads ?? [];
   const { threadId, draftId } = useParams({ strict: false });
   const draft = useDraft(draftId ?? "");
@@ -37,6 +40,9 @@ export function CommandPalette() {
   const settings = useClientSettings();
   const currentThread = threads.find((thread) => thread.id === threadId);
   const newThreadContext = {
+    scratchAvailable: scratchWorkspaceRoot !== undefined,
+    scratchProjectId: projects.find((project) => isScratchProject(project, scratchWorkspaceRoot))
+      ?.id,
     projectIds: projects.map((project) => project.id),
     preferredProjectIds: [draft?.projectId, currentThread?.projectId, activeProjectId],
     legacySidebarEnabled: settings.legacySidebarEnabled,
@@ -70,6 +76,10 @@ export function CommandPalette() {
     clearThreadSelection();
     void navigate({ to: "/draft/$draftId", params: { draftId: createDraft(ProjectId.make(id)) } });
   };
+  const startScratch = () => {
+    close();
+    void startScratchThread();
+  };
   const copyReference = () => {
     if (!currentThread) return;
     close();
@@ -95,6 +105,9 @@ export function CommandPalette() {
         event.preventDefault();
         if (view === null) open("root");
         else close();
+      } else if (command === "chat.newWithoutProject" && scratchWorkspaceRoot) {
+        event.preventDefault();
+        startScratch();
       } else if (command === "thread.copyReference" && currentThread) {
         event.preventDefault();
         copyReference();
@@ -106,6 +119,7 @@ export function CommandPalette() {
         });
         if (destination.kind === "picker") open("new-thread-in");
         else if (destination.kind === "add-project") open("add-project");
+        else if (destination.kind === "scratch") startScratch();
         else startThread(destination.projectId);
       }
     };
@@ -114,7 +128,17 @@ export function CommandPalette() {
   });
 
   const actions: PaletteItem[] = [
-    ...(projectId === undefined
+    ...(scratchWorkspaceRoot
+      ? [
+          {
+            id: "action:new-thread-without-project",
+            title: "New thread without a project",
+            searchTerms: "scratch no project",
+            target: { kind: "action", action: "new-thread-without-project" },
+          } as const,
+        ]
+      : []),
+    ...(projectId === undefined && !scratchWorkspaceRoot
       ? []
       : [
           {
@@ -157,6 +181,7 @@ export function CommandPalette() {
     projects,
     threads,
     messageMatches: messages.matches,
+    scratchWorkspaceRoot,
     sortOrder: settings.sidebarThreadSortOrder,
   });
   const items = groups.flatMap((group) => group.items);
@@ -169,6 +194,9 @@ export function CommandPalette() {
   const execute = (item: PaletteItem) => {
     const target = item.target;
     switch (target.kind) {
+      case "scratch":
+        startScratch();
+        return;
       case "thread":
         close();
         clearThreadSelection();
@@ -186,8 +214,12 @@ export function CommandPalette() {
         return;
       case "action":
         switch (target.action) {
+          case "new-thread-without-project":
+            startScratch();
+            return;
           case "new-thread":
-            startThread(projectId);
+            if (projectId === undefined && scratchWorkspaceRoot) startScratch();
+            else startThread(projectId);
             return;
           case "new-thread-in":
             open("new-thread-in");
@@ -208,11 +240,13 @@ export function CommandPalette() {
   const shortcut = (item: PaletteItem) => {
     if (item.target.kind !== "action") return null;
     const command =
-      item.target.action === "new-thread"
-        ? "chat.newLocal"
-        : item.target.action === "copy-reference"
-          ? "thread.copyReference"
-          : null;
+      item.target.action === "new-thread-without-project"
+        ? "chat.newWithoutProject"
+        : item.target.action === "new-thread"
+          ? "chat.newLocal"
+          : item.target.action === "copy-reference"
+            ? "thread.copyReference"
+            : null;
     return command ? shortcutLabelForCommand(keybindings, command) : null;
   };
 

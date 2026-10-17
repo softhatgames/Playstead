@@ -130,3 +130,21 @@ it("honors creation order when selected and carries the pending-title marker int
   expect(groups[1]!.items.map((item) => item.id)).toEqual(["thread:0", "thread:1"]);
   expect(groups[1]!.items[0]!.titlePending).toBe(true);
 });
+
+it("offers one No project destination before scratch exists and deduplicates its managed project", () => {
+  const scratch = {
+    ...input,
+    mode: "new-thread-in" as const,
+    scratchWorkspaceRoot: "/home/scratch",
+  };
+  expect(buildPaletteGroups(scratch)[0]?.items.map((item) => [item.title, item.target])).toEqual([
+    ["No project", { kind: "scratch" }],
+  ]);
+  expect(
+    buildPaletteGroups({
+      ...scratch,
+      projects: [{ id: "scratch", title: "No project", workspaceRoot: "/home/scratch" }],
+    })[0]?.items,
+  ).toHaveLength(1);
+  expect(buildPaletteGroups({ ...scratch, scratchWorkspaceRoot: undefined })).toEqual([]);
+});
