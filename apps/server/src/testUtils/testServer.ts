@@ -38,6 +38,8 @@ export interface TestServerOptions extends StartupOptions {
   readonly desktopBootstrapToken?: string;
   /** An existing home, for a server started again over another one's state. */
   readonly config?: ServerConfig.ServerConfig["Service"];
+  /** A fixed port, for a server started again where its clients look for it. */
+  readonly port?: number;
   /**
    * The environment providers are found and started with. By default PATH is
    * empty, so no test reaches a provider installed on the machine.
@@ -56,7 +58,7 @@ export interface TestServer {
 
 /**
  * The real server, in a temporary Playstead home, on a free port of
- * `127.0.0.1`. It stops when the scope closes.
+ * `127.0.0.1` unless given one. It stops when the scope closes.
  */
 export const startTestServer = Effect.fn("startTestServer")(function* (
   options: TestServerOptions = {},
@@ -73,7 +75,7 @@ export const startTestServer = Effect.fn("startTestServer")(function* (
 
   const context = yield* Layer.build(
     layerServer(options).pipe(
-      Layer.provideMerge(layerHttpServer(0)),
+      Layer.provideMerge(layerHttpServer(options.port ?? 0)),
       Layer.provide(ServerConfig.layer(config)),
       Layer.provide(
         Layer.succeed(HostProcess.Environment, options.providerEnvironment ?? { PATH: "" }),
