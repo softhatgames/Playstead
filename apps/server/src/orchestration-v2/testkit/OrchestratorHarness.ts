@@ -20,6 +20,7 @@ import * as EventStore from "../EventStore.ts";
 import * as Orchestrator from "../Orchestrator.ts";
 import * as ProviderAdapterRegistry from "../ProviderAdapterRegistry.ts";
 import * as ProviderRuntimeRecoveryService from "../ProviderRuntimeRecoveryService.ts";
+import * as ThreadSearch from "../ThreadSearch.ts";
 import * as OrchestrationRuntime from "../runtimeLayer.ts";
 
 /** Text generation that never improves on the seed, for tests about other things. */
@@ -113,6 +114,7 @@ export const makeOrchestrationHarness = Effect.fn("makeOrchestrationHarness")(fu
     projects: ProjectService.ProjectService,
     eventStore: EventStore.EventStoreV2,
     recovery: ProviderRuntimeRecoveryService.ProviderRuntimeRecoveryService,
+    threadSearch: ThreadSearch.ThreadSearch,
   }).pipe(Effect.provideContext(context));
   if (input.recoverOnStartup === true) yield* services.recovery.recover;
 
