@@ -199,3 +199,5 @@ export async function waitForPrimaryProject(projectId: string): Promise<void> {
     changed();
   });
 }
+/** Latest connection state for actions outside React render. */
+export const readPrimaryConnectionState = (): ConnectionState | undefined => current;

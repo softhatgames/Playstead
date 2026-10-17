@@ -287,13 +287,14 @@ const SCRATCH_GROUP_KEY = "scratch";
  * which Playstead cannot see until version control (slice 4). The
  * "No project" projects (#43) make one group. Groups are ordered by their
  * latest thread activity (`updated_at`), by creation (`created_at`), or as
- * the server lists them (`manual`, until #40 lets the person arrange them),
+ * the person arranged them (`manual`),
  * ties by name.
  */
 export function buildSidebarProjectGroups(input: {
   readonly projects: ReadonlyArray<OrchestrationProjectShell>;
   readonly threads: ReadonlyArray<SidebarThread>;
   readonly sortOrder: SidebarProjectSortOrder;
+  readonly projectOrder?: ReadonlyArray<string>;
   readonly isScratchProject?: (project: OrchestrationProjectShell) => boolean;
 }): ReadonlyArray<SidebarProjectGroup> {
   const isScratch = input.isScratchProject ?? (() => false);
@@ -321,7 +322,12 @@ export function buildSidebarProjectGroups(input: {
         .at(-1)!,
     });
   }
-  if (input.sortOrder === "manual") return groups;
+  if (input.sortOrder === "manual") {
+    const order = new Map((input.projectOrder ?? []).map((id, index) => [id, index]));
+    return groups.toSorted(
+      (a, b) => (order.get(a.key) ?? Infinity) - (order.get(b.key) ?? Infinity),
+    );
+  }
 
   const threadTime = (thread: SidebarThread) =>
     input.sortOrder === "created_at"

@@ -39,6 +39,10 @@
     "./state/threadSearch": {
       "types": "./src/state/threadSearch.ts",
       "import": "./src/state/threadSearch.ts"
+    },
+    "./state/threadSort": {
+      "types": "./src/state/threadSort.ts",
+      "import": "./src/state/threadSort.ts"
     }
   },
   "scripts": {

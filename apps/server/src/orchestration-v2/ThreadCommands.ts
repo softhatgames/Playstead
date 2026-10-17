@@ -197,6 +197,8 @@ export function decideThreadCommand(input: {
     case "thread.metadata.update":
     case "thread.mark-unread":
     case "thread.pin":
+    case "thread.pin.reorder":
+    case "thread.active.reorder":
     case "thread.unpin":
     case "thread.auto-settle":
     case "thread.auto-settle.set":
@@ -288,6 +290,8 @@ type ThreadMutationCommand = Extract<
       | "thread.metadata.update"
       | "thread.mark-unread"
       | "thread.pin"
+      | "thread.pin.reorder"
+      | "thread.active.reorder"
       | "thread.unpin"
       | "thread.auto-settle"
       | "thread.auto-settle.set"
@@ -304,6 +308,8 @@ type ThreadMutationCommand = Extract<
 const REFUSED_WHILE_ARCHIVED: ReadonlySet<ThreadMutationCommand["type"]> = new Set([
   "thread.auto-settle.set",
   "thread.pin",
+  "thread.pin.reorder",
+  "thread.active.reorder",
   "thread.unpin",
   "thread.settle",
   "thread.unsettle",
@@ -392,6 +398,15 @@ function dispatchThreadMutation(
       command,
       `Thread ${thread.id} runs on ${thread.providerInstanceId}. Choose one of its models; switching provider is not available yet.`,
     );
+  }
+  if (command.type === "thread.pin.reorder" && thread.pinnedAt === null) {
+    return reject(command, `Thread ${thread.id} is not pinned and cannot be reordered.`);
+  }
+  if (
+    command.type === "thread.active.reorder" &&
+    (thread.pinnedAt !== null || thread.settledOverride === "settled")
+  ) {
+    return reject(command, `Thread ${thread.id} is not active and cannot be reordered.`);
   }
   let markUnreadVisitedAt: string | null = null;
   if (command.type === "thread.mark-unread") {
@@ -499,6 +514,14 @@ function dispatchThreadMutation(
           updatedAt: alreadyPinned && !promotes ? thread.updatedAt : now,
         };
       }
+      case "thread.pin.reorder":
+        return {
+          ...thread,
+          pinOrderKey: command.orderKey,
+          updatedAt: thread.pinOrderKey === command.orderKey ? thread.updatedAt : now,
+        };
+      case "thread.active.reorder":
+        return { ...thread, activeOrderKey: command.orderKey };
       case "thread.unpin":
         return {
           ...thread,
@@ -560,6 +583,10 @@ function dispatchThreadMutation(
         return "thread.unsnoozed" as const;
       case "thread.pin":
         return "thread.pinned" as const;
+      case "thread.pin.reorder":
+        return "thread.pin-reordered" as const;
+      case "thread.active.reorder":
+        return "thread.active-reordered" as const;
       case "thread.unpin":
         return "thread.unpinned" as const;
       case "thread.auto-settle.set":
