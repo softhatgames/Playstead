@@ -56,7 +56,7 @@ export const CLAUDE_MESSAGE_STEERING_SCENARIO = {
   instanceId: "claudeAgent",
   model: "claude-haiku-5-5",
   prompts: {
-    long: 'Use your Bash tool to run `python3 -c "import time; time.sleep(20)"` in the foreground, then reply with the single word: slept',
+    long: 'Use your Bash tool to run `node -e "setTimeout(() => {}, 20000)"` in the foreground, then reply with the single word: slept',
     steer: "Change of plan: do not wait for the command. Reply with the single word: steered",
     short: "Reply with the single word: three",
     late: "Reply with the single word: four",
@@ -68,7 +68,7 @@ export const CODEX_MESSAGE_STEERING_SCENARIO = {
   instanceId: "codex",
   model: "gpt-5.6-terra",
   prompts: {
-    long: 'Run the shell command `python3 -c "import time; time.sleep(10)"`, then reply with the single word: slept',
+    long: 'Run the shell command `node -e "setTimeout(() => {}, 10000)"`, then reply with the single word: slept',
     steer: "Change of plan: once the command is done, reply with the single word: steered",
     short: "Reply with the single word: three",
     late: "Reply with the single word: four",
