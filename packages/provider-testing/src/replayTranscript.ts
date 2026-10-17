@@ -1,4 +1,5 @@
 import * as Effect from "effect/Effect";
+import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 
 /**
@@ -100,25 +101,45 @@ export const decodeProviderReplayNdjson = Effect.fn("decodeProviderReplayNdjson"
 export const encodeProviderReplayNdjson = (transcript: ProviderReplayTranscript): string =>
   [transcript.header, ...transcript.entries].map((line) => encodeLine(line)).join("\n") + "\n";
 
-const replaceInStrings = (value: unknown, from: string, to: string): unknown => {
-  if (typeof value === "string") return value.split(from).join(to);
-  if (Array.isArray(value)) return value.map((item) => replaceInStrings(item, from, to));
+const mapStrings = (value: unknown, f: (text: string) => string): unknown => {
+  if (typeof value === "string") return f(value);
+  if (Array.isArray(value)) return value.map((item) => mapStrings(item, f));
   if (typeof value === "object" && value !== null) {
     return Object.fromEntries(
-      Object.entries(value).map(([key, item]) => [key, replaceInStrings(item, from, to)]),
+      Object.entries(value).map(([key, item]) => [key, mapStrings(item, f)]),
     );
   }
   return value;
 };
 
-/** Every frame with the workspace placeholder replaced by the replay's folder. */
-export const materializeReplayWorkspace = (
+// The placeholder and the path under it, written with either separator, up
+// to the first character a path in a frame does not carry.
+const placeholderPath = new RegExp(
+  `${REPLAY_WORKSPACE_PLACEHOLDER}((?:[\\\\/][^\\s"'\\\\/<>|]+)*)`,
+  "g",
+);
+
+/**
+ * Every frame with the workspace placeholder replaced by the replay's folder.
+ * A path under the placeholder is joined in the platform's form, so a
+ * recording made on macOS replays on Windows with the paths a live run there
+ * would report.
+ */
+export const materializeReplayWorkspace = Effect.fn("materializeReplayWorkspace")(function* (
   transcript: ProviderReplayTranscript,
   workspace: string,
-): ProviderReplayTranscript => ({
-  header: transcript.header,
-  entries: transcript.entries.map((entry) => ({
-    ...entry,
-    frame: replaceInStrings(entry.frame, REPLAY_WORKSPACE_PLACEHOLDER, workspace),
-  })),
+) {
+  const path = yield* Path.Path;
+  const fill = (text: string) =>
+    text.replace(placeholderPath, (_match, tail: string) => {
+      const segments = tail.split(/[\\/]/).filter((segment) => segment.length > 0);
+      return segments.length === 0 ? workspace : path.join(workspace, ...segments);
+    });
+  return {
+    header: transcript.header,
+    entries: transcript.entries.map((entry) => ({
+      ...entry,
+      frame: mapStrings(entry.frame, fill),
+    })),
+  } satisfies ProviderReplayTranscript;
 });

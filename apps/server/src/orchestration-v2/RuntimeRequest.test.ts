@@ -60,7 +60,7 @@ const replayed = (
         },
       });
       replay = yield* makeClaudeReplay(
-        materializeReplayWorkspace(recorded, path.join(harness.home, "empty-game")),
+        yield* materializeReplayWorkspace(recorded, path.join(harness.home, "empty-game")),
       );
       return { harness, assertComplete: replay.assertComplete, recorded };
     }
@@ -70,7 +70,7 @@ const replayed = (
       codexClients: { open: (input) => Effect.suspend(() => replay!.clients.open(input)) },
     });
     replay = yield* makeCodexReplay(
-      materializeReplayWorkspace(recorded, path.join(harness.home, "empty-game")),
+      yield* materializeReplayWorkspace(recorded, path.join(harness.home, "empty-game")),
     );
     return { harness, assertComplete: replay.assertComplete, recorded };
   });

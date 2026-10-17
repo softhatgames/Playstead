@@ -73,7 +73,7 @@ describe("Survive a restart", () => {
           // server stops. The first server is left as a killed process
           // leaves it: nothing it holds is closed or written again.
           const replay = yield* makeClaudeReplay(
-            materializeReplayWorkspace(recorded, path.join(config.baseDir, "empty-game")),
+            yield* materializeReplayWorkspace(recorded, path.join(config.baseDir, "empty-game")),
             { holdBefore: isFinalReply },
           );
           const first = yield* makeOrchestrationHarness({ claudeRunner: replay.runner, config });
@@ -171,7 +171,7 @@ describe("Survive a restart", () => {
         const config = yield* makeTestServerConfig();
         const recorded = yield* readRecording("file_create.claude.ndjson");
         const replay = yield* makeClaudeReplay(
-          materializeReplayWorkspace(recorded, path.join(config.baseDir, "empty-game")),
+          yield* materializeReplayWorkspace(recorded, path.join(config.baseDir, "empty-game")),
           { holdBefore: isFinalReply },
         );
         yield* Effect.scoped(
@@ -213,7 +213,7 @@ describe("Survive a restart", () => {
         const config = yield* makeTestServerConfig();
         const recorded = yield* readRecording("restart_resume.claude.ndjson");
         const replay = yield* makeClaudeReplay(
-          materializeReplayWorkspace(recorded, path.join(config.baseDir, "resumed-game")),
+          yield* materializeReplayWorkspace(recorded, path.join(config.baseDir, "resumed-game")),
         );
         const first = yield* Effect.scoped(
           Effect.flatMap(makeOrchestrationHarness({ claudeRunner: replay.runner, config }), (h) =>
