@@ -4,9 +4,9 @@
  * Generates `src/_generated/` from the JSON Schema that the installed Codex
  * writes about its own app-server protocol (`codex app-server
  * generate-json-schema`), so nothing is fetched and the schema matches the
- * Codex it came from, plus the few experimental requests Playstead sends
- * (`EXPERIMENTAL_CLIENT_REQUESTS`). `pnpm --filter @playstead/effect-codex-app-server
- * generate [--codex <path>]`.
+ * Codex it came from, plus the few experimental requests and fields
+ * Playstead sends (`EXPERIMENTAL_CLIENT_REQUESTS`, `EXPERIMENTAL_PARAMS_FIELDS`).
+ * `pnpm --filter @playstead/effect-codex-app-server generate [--codex <path>]`.
  *
  * Follows T3 Code's `packages/effect-codex-app-server/scripts/generate.ts` at
  * 2577baf, which downloads the same schema from openai/codex on GitHub: the
@@ -229,12 +229,25 @@ const EXPERIMENTAL_CLIENT_REQUESTS: ReadonlyArray<string> = [
   "thread/backgroundTerminals/terminate",
 ];
 
+/**
+ * Experimental fields Playstead sends on stable requests, by their params'
+ * v2 definition: the collaboration mode on `turn/start`, which puts Codex in
+ * plan mode, as T3 Code's `CodexTurnStartParamsWithCollaborationMode` at
+ * 2577baf adds it.
+ */
+const EXPERIMENTAL_PARAMS_FIELDS: Readonly<Record<string, ReadonlyArray<string>>> = {
+  TurnStartParams: ["collaborationMode"],
+};
+
 interface SchemaBundle {
   readonly root: JsonObject;
   readonly v2: JsonObject;
 }
 
-/** The stable bundle plus `EXPERIMENTAL_CLIENT_REQUESTS` from the experimental one. */
+/**
+ * The stable bundle plus `EXPERIMENTAL_CLIENT_REQUESTS` and
+ * `EXPERIMENTAL_PARAMS_FIELDS` from the experimental one.
+ */
 const withExperimentalClientRequests = (
   stable: SchemaBundle,
   experimental: SchemaBundle,
@@ -285,6 +298,26 @@ const withExperimentalClientRequests = (
     return variant;
   });
   root.ClientRequest = { ...stableRequests, oneOf: [...stableRequests.oneOf, ...added] };
+  for (const [name, fields] of Object.entries(EXPERIMENTAL_PARAMS_FIELDS)) {
+    const stableParams = v2[name];
+    const experimentalParams = experimental.v2[name];
+    if (
+      !isObject(stableParams) ||
+      !isObject(stableParams.properties) ||
+      !isObject(experimentalParams) ||
+      !isObject(experimentalParams.properties)
+    ) {
+      throw new Error(`${name} has no properties`);
+    }
+    const properties: Record<string, Json> = { ...stableParams.properties };
+    for (const field of fields) {
+      const property = experimentalParams.properties[field];
+      if (property === undefined) throw new Error(`Codex's experimental ${name} has no ${field}`);
+      properties[field] = property;
+      copyReferenced(property);
+    }
+    v2[name] = { ...stableParams, properties };
+  }
   return { root, v2 };
 };
 

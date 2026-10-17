@@ -8,13 +8,16 @@ import {
   MessageId,
   type RunId,
   type RuntimeRequestId,
-  type ThreadId,
+  ThreadId,
 } from "@playstead/contracts/baseSchemas";
 import {
   ACTIVE_RUN_STATUSES,
   DEFAULT_RUNTIME_MODE,
   type ModelSelection,
+  type OrchestrationV2Command,
+  type OrchestrationV2SourcePlanRef,
   type ProviderApprovalDecision,
+  type ProviderInteractionMode,
   type ProviderUserInputAnswers,
   type RuntimeMode,
 } from "@playstead/contracts/orchestrationV2";
@@ -31,15 +34,25 @@ import {
   useComposerTraits,
 } from "../../composerTraits.ts";
 import {
+  clearComposerInteractionMode,
   clearComposerRuntimeMode,
   discardDraft,
+  setComposerInteractionMode,
   setComposerRuntimeMode,
+  setDraftInteractionMode,
   setDraftModelSelection,
   setDraftRuntimeMode,
   type ThreadDraft,
+  useComposerInteractionMode,
   useComposerRuntimeMode,
 } from "../../drafts.ts";
 import { newId } from "../../ids.ts";
+import {
+  buildPlanImplementationPrompt,
+  buildPlanImplementationThreadTitle,
+  proposedPlanTitle,
+  resolvePlanFollowUpSubmission,
+} from "../../proposedPlan.ts";
 import { ChatComposer } from "./ChatComposer.tsx";
 import {
   buildSendCommands,
@@ -52,6 +65,12 @@ import { traitsForDispatch } from "./traits.logic.ts";
 import { MessagesTimeline } from "./MessagesTimeline.tsx";
 import { derivePendingApprovals } from "./pendingApproval.logic.ts";
 import { derivePendingUserInputs } from "./pendingUserInput.logic.ts";
+import {
+  deriveActiveTasks,
+  findLatestProposedPlan,
+  resolveComposerInteractionMode,
+  shouldShowPlanFollowUpPrompt,
+} from "./plan.logic.ts";
 import { deriveTimelineRows } from "./timeline.logic.ts";
 
 const sendCommands = async (
@@ -60,17 +79,24 @@ const sendCommands = async (
   dispatchMode: ComposerDispatchMode,
   text: string,
   threadCommandId: CommandId,
+  plan: {
+    readonly interactionMode: ProviderInteractionMode;
+    readonly sourcePlanRef?: OrchestrationV2SourcePlanRef;
+  },
 ) => {
   const commands = buildSendCommands({
     target,
     runtimeMode,
+    interactionMode: plan.interactionMode,
     dispatchMode,
     text,
+    ...(plan.sourcePlanRef === undefined ? {} : { sourcePlanRef: plan.sourcePlanRef }),
     ids: {
       threadCommandId,
       messageCommandId: CommandId.make(`command:${newId()}`),
       messageId: MessageId.make(`message:${newId()}`),
       runtimeModeCommandId: CommandId.make(`command:${newId()}`),
+      interactionModeCommandId: CommandId.make(`command:${newId()}`),
     },
   });
   for (const command of commands) {
@@ -185,7 +211,7 @@ export function ChatView(
     [projection?.turnItems, project?.workspaceRoot],
   );
   const working = projection?.runs.some((run) => ACTIVE_RUN_STATUSES.has(run.status)) ?? false;
-  const { followUpBehavior } = useClientSettings();
+  const { followUpBehavior, planModeEnabled } = useClientSettings();
   const queue = useMemo(
     () =>
       deriveThreadQueueWorkflowState({
@@ -239,24 +265,82 @@ export function ChatView(
   const runtimeMode =
     props.kind === "draft" ? props.draft.runtimeMode : (composerRuntimeMode ?? threadRuntimeMode);
 
+  // Plan or build: the composer's choice, else the thread's own, and only
+  // with **Plan mode (legacy)** on (T3 Code's `resolveComposerInteractionMode`).
+  const composerInteractionMode = useComposerInteractionMode(threadId);
+  const threadInteractionMode = projection?.thread.interactionMode ?? "default";
+  const { enabled: interactionModeEnabled, interactionMode } = resolveComposerInteractionMode({
+    planModeEnabled,
+    interactionMode:
+      props.kind === "draft"
+        ? props.draft.interactionMode
+        : (composerInteractionMode ?? threadInteractionMode),
+  });
+  const onInteractionModeChange = (mode: ProviderInteractionMode) => {
+    if (!interactionModeEnabled) return;
+    if (props.kind === "draft") setDraftInteractionMode(props.draft.draftId, mode);
+    else setComposerInteractionMode(props.threadId, mode);
+  };
+
+  // The plan the banner and **Implement** act on, once the turn has settled.
+  const plans = projection?.plans ?? [];
+  const activeRun = projection?.runs.find((run) => ACTIVE_RUN_STATUSES.has(run.status));
+  const latestRun = projection?.runs.reduce<(typeof projection.runs)[number] | undefined>(
+    (latest, run) =>
+      run.status !== "queued" && (latest === undefined || run.ordinal > latest.ordinal)
+        ? run
+        : latest,
+    undefined,
+  );
+  const latestRunSettled = activeRun === undefined;
+  const activeProposedPlan = latestRunSettled
+    ? findLatestProposedPlan(plans, latestRun?.id)
+    : undefined;
+  const showPlanFollowUp =
+    props.kind === "thread" &&
+    shouldShowPlanFollowUpPrompt({
+      pendingUserInputCount: pendingUserInput === undefined ? 0 : 1,
+      interactionMode,
+      latestRunSettled,
+      hasActionableProposedPlan: activeProposedPlan?.status === "active",
+    });
+  const tasks = useMemo(() => deriveActiveTasks(plans, activeRun?.id), [plans, activeRun?.id]);
+
   const onSend = async (text: string, dispatchMode: ComposerDispatchMode) => {
     if (dispatchSelection === undefined) return;
     if (props.kind === "thread") {
+      // With a plan ready, a send implements it or refines it (T3 Code's
+      // `onSubmitPlanFollowUp`).
+      const followUp =
+        showPlanFollowUp && activeProposedPlan !== undefined
+          ? resolvePlanFollowUpSubmission({
+              draftText: text,
+              planMarkdown: activeProposedPlan.markdown,
+            })
+          : undefined;
       await sendCommands(
         {
           kind: "existing",
           threadId: props.threadId,
           hasMessages: (projection?.messages.length ?? 0) > 0,
           runtimeMode: threadRuntimeMode,
+          interactionMode: threadInteractionMode,
           modelSelection: dispatchSelection,
         },
         runtimeMode,
         dispatchMode,
-        text,
+        followUp?.text ?? text,
         CommandId.make(`command:${newId()}`),
+        {
+          interactionMode: followUp?.interactionMode ?? interactionMode,
+          ...(followUp?.interactionMode === "default" && activeProposedPlan !== undefined
+            ? { sourcePlanRef: { threadId: props.threadId, planId: activeProposedPlan.id } }
+            : {}),
+        },
       );
       clearComposerTraits(composerKey);
       clearComposerRuntimeMode(props.threadId);
+      clearComposerInteractionMode(props.threadId);
       return;
     }
     const { draft } = props;
@@ -271,6 +355,7 @@ export function ChatView(
       dispatchMode,
       text,
       draft.threadCommandId,
+      { interactionMode },
     );
     clearComposerTraits(composerKey);
     await navigate({
@@ -327,6 +412,61 @@ export function ChatView(
     await dispatchQueueCommand({ type: "queue.resume", threadId: props.threadId });
   };
 
+  /**
+   * **Implement in a new thread** (T3 Code's `onImplementPlanInNewThread`):
+   * a thread in the same project, titled after the plan, in the default
+   * permissions and the build mode, whose first message is the plan,
+   * naming it so it completes; then the view moves there.
+   */
+  const onImplementInNewThread = async () => {
+    if (
+      props.kind !== "thread" ||
+      projection === undefined ||
+      activeProposedPlan === undefined ||
+      dispatchSelection === undefined
+    ) {
+      return;
+    }
+    const nextThreadId = ThreadId.make(`thread:${newId()}`);
+    const title = buildPlanImplementationThreadTitle(activeProposedPlan.markdown);
+    const commands: ReadonlyArray<OrchestrationV2Command> = [
+      {
+        type: "thread.create",
+        commandId: CommandId.make(`command:${newId()}`),
+        threadId: nextThreadId,
+        projectId: projection.thread.projectId,
+        title,
+        modelSelection: dispatchSelection,
+        runtimeMode: connection?.config?.settings.defaultRuntimeMode ?? DEFAULT_RUNTIME_MODE,
+        interactionMode: "default",
+      },
+      {
+        type: "message.dispatch",
+        commandId: CommandId.make(`command:${newId()}`),
+        threadId: nextThreadId,
+        messageId: MessageId.make(`message:${newId()}`),
+        text: buildPlanImplementationPrompt(activeProposedPlan.markdown),
+        titleSeed: title,
+        dispatchMode: { type: "start_immediately" },
+        sourcePlanRef: { threadId: props.threadId, planId: activeProposedPlan.id },
+      },
+    ];
+    for (const command of commands) {
+      await requestPrimary((client) => client["orchestration.dispatchCommand"](command));
+    }
+    clearComposerTraits(composerKey);
+    await navigate({ to: "/threads/$threadId", params: { threadId: nextThreadId } });
+  };
+
+  /** **Save to workspace**: the plan as a file in the project's folder. */
+  const savePlanToWorkspace = async (relativePath: string, contents: string) => {
+    if (project === undefined) throw new Error("This thread has no project folder.");
+    const saved = await requestPrimary((client) =>
+      client["projects.writeFile"]({ cwd: project.workspaceRoot, relativePath, contents }),
+    );
+    return saved.relativePath;
+  };
+
   const title = projection?.thread.title ?? "New thread";
   return (
     <div className="flex h-full flex-col">
@@ -340,7 +480,12 @@ export function ChatView(
       </header>
       <div className="min-h-0 flex-1 overflow-y-auto">
         {error === undefined ? (
-          <MessagesTimeline rows={rows} working={working} />
+          <MessagesTimeline
+            rows={rows}
+            working={working}
+            workspaceRoot={project?.workspaceRoot}
+            onSavePlan={savePlanToWorkspace}
+          />
         ) : (
           <p className="px-6 py-6 text-sm text-neutral-600 dark:text-neutral-300">{error}</p>
         )}
@@ -391,6 +536,16 @@ export function ChatView(
         onRespondToUserInput={(requestId, answers) =>
           respondToUserInput(threadId, requestId, answers).then(() => undefined)
         }
+        interactionMode={interactionMode}
+        interactionModeEnabled={interactionModeEnabled}
+        onInteractionModeChange={onInteractionModeChange}
+        planFollowUp={
+          showPlanFollowUp && activeProposedPlan !== undefined
+            ? { title: proposedPlanTitle(activeProposedPlan.markdown) }
+            : undefined
+        }
+        onImplementInNewThread={onImplementInNewThread}
+        tasks={tasks}
       />
     </div>
   );

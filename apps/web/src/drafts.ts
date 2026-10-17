@@ -1,5 +1,9 @@
 import { CommandId, type ProjectId, ThreadId } from "@playstead/contracts/baseSchemas";
-import type { ModelSelection, RuntimeMode } from "@playstead/contracts/orchestrationV2";
+import type {
+  ModelSelection,
+  ProviderInteractionMode,
+  RuntimeMode,
+} from "@playstead/contracts/orchestrationV2";
 import type { ServerSettings } from "@playstead/contracts/settings";
 import { useSyncExternalStore } from "react";
 
@@ -12,9 +16,9 @@ import { newId } from "./ids.ts";
  * The draft already knows the id its thread will have. Drafts live in the
  * page only.
  *
- * A started thread's composer keeps a runtime mode too, once one is chosen
- * in its picker, until the next message sends it (T3 Code's
- * `setComposerDraftRuntimeMode`).
+ * A started thread's composer keeps a runtime mode and an interaction mode
+ * too, once one is chosen, until the next message sends it (T3 Code's
+ * `setComposerDraftRuntimeMode` and `setComposerDraftInteractionMode`).
  */
 export interface ThreadDraft {
   readonly draftId: string;
@@ -30,10 +34,13 @@ export interface ThreadDraft {
    * it alone (T3 Code's `useHandleNewThread.ts` at 2577baf).
    */
   readonly runtimeMode: RuntimeMode;
+  /** Plan or build, from the Plan/Build toggle; `default` until then. */
+  readonly interactionMode: ProviderInteractionMode;
 }
 
 const drafts = new Map<string, ThreadDraft>();
 const composerRuntimeModes = new Map<ThreadId, RuntimeMode>();
+const composerInteractionModes = new Map<ThreadId, ProviderInteractionMode>();
 const listeners = new Set<() => void>();
 
 const notify = () => {
@@ -57,6 +64,7 @@ export function createDraft(
     threadCommandId: CommandId.make(`command:${newId()}`),
     modelSelection: undefined,
     runtimeMode: settings.defaultRuntimeMode,
+    interactionMode: "default",
   });
   notify();
   return draftId;
@@ -73,6 +81,16 @@ export function setDraftRuntimeMode(draftId: string, runtimeMode: RuntimeMode): 
   const draft = drafts.get(draftId);
   if (draft === undefined) return;
   drafts.set(draftId, { ...draft, runtimeMode });
+  notify();
+}
+
+export function setDraftInteractionMode(
+  draftId: string,
+  interactionMode: ProviderInteractionMode,
+): void {
+  const draft = drafts.get(draftId);
+  if (draft === undefined) return;
+  drafts.set(draftId, { ...draft, interactionMode });
   notify();
 }
 
@@ -102,4 +120,24 @@ export function clearComposerRuntimeMode(threadId: ThreadId): void {
 
 export function useComposerRuntimeMode(threadId: ThreadId): RuntimeMode | undefined {
   return useSyncExternalStore(subscribe, () => composerRuntimeModes.get(threadId));
+}
+
+/** Plan or build, chosen in a started thread's composer, for its next message. */
+export function setComposerInteractionMode(
+  threadId: ThreadId,
+  interactionMode: ProviderInteractionMode,
+): void {
+  composerInteractionModes.set(threadId, interactionMode);
+  notify();
+}
+
+/** Once the next message has sent it, the thread's own interaction mode is the composer's. */
+export function clearComposerInteractionMode(threadId: ThreadId): void {
+  if (composerInteractionModes.delete(threadId)) notify();
+}
+
+export function useComposerInteractionMode(
+  threadId: ThreadId,
+): ProviderInteractionMode | undefined {
+  return useSyncExternalStore(subscribe, () => composerInteractionModes.get(threadId));
 }

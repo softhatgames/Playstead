@@ -25,6 +25,7 @@ import * as ProviderRegistry from "./provider/ProviderRegistry.ts";
 import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
 import * as ServerSettings from "./serverSettings.ts";
 import * as WorkspaceEntries from "./workspace/WorkspaceEntries.ts";
+import * as WorkspaceFiles from "./workspace/WorkspaceFiles.ts";
 
 // RpcServer's default sends a socket-level Defect frame instead, and the client
 // ends every pending request on the socket with it.
@@ -111,6 +112,8 @@ const layerWsRpc = WsRpcGroup.toLayer(
             ),
           ),
         ),
+      [WS_METHODS.projectsWriteFile]: (input) =>
+        WorkspaceFiles.writeFile(input).pipe(Effect.provideContext(context)),
       [WS_METHODS.filesystemBrowse]: (input) =>
         WorkspaceEntries.browse(input).pipe(Effect.provideContext(context)),
       [ORCHESTRATION_V2_WS_METHODS.subscribeShell]: () =>

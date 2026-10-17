@@ -1,12 +1,15 @@
 import {
   MessageId,
   NodeId,
+  PlanId,
   RuntimeRequestId,
   type ThreadId,
   TurnItemId,
 } from "@playstead/contracts/baseSchemas";
 import type {
   OrchestrationV2ExecutionNode,
+  OrchestrationV2PlanArtifact,
+  OrchestrationV2PlanStep,
   OrchestrationV2ProviderFailure,
   OrchestrationV2TurnItem,
   ProviderApprovalDecision,
@@ -76,10 +79,16 @@ import { codexClientInfo, spawnCodexAppServer } from "../../provider/CodexProvid
  *
  * - Codex's `item/tool/requestUserInput` reaches the person as a user-input
  *   request, as T3 Code's handler routes it, and its answer is the
- *   request's response. Codex 0.163.0 asks only in plan mode, which
- *   Playstead does not run, so this path is proven only by a hand-made
- *   recording. An interrupt stops waiting without answering: Codex drops
- *   the request itself when the turn ends.
+ *   request's response. Codex 0.163.0 asks only in plan mode. An interrupt
+ *   stops waiting without answering: Codex drops the request itself when
+ *   the turn ends.
+ *
+ * - Plan mode is Codex's own plan collaboration mode on `turn/start`. Its
+ *   proposed plan streams from `item/plan/delta` and ends with the `plan`
+ *   item; the plan tool, turned on in `thread/start`, sends the agent's todo
+ *   list as `turn/plan/updated`. Codex keeps a thread's collaboration mode
+ *   between turns, so after a plan turn every turn names its mode; T3 Code
+ *   sends none on a default turn, which can leave Codex planning.
  *
  * - Codex's command, file-change and permissions approvals, and the legacy
  *   `execCommandApproval` and `applyPatchApproval`, reach the person as
@@ -95,9 +104,9 @@ import { codexClientInfo, spawnCodexAppServer } from "../../provider/CodexProvid
  *   another mode starts with nothing allowed.
  *
  * Absent: resuming a thread after a restart; and, as in the slice as a
- * whole, MCP, plans, showing reasoning, collaboration modes, subagents, goals and
- * usage. A server request nobody handles gets "method not found" from the
- * client, so an unexpected one fails loudly.
+ * whole, MCP, showing reasoning, subagents, goals and usage. A server
+ * request nobody handles gets "method not found" from the client, so an
+ * unexpected one fails loudly.
  */
 
 const CODEX = "codex" as const;
@@ -209,13 +218,40 @@ const codexServiceTier = (turn: ProviderAdapterV2TurnInput) =>
     : undefined);
 
 /**
- * `buildCodexTurnStartParams` at 2577baf without context or collaboration
- * modes: detailed reasoning summaries on every turn, and the reasoning
- * effort and service tier when chosen. Codex keeps both for later turns.
+ * The collaboration mode a turn starts in (T3 Code's `collaborationMode` in
+ * `buildCodexTurnStartParams`, without its MCP's developer instructions):
+ * plan mode on a plan turn, with the turn's model and effort (`medium`
+ * unless chosen). T3 Code leaves the mode out of a default turn, but Codex
+ * keeps a thread's collaboration mode for later turns, so a thread that
+ * planned could go on planning; once a session has sent a mode, every
+ * later turn sends its own, default included.
+ */
+const codexCollaborationMode = (
+  turn: ProviderAdapterV2TurnInput,
+  sentBefore: boolean,
+): CodexSchema.V2CollaborationMode | undefined => {
+  const mode = turn.runtimePolicy.interactionMode;
+  if (mode !== "plan" && !sentBefore) return undefined;
+  const effort = getModelSelectionStringOptionValue(turn.modelSelection, "reasoningEffort");
+  return {
+    mode,
+    settings: {
+      model: turn.modelSelection.model,
+      reasoning_effort: effort ?? "medium",
+    },
+  };
+};
+
+/**
+ * `buildCodexTurnStartParams` at 2577baf without context: detailed
+ * reasoning summaries on every turn, the reasoning effort and service tier
+ * when chosen, which Codex keeps for later turns, and the collaboration
+ * mode.
  */
 const buildCodexTurnStartParams = (
   nativeThreadId: string,
   turn: ProviderAdapterV2TurnInput,
+  collaborationMode: CodexSchema.V2CollaborationMode | undefined,
 ): CodexSchema.V2TurnStartParams => {
   const effort = getModelSelectionStringOptionValue(turn.modelSelection, "reasoningEffort");
   const serviceTier = codexServiceTier(turn);
@@ -228,8 +264,22 @@ const buildCodexTurnStartParams = (
     ...codexTurnPolicyForRuntimeMode(turn.runtimePolicy.runtimeMode),
     ...(effort === undefined ? {} : { effort }),
     ...(serviceTier === undefined ? {} : { serviceTier }),
+    ...(collaborationMode === undefined ? {} : { collaborationMode }),
   };
 };
+
+/**
+ * The thread settings Playstead starts Codex threads with (T3 Code's
+ * `CODEX_THREAD_CONFIG` without its MCP startup grace): Codex's plan tool,
+ * whose todo lists the person follows.
+ */
+const CODEX_THREAD_CONFIG = { "tools.update_plan.enabled": true } as const;
+
+/** `codexPlanStepStatus` at 2577baf. */
+const planStepStatus = (
+  status: CodexSchema.V2TurnPlanStepStatus,
+): OrchestrationV2PlanStep["status"] =>
+  status === "completed" ? "completed" : status === "inProgress" ? "running" : "pending";
 
 type CodexThreadItem = CodexSchema.V2ThreadItem;
 
@@ -250,6 +300,15 @@ const toCodexUserInputAnswers = (
     ),
   );
 
+/** The kind of node that carries an item. */
+const nodeKindOf = (item: OrchestrationV2TurnItem): OrchestrationV2ExecutionNode["kind"] =>
+  item.type === "assistant_message"
+    ? "assistant_message"
+    : item.type === "proposed_plan"
+      ? "plan"
+      : item.type === "todo_list"
+        ? "todo_list"
+        : "tool_call";
 /** The decision as a legacy approval takes it (T3 Code's `approvalDecisionToLegacyReviewDecision`). */
 const legacyReviewDecision = (decision: ProviderApprovalDecision): CodexSchema.ReviewDecision => {
   switch (decision) {
@@ -370,6 +429,8 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (input: 
       const live = yield* Ref.make(true);
       const activeTurn = yield* Ref.make<ActiveTurn | undefined>(undefined);
       const nativeThreadId = yield* Ref.make<string | undefined>(undefined);
+      /** Whether a turn of this session has set Codex's collaboration mode. */
+      let collaborationModeSent = false;
       const createdAt = yield* nowIso;
 
       const publish = (event: ProviderAdapterV2Event) => PubSub.publish(events, event);
@@ -537,6 +598,20 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (input: 
               turn.runningCommands.delete(item.id);
             }
           }
+          if (item.type === "plan") {
+            if (!completed) return;
+            const streamed = turn.items.get(item.id);
+            return yield* putPlan(turn, item.id, {
+              kind: "proposed_plan",
+              markdown:
+                item.text.length > 0
+                  ? item.text
+                  : streamed?.type === "proposed_plan"
+                    ? streamed.markdown
+                    : "",
+              completed: true,
+            });
+          }
           const built = turnItemFor(turn, item, completed, yield* nowIso);
           if (built === undefined) return;
           yield* putItem(turn, item.id, built.item, built.kind);
@@ -594,8 +669,10 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (input: 
             yield* putItem(
               turn,
               key,
-              ended.type === "assistant_message" ? { ...ended, streaming: false } : ended,
-              ended.type === "assistant_message" ? "assistant_message" : "tool_call",
+              ended.type === "assistant_message" || ended.type === "proposed_plan"
+                ? { ...ended, streaming: false }
+                : ended,
+              nodeKindOf(ended),
             );
           }
           yield* Ref.set(activeTurn, undefined);
@@ -620,6 +697,119 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (input: 
                 },
           );
         });
+
+      /**
+       * A plan as its node, plan and item (T3 Code's
+       * `buildProposedPlanArtifacts` and `buildTodoListArtifacts`). A
+       * proposed plan streams until Codex completes its item, and stays
+       * active until a message implements it.
+       */
+      const putPlan = (
+        turn: ActiveTurn,
+        nativeItemId: string,
+        content:
+          | {
+              readonly kind: "proposed_plan";
+              readonly markdown: string;
+              readonly completed: boolean;
+            }
+          | {
+              readonly kind: "todo_list";
+              readonly steps: ReadonlyArray<OrchestrationV2PlanStep>;
+              readonly explanation: string | undefined;
+            },
+      ) =>
+        Effect.gen(function* () {
+          const now = yield* nowIso;
+          const previous = turn.items.get(nativeItemId);
+          const completed = content.kind === "proposed_plan" ? content.completed : false;
+          const base = {
+            ...itemBase(turn, nativeItemId, previous?.startedAt ?? now),
+            updatedAt: now,
+            status: completed ? ("completed" as const) : ("running" as const),
+            completedAt: completed ? now : null,
+          };
+          const planId = PlanId.make(`plan:codex:${nativeItemId}`);
+          const planBase = {
+            id: planId,
+            threadId: turn.input.threadId,
+            runId: turn.input.runId,
+            nodeId: base.nodeId,
+            status: "active" as const,
+          };
+          const explanation =
+            content.kind === "todo_list" && content.explanation !== undefined
+              ? { explanation: content.explanation }
+              : {};
+          const plan: OrchestrationV2PlanArtifact =
+            content.kind === "proposed_plan"
+              ? { ...planBase, kind: "proposed_plan", markdown: content.markdown }
+              : { ...planBase, kind: "todo_list", steps: content.steps, ...explanation };
+          const item: OrchestrationV2TurnItem =
+            content.kind === "proposed_plan"
+              ? {
+                  ...base,
+                  type: "proposed_plan",
+                  planId,
+                  markdown: content.markdown,
+                  streaming: !completed,
+                }
+              : { ...base, type: "todo_list", planId, steps: content.steps, ...explanation };
+          turn.items.set(nativeItemId, item);
+          yield* publish({
+            type: "node.updated",
+            node: {
+              id: base.nodeId,
+              threadId: turn.input.threadId,
+              runId: turn.input.runId,
+              parentNodeId: turn.input.rootNodeId,
+              rootNodeId: turn.input.rootNodeId,
+              kind: content.kind === "proposed_plan" ? "plan" : "todo_list",
+              status: item.status,
+              providerThreadId: turn.input.providerThread.id,
+              providerTurnId: turn.input.providerTurnId,
+              startedAt: item.startedAt,
+              completedAt: item.completedAt,
+            },
+          });
+          yield* publish({ type: "plan.updated", plan });
+          yield* publish({ type: "turn_item.updated", turnItem: item });
+        });
+
+      // A proposed plan streams one update per delta, as replies do; T3
+      // Code flushes them every 400 ms.
+      yield* client.handleServerNotification("item/plan/delta", (payload) =>
+        Effect.gen(function* () {
+          const turn = yield* turnFor(payload.turnId);
+          if (turn === undefined) return;
+          const previous = turn.items.get(payload.itemId);
+          const markdown =
+            (previous?.type === "proposed_plan" ? previous.markdown : "") + payload.delta;
+          yield* putPlan(turn, payload.itemId, {
+            kind: "proposed_plan",
+            markdown,
+            completed: false,
+          });
+        }),
+      );
+      // The agent's todo list, one per turn (T3 Code's `turn-plan:<turnId>`).
+      yield* client.handleServerNotification("turn/plan/updated", (payload) =>
+        Effect.gen(function* () {
+          const turn = yield* turnFor(payload.turnId);
+          if (turn === undefined) return;
+          const explanation = payload.explanation?.trim();
+          yield* putPlan(turn, `turn-plan:${payload.turnId}`, {
+            kind: "todo_list",
+            steps: payload.plan.map((step, index) => ({
+              id: `step-${index + 1}`,
+              text: nonEmpty(step.step, `Step ${index + 1}`),
+              status: planStepStatus(step.status),
+            })),
+            explanation:
+              explanation === undefined || explanation.length === 0 ? undefined : explanation,
+          });
+        }),
+      );
 
       yield* client.handleServerNotification("item/started", (payload) =>
         handleItem(payload.turnId, payload.item, false),
@@ -1009,7 +1199,7 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (input: 
         },
         isLive: Ref.get(live),
         subscribeEvents: Effect.map(PubSub.subscribe(events), Stream.fromSubscription),
-        // `codexThreadRuntimeParams` at 2577baf without MCP servers or the plan tool.
+        // `codexThreadRuntimeParams` at 2577baf without MCP servers.
         ensureThread: ({ providerThread }) =>
           Effect.gen(function* () {
             const started = yield* Ref.get(nativeThreadId);
@@ -1018,6 +1208,7 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (input: 
               (yield* client.request("thread/start", {
                 cwd: open.runtimePolicy.cwd,
                 model: open.modelSelection.model,
+                config: CODEX_THREAD_CONFIG,
               })).thread.id;
             yield* Ref.set(nativeThreadId, id);
             return { ...providerThread, nativeThreadRef: { driver: CODEX, nativeId: id } };
@@ -1044,12 +1235,17 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (input: 
               ended: yield* Deferred.make<void>(),
             };
             yield* Ref.set(activeTurn, turn);
+            const collaborationMode = codexCollaborationMode(turnInput, collaborationModeSent);
             const started = yield* client
-              .request("turn/start", buildCodexTurnStartParams(threadId, turnInput))
+              .request(
+                "turn/start",
+                buildCodexTurnStartParams(threadId, turnInput, collaborationMode),
+              )
               .pipe(
                 Effect.tapError(() => Ref.set(activeTurn, undefined)),
                 Effect.mapError(adapterError("start-turn")),
               );
+            if (collaborationMode !== undefined) collaborationModeSent = true;
             turn.nativeTurnId ??= started.turn.id;
           }),
         interruptTurn: ({ providerTurnId }) =>

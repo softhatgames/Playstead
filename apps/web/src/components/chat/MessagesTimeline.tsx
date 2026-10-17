@@ -1,21 +1,31 @@
 import { useEffect, useRef } from "react";
 
 import { FilePenIcon, MessageCircleIcon, WrenchIcon } from "../icons.tsx";
+import { ProposedPlanCard } from "./ProposedPlanCard.tsx";
 import type { TimelineRow } from "./timeline.logic.ts";
 
 /**
  * The thread's messages and activity log, after T3 Code's
  * `apps/web/src/components/chat/MessagesTimeline.tsx` and `WorkLog.tsx` at
- * 2577baf. Replies show as plain text while they stream; file links and
- * every other action that opens a panel are absent.
+ * 2577baf. Replies show as plain text while they stream, and a proposed
+ * plan as its plan card; file links and every other action that opens a
+ * panel are absent.
  */
 export function MessagesTimeline(props: {
   readonly rows: ReadonlyArray<TimelineRow>;
   readonly working: boolean;
+  /** The project's folder, where a plan card saves its plan. */
+  readonly workspaceRoot: string | undefined;
+  readonly onSavePlan: (relativePath: string, contents: string) => Promise<string>;
 }) {
   const end = useRef<HTMLDivElement | null>(null);
   const lastRow = props.rows.at(-1);
-  const lastText = lastRow?.kind === "assistant" ? lastRow.text : undefined;
+  const lastText =
+    lastRow?.kind === "assistant"
+      ? lastRow.text
+      : lastRow?.kind === "proposed-plan"
+        ? lastRow.markdown
+        : undefined;
 
   useEffect(() => {
     end.current?.scrollIntoView({ block: "end" });
@@ -94,6 +104,16 @@ export function MessagesTimeline(props: {
                 <span className="font-medium">{row.label}</span>
                 <span className="h-px flex-1 bg-red-200 dark:bg-red-900" />
               </div>
+            );
+          case "proposed-plan":
+            return (
+              <ProposedPlanCard
+                key={row.id}
+                markdown={row.markdown}
+                streaming={row.streaming}
+                workspaceRoot={props.workspaceRoot}
+                onSaveToWorkspace={props.onSavePlan}
+              />
             );
         }
       })}

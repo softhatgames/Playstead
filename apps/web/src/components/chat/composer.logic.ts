@@ -1,18 +1,21 @@
 import { deriveThreadTitleSeed } from "@playstead/client-runtime/operations/threadTitle";
 import type { ComposerDispatchMode } from "@playstead/client-runtime/state/composerDispatch";
-import type {
+import {
   CommandId,
-  MessageId,
-  ProjectId,
-  RunId,
-  ThreadId,
+  type MessageId,
+  type ProjectId,
+  type RunId,
+  type ThreadId,
 } from "@playstead/contracts/baseSchemas";
 import {
   ACTIVE_RUN_STATUSES,
+  DEFAULT_PROVIDER_INTERACTION_MODE,
   type ModelSelection,
   type OrchestrationV2Command,
   type OrchestrationV2Run,
+  type OrchestrationV2SourcePlanRef,
   type OrchestrationV2TurnItem,
+  type ProviderInteractionMode,
   type RuntimeMode,
 } from "@playstead/contracts/orchestrationV2";
 import type { ProviderInstanceId } from "@playstead/contracts/providerInstance";
@@ -71,6 +74,8 @@ export type SendTarget =
       readonly hasMessages: boolean;
       /** The mode the thread runs in on the server. */
       readonly runtimeMode: RuntimeMode;
+      /** The thread's interaction mode on the server; `default` when left out. */
+      readonly interactionMode?: ProviderInteractionMode;
       /** The composer's model and traits, which the message makes the thread's. */
       readonly modelSelection: ModelSelection;
     };
@@ -105,32 +110,39 @@ export function resolveComposerSelection(input: {
 
 /**
  * The commands a send dispatches, in order. From a new thread that is
- * `thread.create` in the composer's mode and then `message.dispatch`; T3
+ * `thread.create` in the composer's modes and then `message.dispatch`; T3
  * Code folds the first into the message's `bootstrap`. To a started thread
- * whose mode was changed in the composer, the mode goes first
- * (`thread.runtime-mode.set`), as T3 Code's
- * `persistThreadSettingsForNextTurn` sends it. The first message carries T3
- * Code's title seed. A new thread is created with the composer's model and
- * traits; a message to a started thread carries them, as T3 Code's composer
- * sends them. A message sent while a run is active is queued behind it
- * (`queue_after_active`); otherwise the server starts it, or queues it if a
- * run started meanwhile (`start_immediately` with `deliveryIntent: "auto"`,
- * as T3 Code's `startThreadTurn` sends them).
+ * whose modes were changed in the composer, each changed mode goes first
+ * (`thread.runtime-mode.set`, then `thread.interaction-mode.set`), as T3
+ * Code's `persistThreadSettingsForNextTurn` sends them. The first message
+ * carries T3 Code's title seed. A new thread is created with the composer's
+ * model and traits; a message to a started thread carries them, as T3
+ * Code's composer sends them. A message that implements a proposed plan
+ * names it (`sourcePlanRef`). A message sent while a run is active is
+ * queued behind it (`queue_after_active`); otherwise the server starts it,
+ * or queues it if a run started meanwhile (`start_immediately` with
+ * `deliveryIntent: "auto"`, as T3 Code's `startThreadTurn` sends them).
  */
 export function buildSendCommands(input: {
   readonly target: SendTarget;
   /** The mode chosen in the composer. */
   readonly runtimeMode: RuntimeMode;
+  /** The interaction mode chosen in the composer; `default` when left out. */
+  readonly interactionMode?: ProviderInteractionMode;
   readonly dispatchMode: ComposerDispatchMode;
   readonly text: string;
+  readonly sourcePlanRef?: OrchestrationV2SourcePlanRef;
   readonly ids: {
     readonly threadCommandId: CommandId;
     readonly messageCommandId: CommandId;
     readonly messageId: MessageId;
     readonly runtimeModeCommandId: CommandId;
+    /** For a change of interaction mode; one is made from the message's when left out. */
+    readonly interactionModeCommandId?: CommandId;
   };
 }): ReadonlyArray<OrchestrationV2Command> {
   const { target, ids, runtimeMode } = input;
+  const interactionMode = input.interactionMode ?? DEFAULT_PROVIDER_INTERACTION_MODE;
   const text = input.text.trim();
   const firstMessage = target.kind === "new" || !target.hasMessages;
   const message: OrchestrationV2Command = {
@@ -144,19 +156,29 @@ export function buildSendCommands(input: {
     ...(input.dispatchMode === "queue"
       ? { dispatchMode: { type: "queue_after_active" } }
       : { dispatchMode: { type: "start_immediately" }, deliveryIntent: "auto" }),
+    ...(input.sourcePlanRef === undefined ? {} : { sourcePlanRef: input.sourcePlanRef }),
   };
   if (target.kind === "existing") {
-    return target.runtimeMode === runtimeMode
-      ? [message]
-      : [
-          {
-            type: "thread.runtime-mode.set",
-            commandId: ids.runtimeModeCommandId,
-            threadId: target.threadId,
-            runtimeMode,
-          },
-          message,
-        ];
+    const commands: Array<OrchestrationV2Command> = [];
+    if (target.runtimeMode !== runtimeMode) {
+      commands.push({
+        type: "thread.runtime-mode.set",
+        commandId: ids.runtimeModeCommandId,
+        threadId: target.threadId,
+        runtimeMode,
+      });
+    }
+    if ((target.interactionMode ?? DEFAULT_PROVIDER_INTERACTION_MODE) !== interactionMode) {
+      commands.push({
+        type: "thread.interaction-mode.set",
+        commandId:
+          ids.interactionModeCommandId ??
+          CommandId.make(`${ids.messageCommandId}:interaction-mode`),
+        threadId: target.threadId,
+        interactionMode,
+      });
+    }
+    return [...commands, message];
   }
   return [
     {
@@ -167,6 +189,7 @@ export function buildSendCommands(input: {
       title: "New thread",
       modelSelection: target.modelSelection,
       runtimeMode,
+      ...(interactionMode === DEFAULT_PROVIDER_INTERACTION_MODE ? {} : { interactionMode }),
     },
     message,
   ];

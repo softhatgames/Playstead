@@ -4,6 +4,7 @@ import {
   OrchestrationV2AppThread,
   OrchestrationV2ConversationMessage,
   OrchestrationV2ExecutionNode,
+  OrchestrationV2PlanArtifact,
   OrchestrationV2ProviderSession,
   OrchestrationV2ProviderThread,
   OrchestrationV2ProviderTurn,
@@ -60,6 +61,7 @@ const ENTITIES = {
     table: "orchestration_v2_projection_runtime_requests",
     schema: OrchestrationV2RuntimeRequest,
   },
+  plans: { table: "orchestration_v2_projection_plans", schema: OrchestrationV2PlanArtifact },
 } as const;
 type EntityKind = keyof typeof ENTITIES;
 
@@ -69,6 +71,7 @@ const entityKindOf = (event: OrchestrationV2StoredEvent["event"]): EntityKind | 
     case "thread.metadata-updated":
     case "thread.model-selection-updated":
     case "thread.runtime-mode-updated":
+    case "thread.interaction-mode-updated":
       return "thread";
     case "run.created":
     case "run.updated":
@@ -90,6 +93,8 @@ const entityKindOf = (event: OrchestrationV2StoredEvent["event"]): EntityKind | 
       return "turnItems";
     case "runtime-request.updated":
       return "runtimeRequests";
+    case "plan.updated":
+      return "plans";
   }
 };
 
@@ -241,6 +246,7 @@ const make = Effect.gen(function* () {
         providerTurns,
         messages,
         runtimeRequests,
+        plans,
       ] = yield* Effect.all([
         readRows(ENTITIES.runs, threadId),
         readRows(ENTITIES.attempts, threadId),
@@ -250,6 +256,7 @@ const make = Effect.gen(function* () {
         readRows(ENTITIES.providerTurns, threadId),
         readRows(ENTITIES.messages, threadId),
         readRows(ENTITIES.runtimeRequests, threadId),
+        readRows(ENTITIES.plans, threadId),
       ]);
       const turnItems = [...(yield* readRows(ENTITIES.turnItems, threadId))].sort(
         (left, right) => left.ordinal - right.ordinal,
@@ -265,6 +272,7 @@ const make = Effect.gen(function* () {
         messages,
         turnItems,
         runtimeRequests,
+        plans,
         updatedAt: thread.value.updatedAt,
       } satisfies OrchestrationV2ThreadProjection);
     }).pipe(Effect.mapError(failWith("getThread")));

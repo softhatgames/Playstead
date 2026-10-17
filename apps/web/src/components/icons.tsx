@@ -231,3 +231,63 @@ export function CheckIcon({ className }: IconProps) {
     </svg>
   );
 }
+
+/** A section that opens. */
+export function ChevronRightIcon({ className }: IconProps) {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true" className={className} {...strokeProps}>
+      <path d="m9 18 6-6-6-6" />
+    </svg>
+  );
+}
+
+/** Build mode. */
+export function BotIcon({ className }: IconProps) {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true" className={className} {...strokeProps}>
+      <path d="M12 8V4H8" />
+      <rect width="16" height="12" x="4" y="8" rx="2" />
+      <path d="M2 14h2M20 14h2M15 13v2M9 13v2" />
+    </svg>
+  );
+}
+
+/** Plan mode. */
+export function PencilRulerIcon({ className }: IconProps) {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true" className={className} {...strokeProps}>
+      <path d="M13 7 8.7 2.7a2.41 2.41 0 0 0-3.4 0L2.7 5.3a2.41 2.41 0 0 0 0 3.4L7 13" />
+      <path d="m8 6 2-2M18 16l2-2M17 11l4.3 4.3c.94.94.94 2.46 0 3.4l-2.6 2.6c-.94.94-2.46.94-3.4 0L11 17" />
+      <path d="M21.17 6.81a1 1 0 0 0-3.98-3.98L3.83 16.17a2 2 0 0 0-.5.83l-1.32 4.35a.5.5 0 0 0 .62.62l4.35-1.32a2 2 0 0 0 .83-.5z" />
+    </svg>
+  );
+}
+
+/** The task progress badge. */
+export function ListTodoIcon({ className }: IconProps) {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true" className={className} {...strokeProps}>
+      <rect x="3" y="5" width="6" height="6" rx="1" />
+      <path d="m3 17 2 2 4-4M13 6h8M13 12h8M13 18h8" />
+    </svg>
+  );
+}
+
+/** A pending task. */
+export function CircleIcon({ className }: IconProps) {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true" className={className} {...strokeProps}>
+      <circle cx="12" cy="12" r="9" />
+    </svg>
+  );
+}
+
+/** The running task. */
+export function CircleDotIcon({ className }: IconProps) {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true" className={className} {...strokeProps}>
+      <circle cx="12" cy="12" r="9" />
+      <circle cx="12" cy="12" r="1" />
+    </svg>
+  );
+}

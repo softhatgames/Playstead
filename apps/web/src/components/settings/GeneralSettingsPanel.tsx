@@ -1,10 +1,15 @@
 import { ACTIVE_TURN_COMPOSER_ACTIONS } from "@playstead/client-runtime/state/composerDispatch";
-import { DEFAULT_CLIENT_SETTINGS, type FollowUpBehavior } from "@playstead/contracts/ipc";
+import {
+  type ClientSettings,
+  DEFAULT_CLIENT_SETTINGS,
+  type FollowUpBehavior,
+} from "@playstead/contracts/ipc";
 import { DEFAULT_SERVER_SETTINGS, type ServerSettingsPatch } from "@playstead/contracts/settings";
 import { type ReactNode, useState } from "react";
 
 import { updateClientSettings, useClientSettings } from "../../clientSettings.ts";
 import { requestPrimary, usePrimaryConnectionState } from "../../connection/runtime.ts";
+import { ChevronRightIcon } from "../icons.tsx";
 import { RuntimeModePicker } from "../chat/RuntimeModePicker.tsx";
 
 /**
@@ -16,7 +21,8 @@ import { RuntimeModePicker } from "../chat/RuntimeModePicker.tsx";
  * permissions yet, so that description leaves out T3 Code's "Projects can
  * override them."; queueing is the one follow-up so far, so the follow-up
  * row offers only **Queue** and says nothing yet of Mod+Enter doing the
- * opposite. The rest of General waits for its features and slice 5.
+ * opposite. **Legacy features** holds **Plan mode (legacy)**, off by default,
+ * as in T3 Code. The rest of General waits for its features and slice 5.
  */
 export function GeneralSettingsPanel() {
   const state = usePrimaryConnectionState();
@@ -24,7 +30,8 @@ export function GeneralSettingsPanel() {
   const [permissionsOpen, setPermissionsOpen] = useState(false);
   const [saveFailed, setSaveFailed] = useState(false);
   const clientSettings = useClientSettings();
-  const saveClient = (patch: { readonly followUpBehavior: FollowUpBehavior }) => {
+  const [legacyOpen, setLegacyOpen] = useState(false);
+  const saveClient = (patch: Partial<ClientSettings>) => {
     setSaveFailed(false);
     void updateClientSettings(patch).catch(() => setSaveFailed(true));
   };
@@ -53,11 +60,13 @@ export function GeneralSettingsPanel() {
             <SettingsRow
               title="Permissions"
               description="Default permissions for new threads."
-              resetLabel="default permissions"
-              isDefault={settings.defaultRuntimeMode === DEFAULT_SERVER_SETTINGS.defaultRuntimeMode}
-              onReset={() =>
-                save({ defaultRuntimeMode: DEFAULT_SERVER_SETTINGS.defaultRuntimeMode })
-              }
+              reset={{
+                label: "default permissions",
+                isDefault:
+                  settings.defaultRuntimeMode === DEFAULT_SERVER_SETTINGS.defaultRuntimeMode,
+                onReset: () =>
+                  save({ defaultRuntimeMode: DEFAULT_SERVER_SETTINGS.defaultRuntimeMode }),
+              }}
               control={
                 <RuntimeModePicker
                   variant="setting"
@@ -82,11 +91,13 @@ export function GeneralSettingsPanel() {
           <SettingsRow
             title="Follow-up behavior"
             description="Queue follow-ups while the agent runs."
-            resetLabel="follow-up behavior"
-            isDefault={clientSettings.followUpBehavior === DEFAULT_CLIENT_SETTINGS.followUpBehavior}
-            onReset={() =>
-              saveClient({ followUpBehavior: DEFAULT_CLIENT_SETTINGS.followUpBehavior })
-            }
+            reset={{
+              label: "follow-up behavior",
+              isDefault:
+                clientSettings.followUpBehavior === DEFAULT_CLIENT_SETTINGS.followUpBehavior,
+              onReset: () =>
+                saveClient({ followUpBehavior: DEFAULT_CLIENT_SETTINGS.followUpBehavior }),
+            }}
             control={
               <select
                 aria-label="Follow-up behavior"
@@ -109,6 +120,36 @@ export function GeneralSettingsPanel() {
           />
         </div>
       </section>
+      <section aria-labelledby="settings-legacy" className="flex flex-col gap-2">
+        <h2 id="settings-legacy">
+          <button
+            type="button"
+            aria-expanded={legacyOpen}
+            onClick={() => setLegacyOpen((open) => !open)}
+            className="flex items-center gap-1 text-sm font-medium text-neutral-600 hover:text-neutral-900 dark:text-neutral-300 dark:hover:text-neutral-100"
+          >
+            Legacy features
+            <ChevronRightIcon
+              className={`size-4 transition-transform ${legacyOpen ? "rotate-90" : ""}`}
+            />
+          </button>
+        </h2>
+        {legacyOpen ? (
+          <div className="divide-y divide-neutral-200 rounded-lg border border-neutral-200 dark:divide-neutral-800 dark:border-neutral-800">
+            <SettingsRow
+              title="Plan mode (legacy)"
+              description="Restore Build/Plan, /plan, /default, and Shift+Tab. Off uses build mode."
+              control={
+                <Switch
+                  label="Plan mode (legacy)"
+                  checked={clientSettings.planModeEnabled}
+                  onChange={(planModeEnabled) => saveClient({ planModeEnabled })}
+                />
+              }
+            />
+          </div>
+        ) : null}
+      </section>
       {saveFailed ? (
         <p role="alert" className="text-sm text-red-600 dark:text-red-400">
           Failed to save settings.
@@ -127,9 +168,11 @@ const FOLLOW_UP_LABELS: Record<FollowUpBehavior, string> = { queue: "Queue" };
 function SettingsRow(props: {
   readonly title: string;
   readonly description: ReactNode;
-  readonly resetLabel: string;
-  readonly isDefault: boolean;
-  readonly onReset: () => void;
+  readonly reset?: {
+    readonly label: string;
+    readonly isDefault: boolean;
+    readonly onReset: () => void;
+  };
   readonly control: ReactNode;
 }) {
   return (
@@ -138,12 +181,12 @@ function SettingsRow(props: {
         <div className="text-sm font-medium">{props.title}</div>
         <div className="text-xs text-neutral-500 dark:text-neutral-400">{props.description}</div>
       </div>
-      {props.isDefault ? null : (
+      {props.reset === undefined || props.reset.isDefault ? null : (
         <button
           type="button"
-          aria-label={`Reset ${props.resetLabel} to default`}
+          aria-label={`Reset ${props.reset.label} to default`}
           title="Reset to default"
-          onClick={props.onReset}
+          onClick={props.reset.onReset}
           className="text-xs text-neutral-500 hover:underline dark:text-neutral-400"
         >
           Reset
@@ -151,5 +194,31 @@ function SettingsRow(props: {
       )}
       {props.control}
     </div>
+  );
+}
+
+/** An on/off setting (T3 Code's `Switch`). */
+function Switch(props: {
+  readonly label: string;
+  readonly checked: boolean;
+  readonly onChange: (checked: boolean) => void;
+}) {
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={props.checked}
+      aria-label={props.label}
+      onClick={() => props.onChange(!props.checked)}
+      className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors ${
+        props.checked ? "bg-sky-600" : "bg-neutral-300 dark:bg-neutral-700"
+      }`}
+    >
+      <span
+        className={`inline-block size-4 rounded-full bg-white shadow transition-transform ${
+          props.checked ? "translate-x-4.5" : "translate-x-0.5"
+        }`}
+      />
+    </button>
   );
 }

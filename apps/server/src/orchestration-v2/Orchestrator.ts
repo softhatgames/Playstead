@@ -156,6 +156,15 @@ const make = Effect.gen(function* () {
                       onNone: () => false,
                       onSome: (adapter) => adapter.capabilities.turns.supportsQueuedMessages,
                     }),
+              // A plan implemented in a new thread is the original thread's.
+              sourcePlanThread:
+                command.type !== "message.dispatch" || command.sourcePlanRef === undefined
+                  ? undefined
+                  : command.sourcePlanRef.threadId === command.threadId
+                    ? projection
+                    : Option.getOrUndefined(
+                        yield* projections.getThread(command.sourcePlanRef.threadId),
+                      ),
             };
       const now = yield* DateTime.now;
       const decided = decideThreadCommand({

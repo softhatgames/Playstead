@@ -8,6 +8,7 @@ import {
 import type {
   OrchestrationV2RuntimeRequest,
   OrchestrationV2TurnItem,
+  ProviderInteractionMode,
 } from "@playstead/contracts/orchestrationV2";
 import type { ProviderInstanceId } from "@playstead/contracts/providerInstance";
 import * as Effect from "effect/Effect";
@@ -19,8 +20,8 @@ import * as Stream from "effect/Stream";
 import type { makeOrchestrationHarness } from "../OrchestratorHarness.ts";
 
 /**
- * A provider's question (T3 Code has no recording of one outside Codex's
- * plan mode): a thread is asked to put one question to the person and to
+ * A provider's question (T3 Code's `plan_questions` fixture, which asks in
+ * Codex's plan mode; Claude asks in the default mode too): a thread is asked to put one question to the person and to
  * reply with the answer. The question is answered through
  * `runtime-request.respond`, as the pending user-input panel sends it, or
  * the turn waiting on it is interrupted. Each provider's recorder runs it
@@ -33,6 +34,11 @@ export interface QuestionScenario {
   readonly prompt: string;
   /** The option the person picks; the reply holds it. */
   readonly answer: string;
+  /**
+   * The thread's interaction mode: Codex asks only in plan mode (T3 Code's
+   * `plan_questions` fixture); Claude asks in either.
+   */
+  readonly interactionMode: ProviderInteractionMode;
 }
 
 export const QUESTION_ANSWER_SCENARIO_NAME = "question_answer";
@@ -44,6 +50,7 @@ export const CLAUDE_QUESTION_SCENARIO = {
   prompt:
     "Use your AskUserQuestion tool to ask me one question: which color I prefer, with the options Red and Blue. Then reply with the single word I chose.",
   answer: "Blue",
+  interactionMode: "default",
 } as const satisfies QuestionScenario;
 
 export const CODEX_QUESTION_SCENARIO = {
@@ -52,6 +59,7 @@ export const CODEX_QUESTION_SCENARIO = {
   prompt:
     "Use your request_user_input tool to ask me one question: which color I prefer, with the options Red and Blue. Then reply with the single word I chose.",
   answer: "Blue",
+  interactionMode: "plan",
 } as const satisfies QuestionScenario;
 
 export const QUESTION_IDS = {
@@ -84,6 +92,7 @@ export const sendQuestionMessage = (harness: Harness, scenario: QuestionScenario
       title: "New thread",
       modelSelection: { instanceId: scenario.instanceId, model: scenario.model },
       runtimeMode: "full-access",
+      interactionMode: scenario.interactionMode,
     });
     const sent = yield* harness.orchestrator.dispatch({
       type: "message.dispatch",

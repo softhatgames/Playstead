@@ -31,6 +31,11 @@ import {
   runFileCreateScenario,
 } from "../src/orchestration-v2/testkit/fixtures/fileCreate.ts";
 import {
+  CLAUDE_PROPOSED_PLAN_SCENARIO,
+  PROPOSED_PLAN_SCENARIO_NAME,
+  runProposedPlanScenario,
+} from "../src/orchestration-v2/testkit/fixtures/proposedPlan.ts";
+import {
   CLAUDE_QUESTION_SCENARIO,
   QUESTION_ANSWER_SCENARIO_NAME,
   QUESTION_INTERRUPT_SCENARIO_NAME,
@@ -60,6 +65,12 @@ import {
   runTurnInterruptScenario,
 } from "../src/orchestration-v2/testkit/fixtures/turnInterrupt.ts";
 import {
+  CLAUDE_TODO_LIST_SCENARIO,
+  runTodoListScenario,
+  TODO_LIST_IDS,
+  TODO_LIST_SCENARIO_NAME,
+} from "../src/orchestration-v2/testkit/fixtures/todoList.ts";
+import {
   CLAUDE_TRAITS_CHANGE_SCENARIO,
   runTraitsChangeScenario,
 } from "../src/orchestration-v2/testkit/fixtures/traitsChange.ts";
@@ -86,7 +97,7 @@ import { makeTestServerConfig } from "../src/testUtils/testServer.ts";
  * adapter sends). It uses the signed-in `claude` on PATH, in a temporary
  * empty folder, and writes `src/orchestration-v2/testkit/fixtures/<scenario>.claude.ndjson`.
  *
- *   node apps/server/scripts/record-claude-replay.ts [file_create | restart_resume | turn_interrupt | question_answer | question_interrupt | auto_mode | traits_change | approval_accept | approval_decline | approval_cancel | approval_interrupt | auto_accept_edits | session_command | session_edits | queued_turn]
+ *   node apps/server/scripts/record-claude-replay.ts [file_create | restart_resume | turn_interrupt | question_answer | question_interrupt | auto_mode | traits_change | approval_accept | approval_decline | approval_cancel | approval_interrupt | auto_accept_edits | session_command | session_edits | queued_turn | proposed_plan | todo_list]
  *
  * `auto_mode` writes a file in Auto, then changes the thread to Full access,
  * which reopens the query with `resume`, and sends one more message.
@@ -288,6 +299,29 @@ const recordQuestion = (options: HarnessOptions, interrupt: boolean) =>
     return { harness, workspace };
   });
 
+/** A plan proposed in plan mode, then implemented in the default mode. */
+const recordProposedPlan = (options: HarnessOptions) =>
+  Effect.gen(function* () {
+    const harness = yield* makeOrchestrationHarness(options);
+    const { workspace, planned, plan, fileAfterPlan, implemented } = yield* runProposedPlanScenario(
+      harness,
+      CLAUDE_PROPOSED_PLAN_SCENARIO,
+    );
+    yield* Effect.logInfo("The turns ended.").pipe(
+      Effect.annotateLogs({
+        planned: planned.status,
+        plan: JSON.stringify(plan.markdown),
+        implemented: implemented.status,
+      }),
+    );
+    if (planned.status !== "completed" || implemented.status !== "completed" || fileAfterPlan) {
+      return yield* Effect.die(
+        `The runs ended ${planned.status} and ${implemented.status}; file written while planning: ${fileAfterPlan}.`,
+      );
+    }
+    return { harness, workspace };
+  });
+
 /** A turn, a restart over the same home, and a turn that needs the first one's context. */
 const recordRestartResume = (options: HarnessOptions) =>
   Effect.gen(function* () {
@@ -425,8 +459,45 @@ const supervisedEntry = (name: SupervisedScenarioName) => ({
   },
 });
 
+/**
+ * A turn that keeps a todo list. Claude Code offers its todo tools to the
+ * SDK only when `CLAUDE_CODE_ENABLE_TODO_TOOLS` is set, which T3 Code leaves
+ * to the person (an instance or host opt-in); the recording sets it.
+ */
+const recordTodoList = (options: HarnessOptions) =>
+  Effect.gen(function* () {
+    const harness = yield* makeOrchestrationHarness({
+      ...options,
+      environment: { ...options.environment, CLAUDE_CODE_ENABLE_TODO_TOOLS: "1" },
+    });
+    const { workspace, run } = yield* runTodoListScenario(harness, CLAUDE_TODO_LIST_SCENARIO);
+    const projection = yield* harness.orchestrator.getThreadProjection(TODO_LIST_IDS.threadId);
+    const lists = projection._tag === "Some" ? projection.value.plans : [];
+    const tools =
+      projection._tag === "Some"
+        ? projection.value.turnItems.flatMap((item) =>
+            item.type === "dynamic_tool" ? [item.toolName] : [],
+          )
+        : [];
+    yield* Effect.logInfo("The turn ended.").pipe(
+      Effect.annotateLogs({
+        run: run.status,
+        plans: JSON.stringify(lists),
+        tools: tools.join(", "),
+      }),
+    );
+    if (run.status !== "completed" || lists.length === 0) {
+      return yield* Effect.die(`The run ended ${run.status} with ${lists.length} todo lists.`);
+    }
+    return { harness, workspace };
+  });
+
 /** Each scenario: how it is recorded, and what the header says about it. */
 const SCENARIOS = {
+  [TODO_LIST_SCENARIO_NAME]: {
+    record: recordTodoList,
+    metadata: { model: CLAUDE_TODO_LIST_SCENARIO.model, prompt: CLAUDE_TODO_LIST_SCENARIO.prompt },
+  },
   approval_accept: supervisedEntry("approval_accept"),
   approval_decline: supervisedEntry("approval_decline"),
   approval_cancel: supervisedEntry("approval_cancel"),
@@ -477,6 +548,14 @@ const SCENARIOS = {
         CLAUDE_TURN_INTERRUPT_SCENARIO.nextPrompt,
       ],
       interruptAfter: "command_execution running",
+    },
+  },
+  [PROPOSED_PLAN_SCENARIO_NAME]: {
+    record: recordProposedPlan,
+    metadata: {
+      model: CLAUDE_PROPOSED_PLAN_SCENARIO.model,
+      prompt: CLAUDE_PROPOSED_PLAN_SCENARIO.planPrompt,
+      interactionModes: ["plan", "default"],
     },
   },
   [QUESTION_ANSWER_SCENARIO_NAME]: {

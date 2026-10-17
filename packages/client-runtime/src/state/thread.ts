@@ -24,6 +24,7 @@ const applyEvent = (
     case "thread.metadata-updated":
     case "thread.model-selection-updated":
     case "thread.runtime-mode-updated":
+    case "thread.interaction-mode-updated":
       return { ...projection, thread: event.payload, updatedAt: event.payload.updatedAt };
     case "run.created":
     case "run.updated":
@@ -59,6 +60,8 @@ const applyEvent = (
         ...projection,
         runtimeRequests: upsertById(projection.runtimeRequests, event.payload),
       };
+    case "plan.updated":
+      return { ...projection, plans: upsertById(projection.plans, event.payload) };
   }
 };
 
