@@ -2,7 +2,7 @@
 
 Playstead should feel like working with a game developer. Describe an idea, try it, discuss what happened and decide what deserves more work. The technical work should leave more room for the ideas, rules and feel that make the game yours.
 
-**Status: confirmed design; the development experience is not yet implemented.** See the [roadmap](https://github.com/softhatgames/playstead-v0/blob/v0/docs/ROADMAP.md) for actual progress. This document defines the experience. [ARCHITECTURE.md](https://github.com/softhatgames/playstead-v0/blob/v0/docs/ARCHITECTURE.md) assigns responsibilities; [HARNESS.md](HARNESS.md) defines the game connection.
+**Status: confirmed design; the game development experience is not yet implemented.** [GitHub Issues](https://github.com/softhatgames/playstead/issues) track progress. This document defines the experience. [ARCHITECTURE.md](ARCHITECTURE.md) maps Playstead's structure, [the development layer](DEVELOPMENT-LAYER.md) defines how a game is built so the person and the agent can see, drive and change it, and the [glossary](../GLOSSARY.md) defines the terms.
 
 ## One workspace, different ways of working
 
@@ -12,7 +12,7 @@ An experienced developer can inspect source, diffs, diagnostics and tools, and w
 
 Each person chooses whether to show technical details; Playstead asks once, at first run. Without them, results read in game terms, and every result can still show its work. With them, activities, diffs, loaded revisions and each thread's token use as the provider reports it appear by default, along with changes, a terminal, files and a usage screen. Approvals and permission requests stay in game terms either way.
 
-Playstead uses the real Codex and Claude coding harnesses. Its custom interface adds game development context, tools and workflows around them. Provider capabilities and limitations remain visible. A person can explicitly hand work to another provider; the [architecture](https://github.com/softhatgames/playstead-v0/blob/v0/docs/ARCHITECTURE.md#coding-harnesses) defines that handoff.
+Playstead runs the real Codex and Claude agents as providers, following [T3 Code](t3-code.md). Its custom interface adds game development context, tools and workflows around them. Provider capabilities and limitations remain visible. A thread keeps the provider it started with.
 
 ## The whole development process
 
@@ -26,9 +26,11 @@ Playstead imposes no universal scene model or scripting language. The shipped ga
 
 ## Code-first games
 
-Games made with Playstead are written as code on proven libraries, without an off-the-shelf engine such as Unity, Godot or Unreal. Each game has its own **engine**: the reusable foundation its gameplay, tools and content run on. Gameplay holds the game's rules. Content, such as levels, tuning values, art and text, is data the engine can reload while the game runs. The engine holds no rules of the game, and changing it is a core change.
+Games made with Playstead are written as code on proven libraries, without an off-the-shelf engine such as Unity, Godot or Unreal ([ADR 0004](adr/0004-code-first-games-starting-with-csharp.md)). Each game has its own **engine**: the reusable foundation its gameplay, tools and content run on. Gameplay holds the game's rules. Content, such as levels, tuning values, art and text, is data the engine can reload while the game runs. The engine holds no rules of the game, and changing it is a core change.
 
-The game and its prototypes share one language; tools can use others where they fit. Playstead offers a few **supported stacks**, each a language with its libraries, skills and a tested connection to Playstead. C# on .NET is the default for people without a preference. A person can choose another language; the agent then builds that connection itself, and Playstead says the support is shallower.
+Every engine follows one structure, so the person and the agent can always see and change what the game is doing. The rules advance the game state tick by tick from players' actions; the state is data that can be inspected, copied and replayed exactly; and everything drawn or heard follows from it. Each game also carries a **development layer**, built only into development builds, through which Playstead, the agent and in-game tools inspect it, test it, script its play and record it. [The development layer](DEVELOPMENT-LAYER.md) defines both.
+
+The game and its prototypes share one language; tools can use others where they fit. Playstead offers a few **supported stacks**, each a language with its libraries, skills and a Playstead library that carries the development layer's common parts. C# on .NET 10 is the first, and the default for people without a preference. A person can choose another language; the agent then builds the development layer from its contract, and Playstead says the support is shallower.
 
 Each game project records its **target platforms**, such as desktop, iPhone or Android, and only stacks that reach them are offered. Every game also runs on the desktop computer where it is developed. The engine responds to actions, such as jump, rather than particular keys or touches, and lays out its screen for any size. The preview shows the game as it would appear on a chosen target; for a phone, mouse clicks act as touches. Touch feel is judged on a real phone and reported as unassessed until then.
 
@@ -36,11 +38,11 @@ Each game project records its **target platforms**, such as desktop, iPhone or A
 
 Everything produced with Playstead must remain usable without it: source, assets, tools, skills, prototypes and development records. Retained tools and prototypes include enough setup information to use them independently.
 
-The person adds an existing game project by choosing its folder, or creates a new one. An existing game project's first work, in the game, is [discovery](HARNESS.md#discover-and-connect-a-game-project): the agent explains what works already, identifies missing capabilities and proposes integration work. Until discovery is complete, the game project offers nothing to run. Respect the game project's existing organisation and technical choices. A game built on an off-the-shelf engine is outside what Playstead supports, and discovery says so.
+For now, Playstead starts new games. Adding an existing code-first game comes later, by choosing its folder. Its first work, in the game, will be [discovery](DEVELOPMENT-LAYER.md#later): the agent explains what works already, identifies what is missing and proposes integration work. Until discovery is complete, the game project offers nothing to run. Discovery respects the game project's existing organisation and technical choices. A game built on an off-the-shelf engine is outside what Playstead supports, and discovery says so.
 
 A new game starts from its idea, where people will play it and any technical preference; without one, it uses the default stack. It can start from a copy of another game's engine and tools, recording where they came from; the two games then change independently. Playstead creates its folder where the person chooses, with Git. The first work is a prototype of the idea: the engine grows from what prototypes need rather than being built first.
 
-Portable, durable results belong to the game project. A game's `.playstead/` folder holds disposable working data. Deleting it preserves the game and valuable development records. Host history and credentials have a separate lifetime; [storage ownership](https://github.com/softhatgames/playstead-v0/blob/v0/docs/ARCHITECTURE.md#storage-ownership) defines that boundary.
+Portable, durable results belong to the game project. A game's `.playstead/` folder holds disposable working data. Deleting it preserves the game and valuable development records. Playstead's own threads, settings and credentials live in the Playstead home, outside every game project, with a separate lifetime ([ARCHITECTURE.md](ARCHITECTURE.md#identity)). Credentials never become game project files.
 
 ## Working in a game project
 
@@ -70,13 +72,13 @@ Distinguish intended design from observed behaviour. When they disagree, investi
 
 During **live iteration**, compatible changes within the approved scope appear in the **preview** as the agent works. Content and tuning load without a rebuild; code changes load into the running game where the stack can apply them, and otherwise the game restarts from the same scenario. The preview runs the game or a prototype inside Playstead, focused on what is being worked on: a prototype's agent can start it in the prototype's scenario and hide the HUD or other distractions, and the person can adjust that. Resets and restarts are announced and wait for a suitable point unless automatic restarts were authorized.
 
-During a **playtest**, what is running stays fixed. **Play** opens the full game as a player would see it, in its own window or, for a phone target platform, on the person's phone: from the prototype's scenario in a prototype, or from the beginning in the game. Nothing from Playstead covers it; a key provided by the game's integration can mark moments for feedback afterwards. A playtest can also be held inside the preview for a quick check. The agent can prepare changes alongside a playtest; they wait until it ends. The person switches between them by asking the agent or with the preview's controls.
+During a **playtest**, what is running stays fixed. **Play** opens the full game as a player would see it, in its own window or, for a phone target platform, on the person's phone: from the prototype's scenario in a prototype, or from the beginning in the game. Nothing from Playstead covers it; a key the game's development layer provides can mark moments for feedback afterwards. A playtest can also be held inside the preview for a quick check. The agent can prepare changes alongside a playtest; they wait until it ends. The person switches between them by asking the agent or with the preview's controls.
 
 Playstead shows one running game at a time: the game or the prototype the person has open. Switching restarts from the same scenario where possible and warns about anything that will be lost. Agents can run hidden checks in the background; these never count as the person's play.
 
-A **scenario** is a named starting situation, such as a boss's second phase with three hearts, kept in the game project. Prototypes, playtests and checks can start from one instead of replaying the game to that point. The agent makes scenarios with the game's capabilities, or proposes integration work when those are missing. Anything played from a scenario records it, because a scenario skips the journey there. Scenarios that depend on changed content are marked as possibly outdated until checked.
+A **scenario** is a named starting situation, such as a boss's second phase with three hearts, kept in the game project. It is described as setup in game terms, so it outlives changes to the game, and a snapshot saved for each revision makes later starts quick. Prototypes, playtests and checks can start from one instead of replaying the game to that point. The agent makes scenarios with the game's capabilities, or proposes adding capabilities when those are missing. Anything played from a scenario records it, because a scenario skips the journey there. Scenarios that depend on changed content are marked as possibly outdated until checked.
 
-Feedback remains attached to what the person actually played, and records whether it came from the preview, Play or a clip. Show which source changes exist and which revision the running game has loaded. An edited file is not evidence that the running game changed. The [harness contract](HARNESS.md#apply-changes-to-a-running-game) governs application, state compatibility and recovery.
+Feedback remains attached to what the person actually played, and records whether it came from the preview, Play or a clip. Show which source changes exist and which revision the running game has loaded. An edited file is not evidence that the running game changed. [The development layer](DEVELOPMENT-LAYER.md#changing-the-game) governs application, state compatibility and recovery.
 
 ## Judge the right thing
 
@@ -104,7 +106,7 @@ Playstead ships starter skills, including [writing-for-agents](../skills/writing
 
 New game projects start with current defaults. Existing game projects retain their chosen versions until updates are accepted. Explain proposed updates in plain language and expose their exact changes. Preserve customisations and removals. The user can delegate maintenance of particular skills or ask the agent to adapt an update.
 
-Skills guide work; [permissions](https://github.com/softhatgames/playstead-v0/blob/v0/docs/ARCHITECTURE.md#authority-and-limits) determine authority independently.
+Skills guide work; permission modes, which follow [T3 Code](t3-code.md), determine authority independently.
 
 ## Remote work and delegation
 
@@ -112,14 +114,14 @@ Initially, development runs on a computer under the user's control. A phone conn
 
 Remote chat is essential. Local play with remote captures is sufficient; browser demos and streamed play are optional. Managed execution for people without a suitable computer is later work.
 
-The user approves bounded work, including core changes and rebuilds, before it starts. Each approval says which of its limits are enforced, which are checked when the work is kept and which are the agent's commitment. They can set standing time and resource limits and override them for a task. When denying a permission request, the person can add a reason in their own words. After Deny the agent receives it at once; after Deny and stop it waits until the person continues. The agent surfaces useful results early. [Authority and recovery](https://github.com/softhatgames/playstead-v0/blob/v0/docs/ARCHITECTURE.md#authority-and-limits) define scope changes, interruption and honest limits.
+The user approves bounded work, including core changes and rebuilds, before it starts. Each approval says which of its limits are enforced, which are checked when the work is kept and which are the agent's commitment. They can set standing time and resource limits and override them for a task. When denying a permission request, the person can add a reason in their own words. After Deny the agent receives it at once; after Deny and stop it waits until the person continues. The agent surfaces useful results early. Permission modes, interruption and recovery follow [T3 Code](t3-code.md).
 
 ## Marketing and release
 
 Marketing includes positioning, audience research, store pages, screenshots, trailers, campaigns and learning from player responses. Each game project defines its voice and communication rules. Those rules do not come automatically from another game's workflow.
 
-The agent can research, draft and prepare assets within the agreed task. It can execute campaigns when the necessary tools are connected and the user has explicitly approved a concrete proposal. That proposal identifies content, destinations, timing and spending limits.
+The agent can research, draft and prepare assets within the agreed task. Gameplay video and screenshots are rendered from recorded play, the person's or a bot's, at any resolution, frame rate and aspect ratio, and say whose play they show ([gameplay video](DEVELOPMENT-LAYER.md#gameplay-video)). The agent can execute campaigns when the necessary tools are connected and the user has explicitly approved a concrete proposal. That proposal identifies content, destinations, timing and spending limits.
 
 Approval can cover individual actions or a prepared batch. Carry out the approved schedule without asking again for each item. Material changes to content, destinations or spending require renewed approval. Publication and deployment follow the same explicit authority boundary.
 
-The full remit guides the product; [milestone 1](https://github.com/softhatgames/playstead-v0/blob/v0/docs/ROADMAP.md) proves a smaller development loop first.
+The full remit guides the product; the first game work proves a smaller development loop first.

@@ -1,8 +1,8 @@
 # Game stacks
 
-- **Question:** Which language and libraries should be the default stack for code-first games made with Playstead? Games need a fast edit-to-see cycle, native desktop builds and, for some games, iPhone and Android; consoles are welcome. At the start of the investigation every game was also expected to build to WebAssembly for the preview. [Decision 0020](https://github.com/softhatgames/playstead-v0/blob/v0/docs/adr/0020-native-games-send-frames-to-the-preview.md) later removed that requirement.
+- **Question:** Which language and libraries should be the default stack for code-first games made with Playstead? Games need a fast edit-to-see cycle, native desktop builds and, for some games, iPhone and Android; consoles are welcome. At the start of the investigation every game was also expected to build to WebAssembly for the preview. That requirement was later dropped: a native game sends its frames to the preview ([ADR 0002](../adr/0002-the-development-layer.md)).
 - **Date:** 2026-10-15. All sources were accessed on this date.
-- **Outcome:** [decision 0021](https://github.com/softhatgames/playstead-v0/blob/v0/docs/adr/0021-csharp-as-the-default-stack.md) chose C# on the .NET long-term support release, with MonoGame for now.
+- **Outcome:** [ADR 0004](../adr/0004-code-first-games-starting-with-csharp.md) chose C# on .NET 10, the long-term support release, with MonoGame as the first library to try.
 - **Local evidence:** two small timing runs on a macOS (Apple silicon) development computer, in a throwaway folder that was then deleted. They are marked **Observed**.
 
 Labels: **Documented** (official documentation, repositories or release notes), **Observed** (the local runs), **Inference** (reasoning, not a source) and **Unconfirmed** (not established).
@@ -63,6 +63,7 @@ Labels: **Documented** (official documentation, repositories or release notes), 
 - Whether Hot Reload takes effect inside a running MonoGame game, and how long a change takes to appear.
 - The delay of frames sent from a MonoGame game into the Electron preview.
 - Whether a game gets a GPU context, audio and input under Codex's sandbox on macOS and Windows.
+- Whether .NET's maths functions give the same results on x64 and ARM64, and which physics library allows snapshots and replays the same across machines ([ADR 0003](../adr/0003-game-state-in-the-games-playstead-builds.md)).
 - REDox under ahead-of-time compilation.
 - Rust on consoles under non-disclosure agreements.
 

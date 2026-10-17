@@ -33,6 +33,14 @@ import {
   runProposedPlanScenario,
 } from "../src/orchestration-v2/testkit/fixtures/proposedPlan.ts";
 import {
+  CODEX_RESTART_RESUME_MODES_SCENARIO,
+  CODEX_RESTART_RESUME_SCENARIO,
+  RESTART_RESUME_IDS,
+  type RestartResumeScenario,
+  runFirstTurn,
+  runSecondTurn,
+} from "../src/orchestration-v2/testkit/fixtures/restartResume.ts";
+import {
   CODEX_QUESTION_SCENARIO,
   QUESTION_ANSWER_SCENARIO_NAME,
   QUESTION_INTERRUPT_SCENARIO_NAME,
@@ -80,6 +88,7 @@ import {
   scrubbed,
   writeRecording,
 } from "../src/orchestration-v2/testkit/replayScrub.ts";
+import { makeTestServerConfig } from "../src/testUtils/testServer.ts";
 
 /**
  * Playstead's Codex app-server recorder (T3 Code's
@@ -90,10 +99,14 @@ import {
  * `codex` on PATH, in a temporary empty folder, and writes
  * `src/orchestration-v2/testkit/fixtures/<scenario>.codex.ndjson`.
  *
- *   node apps/server/scripts/record-codex-replay.ts [file_create | turn_interrupt | auto_mode | traits_change | proposed_plan | question_answer | question_interrupt | todo_list | approval_accept | approval_decline | approval_cancel | approval_interrupt | auto_accept_edits | session_command | session_edits | queued_turn | message_steering | --help]
+ *   node apps/server/scripts/record-codex-replay.ts [file_create | restart_resume | restart_resume_modes | turn_interrupt | auto_mode | traits_change | proposed_plan | question_answer | question_interrupt | todo_list | approval_accept | approval_decline | approval_cancel | approval_interrupt | auto_accept_edits | session_command | session_edits | queued_turn | message_steering | --help]
  *
- * `turn_interrupt` interrupts a long command once it runs, then sends one
- * more message. `auto_mode` writes a file in Auto, then sends one more
+ * `restart_resume` builds the services a second time over the same home
+ * between its two turns, as a restarted server would, so the recording
+ * holds two app-servers; `restart_resume_modes` plans in Auto before the
+ * restart and asks in Supervised and the default mode after it.
+ * `turn_interrupt` interrupts a long command once it
+ * runs, then sends one more message. `auto_mode` writes a file in Auto, then sends one more
  * message after the change to Full access. `traits_change` sends turns that
  * each carry another reasoning effort and service tier. The `approval_*` scenarios ask
  * Codex, in Supervised, to write a file, and approve, decline or cancel each
@@ -126,11 +139,32 @@ const codexVersion = Effect.gen(function* () {
   return version;
 });
 
+/** The Codex thread the recording's first `thread/start` answered with. */
+const startedThreadId = (entries: ReadonlyArray<ProviderReplayEntry>) =>
+  entries
+    .map((entry) =>
+      entry.type === "emit_inbound"
+        ? (entry.frame as { readonly result?: { readonly thread?: { readonly id?: unknown } } })
+            .result?.thread?.id
+        : undefined,
+    )
+    .find((id) => typeof id === "string");
+
 type Harness = Effect.Success<ReturnType<typeof makeOrchestrationHarness>>;
+type HarnessOptions = Parameters<typeof makeOrchestrationHarness>[0];
+
+/** A recorder that needs one harness, made from the recording's options. */
+const withHarness =
+  <E, R>(record: (harness: Harness) => Effect.Effect<string, E, R>) =>
+  (options: HarnessOptions) =>
+    Effect.flatMap(makeOrchestrationHarness(options), (harness) =>
+      Effect.map(record(harness), (workspace) => ({ harness, workspace })),
+    );
 
 /** One file-creating turn. */
-const recordFileCreate = (harness: Harness) =>
+const recordFileCreate = (options: HarnessOptions) =>
   Effect.gen(function* () {
+    const harness = yield* makeOrchestrationHarness(options);
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     const scenario = CODEX_FILE_CREATE_SCENARIO;
@@ -145,12 +179,13 @@ const recordFileCreate = (harness: Harness) =>
       }),
     );
     if (run.status !== "completed") return yield* Effect.die(`The run ended ${run.status}.`);
-    return workspace;
+    return { harness, workspace };
   });
 
 /** A turn interrupted while its command runs, then a turn after it. */
-const recordTurnInterrupt = (harness: Harness) =>
+const recordTurnInterrupt = (options: HarnessOptions) =>
   Effect.gen(function* () {
+    const harness = yield* makeOrchestrationHarness(options);
     const { workspace, first, next } = yield* runTurnInterruptScenario(
       harness,
       CODEX_TURN_INTERRUPT_SCENARIO,
@@ -161,7 +196,35 @@ const recordTurnInterrupt = (harness: Harness) =>
     if (first.status !== "interrupted" || next.status !== "completed") {
       return yield* Effect.die(`The runs ended ${first.status} and ${next.status}.`);
     }
-    return workspace;
+    return { harness, workspace };
+  });
+
+/** A turn, a restart over the same home, and a turn that needs the first one's context. */
+const recordRestartResume = (scenario: RestartResumeScenario) => (options: HarnessOptions) =>
+  Effect.gen(function* () {
+    const config = yield* makeTestServerConfig();
+    const first = yield* Effect.scoped(
+      Effect.flatMap(makeOrchestrationHarness({ ...options, config }), (harness) =>
+        runFirstTurn(harness, scenario),
+      ),
+    );
+    if (first.run.status !== "completed") {
+      return yield* Effect.die(`The first run ended ${first.run.status}.`);
+    }
+    const harness = yield* makeOrchestrationHarness({ ...options, config, recoverOnStartup: true });
+    const second = yield* runSecondTurn(harness, scenario);
+    const projection = yield* harness.orchestrator.getThreadProjection(RESTART_RESUME_IDS.threadId);
+    const reply =
+      projection._tag === "Some"
+        ? projection.value.messages.findLast((message) => message.role === "assistant")?.text
+        : undefined;
+    yield* Effect.logInfo("The turn after the restart ended.").pipe(
+      Effect.annotateLogs({ run: second.status, reply: JSON.stringify(reply) }),
+    );
+    if (second.status !== "completed" || !reply?.toLowerCase().includes(scenario.codeWord)) {
+      return yield* Effect.die("Codex did not remember the code word after the restart.");
+    }
+    return { harness, workspace: first.workspace };
   });
 
 /** Turns that each carry other traits. */
@@ -273,12 +336,12 @@ const recordSessionApprovals = (harness: Harness, scenario: SessionApprovalScena
   });
 
 const sessionApprovalEntry = (scenario: SessionApprovalScenario) => ({
-  record: (harness: Harness) => recordSessionApprovals(harness, scenario),
+  record: withHarness((harness: Harness) => recordSessionApprovals(harness, scenario)),
   metadata: { model: scenario.model, turns: scenario.turns },
 });
 
 const supervisedEntry = (name: SupervisedScenarioName) => ({
-  record: (harness: Harness) => recordSupervised(harness, name),
+  record: withHarness((harness: Harness) => recordSupervised(harness, name)),
   metadata: {
     model: CODEX_SUPERVISED_SCENARIO.model,
     prompt: CODEX_SUPERVISED_SCENARIO.prompt,
@@ -339,14 +402,26 @@ const recordTodoList = (harness: Harness) =>
     return workspace;
   });
 
+const restartResumeEntry = (scenario: RestartResumeScenario) => ({
+  record: recordRestartResume(scenario),
+  metadata: {
+    model: scenario.model,
+    prompts: [scenario.firstPrompt, scenario.secondPrompt],
+    ...(scenario.modes === undefined ? {} : { modes: scenario.modes }),
+    ...(scenario.modesAfterRestart === undefined
+      ? {}
+      : { modesAfterRestart: scenario.modesAfterRestart }),
+  },
+});
+
 /** Each scenario: how it is recorded, and what the header says about it. */
 const SCENARIOS = {
   [TODO_LIST_SCENARIO_NAME]: {
-    record: recordTodoList,
+    record: withHarness(recordTodoList),
     metadata: { model: CODEX_TODO_LIST_SCENARIO.model, prompt: CODEX_TODO_LIST_SCENARIO.prompt },
   },
   [PROPOSED_PLAN_SCENARIO_NAME]: {
-    record: recordProposedPlan,
+    record: withHarness(recordProposedPlan),
     metadata: {
       model: CODEX_PROPOSED_PLAN_SCENARIO.model,
       prompt: CODEX_PROPOSED_PLAN_SCENARIO.planPrompt,
@@ -354,7 +429,7 @@ const SCENARIOS = {
     },
   },
   [QUESTION_ANSWER_SCENARIO_NAME]: {
-    record: (harness: Harness) => recordQuestion(harness, false),
+    record: withHarness((harness: Harness) => recordQuestion(harness, false)),
     metadata: {
       model: CODEX_QUESTION_SCENARIO.model,
       prompt: CODEX_QUESTION_SCENARIO.prompt,
@@ -363,7 +438,7 @@ const SCENARIOS = {
     },
   },
   [QUESTION_INTERRUPT_SCENARIO_NAME]: {
-    record: (harness: Harness) => recordQuestion(harness, true),
+    record: withHarness((harness: Harness) => recordQuestion(harness, true)),
     metadata: {
       model: CODEX_QUESTION_SCENARIO.model,
       prompt: CODEX_QUESTION_SCENARIO.prompt,
@@ -379,7 +454,7 @@ const SCENARIOS = {
   session_command: sessionApprovalEntry(SESSION_APPROVAL_SCENARIOS.codex.session_command),
   session_edits: sessionApprovalEntry(SESSION_APPROVAL_SCENARIOS.codex.session_edits),
   [CODEX_QUEUED_TURN_SCENARIO.scenario]: {
-    record: recordQueuedTurn,
+    record: withHarness(recordQueuedTurn),
     metadata: {
       model: CODEX_QUEUED_TURN_SCENARIO.model,
       prompts: [1, 2, 5].map(queuedTurnPrompt),
@@ -387,7 +462,7 @@ const SCENARIOS = {
     },
   },
   [CODEX_MESSAGE_STEERING_SCENARIO.scenario]: {
-    record: recordMessageSteering,
+    record: withHarness(recordMessageSteering),
     metadata: {
       model: CODEX_MESSAGE_STEERING_SCENARIO.model,
       prompts: CODEX_MESSAGE_STEERING_SCENARIO.prompts,
@@ -396,14 +471,14 @@ const SCENARIOS = {
     },
   },
   [CODEX_TRAITS_CHANGE_SCENARIO.scenario]: {
-    record: recordTraitsChange,
+    record: withHarness(recordTraitsChange),
     metadata: {
       model: CODEX_TRAITS_CHANGE_SCENARIO.model,
       turns: CODEX_TRAITS_CHANGE_SCENARIO.turns,
     },
   },
   [CODEX_AUTO_MODE_SCENARIO.scenario]: {
-    record: recordAutoMode,
+    record: withHarness(recordAutoMode),
     metadata: {
       model: CODEX_AUTO_MODE_SCENARIO.model,
       prompts: [CODEX_AUTO_MODE_SCENARIO.writePrompt, CODEX_AUTO_MODE_SCENARIO.nextPrompt],
@@ -417,6 +492,10 @@ const SCENARIOS = {
       prompt: CODEX_FILE_CREATE_SCENARIO.prompt,
     },
   },
+  [CODEX_RESTART_RESUME_SCENARIO.scenario]: restartResumeEntry(CODEX_RESTART_RESUME_SCENARIO),
+  [CODEX_RESTART_RESUME_MODES_SCENARIO.scenario]: restartResumeEntry(
+    CODEX_RESTART_RESUME_MODES_SCENARIO,
+  ),
   [CODEX_TURN_INTERRUPT_SCENARIO.scenario]: {
     record: recordTurnInterrupt,
     metadata: {
@@ -449,12 +528,11 @@ const program = Effect.gen(function* () {
   const version = yield* codexVersion;
 
   const recording = yield* makeRecordingClientFactory();
-  const harness = yield* makeOrchestrationHarness({
+  const { harness, workspace } = yield* scenario.record({
     codexClients: recording.clients,
     codexBinaryPath: "codex",
     environment: withoutAgentShellVariables(process.env),
   });
-  const workspace = yield* scenario.record(harness);
 
   const machine = readMachineIdentity();
   const replacements = recordingReplacements({ workspace, playsteadHome: harness.home, machine });
@@ -470,7 +548,11 @@ const program = Effect.gen(function* () {
       version,
       capturedAt: DateTime.formatIso(yield* DateTime.now).slice(0, 10),
       scenario: scenarioName,
-      metadata: { ...scenario.metadata, recorder: "apps/server/scripts/record-codex-replay.ts" },
+      metadata: {
+        ...scenario.metadata,
+        nativeThreadId: startedThreadId(entries),
+        recorder: "apps/server/scripts/record-codex-replay.ts",
+      },
     },
     entries,
   });

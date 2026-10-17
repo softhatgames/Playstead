@@ -105,10 +105,18 @@ import { codexClientInfo, spawnCodexAppServer } from "../../provider/CodexProvid
  *   Codex's later requests of that kind itself, without asking. A turn in
  *   another mode starts with nothing allowed.
  *
- * Absent: resuming a thread after a restart; and, as in the slice as a
- * whole, MCP, showing reasoning, subagents, goals and usage. A server
- * request nobody handles gets "method not found" from the client, so an
- * unexpected one fails loudly.
+ * - A thread that has talked to Codex before, as after a restart, resumes
+ *   its Codex thread (`thread/resume` with `excludeTurns` and the same
+ *   runtime params as `thread/start`, T3 Code's `resumeThread`) instead of
+ *   starting one, so Codex keeps the conversation. The resumed thread may
+ *   still be in the collaboration mode its last session left it in, so
+ *   every turn of a resumed session names its mode.
+ *
+ * Absent: unarchiving a Codex thread that refuses to resume because it is
+ * archived, as T3 Code does; and, as in the slice as a whole, MCP, showing
+ * reasoning, subagents, goals and usage. A server request nobody handles
+ * gets "method not found" from the client, so an unexpected one fails
+ * loudly.
  */
 
 const CODEX = "codex" as const;
@@ -623,7 +631,10 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (input: 
        * Stops a command's background terminal, which Codex leaves running when
        * it interrupts a turn, and checks it is gone when Codex says it was not
        * running (T3 Code's `terminateBackgroundTerminal`). A command that
-       * stays is only logged: the turn ends interrupted all the same.
+       * stays is only logged: the turn ends interrupted all the same. Both
+       * calls are experimental in Codex; the schema generator refuses a Codex
+       * without them, and the weekly T3 Code review in docs/t3-code.md
+       * watches them.
        */
       const terminateCommand = (threadId: string, processId: string) =>
         Effect.gen(function* () {
@@ -1205,13 +1216,28 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (input: 
         ensureThread: ({ providerThread }) =>
           Effect.gen(function* () {
             const started = yield* Ref.get(nativeThreadId);
+            const runtimeParams = {
+              cwd: open.runtimePolicy.cwd,
+              model: open.modelSelection.model,
+              config: CODEX_THREAD_CONFIG,
+            };
             const id =
               started ??
-              (yield* client.request("thread/start", {
-                cwd: open.runtimePolicy.cwd,
-                model: open.modelSelection.model,
-                config: CODEX_THREAD_CONFIG,
-              })).thread.id;
+              (open.initialNativeThreadId === undefined
+                ? (yield* client.request("thread/start", runtimeParams)).thread.id
+                : // Codex's earlier turns stay in Codex; Playstead keeps its own.
+                  yield* Effect.map(
+                    client.request("thread/resume", {
+                      threadId: open.initialNativeThreadId,
+                      excludeTurns: true,
+                      ...runtimeParams,
+                    }),
+                    (resumed) => {
+                      // Its last session may have left it planning.
+                      collaborationModeSent = true;
+                      return resumed.thread.id;
+                    },
+                  ));
             yield* Ref.set(nativeThreadId, id);
             return { ...providerThread, nativeThreadRef: { driver: CODEX, nativeId: id } };
           }).pipe(Effect.mapError(adapterError("ensure-thread"))),

@@ -1,6 +1,6 @@
 {
   "name": "@playstead/server",
-  "version": "0.1.0",
+  "version": "0.0.0",
   "private": true,
   "description": "The server: RPC, orchestration, persistence and providers.",
   "type": "module",

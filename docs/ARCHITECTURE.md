@@ -47,7 +47,7 @@ Each workspace sits at the path of the T3 Code workspace it follows, under Plays
 | `oxlint-plugin-playstead`                                 | Playstead's own lint rules, where T3 Code has `oxlint-plugin-t3code`.                                                                                                                                                                                                                                                                      |
 | `.repos/effect-smol`                                      | Effect's source, vendored read-only for agents, as in T3 Code.                                                                                                                                                                                                                                                                             |
 
-Each provider Playstead enables takes its T3 Code place. The first slice has Codex and Claude, as [First working slice](https://github.com/softhatgames/playstead/issues/8) decided; the other providers are absent until their slice.
+Each provider Playstead enables takes its T3 Code place. Playstead has Codex and Claude, as [First working slice](https://github.com/softhatgames/playstead/issues/8) decided; the other providers are absent until [the roadmap](ROADMAP.md#after-01) brings them in after 0.1.
 
 ## Left out
 
@@ -70,8 +70,10 @@ An area Playstead leaves out is absent: it has no workspace, contract, RPC metho
 | Linux packages                         | `packaging/`                                                                                                                                                      |
 | Product analytics                      | server `telemetry/`                                                                                                                                               |
 | WSL backend, to be considered later    | `apps/desktop/src/wsl/`                                                                                                                                           |
+| Switching provider within a thread     | server `orchestration-v2/ProviderSwitchService.ts`; slice 7 settles whether its context handoffs (`ContextHandoffService.ts`) stay for fork                       |
+| Nightly update channel                 | the `nightly` channel in `apps/desktop/src/updates/updateChannels.ts` and `DesktopUpdates.ts`, the channel selector in Settings, and the nightly release jobs     |
 
-Features inside followed areas come in slice by slice. [First working slice](https://github.com/softhatgames/playstead/issues/8) lists what the first slice includes and orders the slices that wait, such as worktrees, the orchestrator's MCP server, auto-update, signing and publishing the server as a command. Until its slice, a feature is absent, as a left-out area is.
+Features inside followed areas come in milestone by milestone. [The roadmap](ROADMAP.md) orders the milestones that wait, such as worktrees, the orchestrator's MCP server, auto-update, signing and publishing the server as a command. Until its milestone, a feature is absent, as a left-out area is.
 
 ### Split modules
 
@@ -145,8 +147,8 @@ Tests pass on macOS and Windows from the start. These rules come from the failur
 - **Versions.** Playstead uses the versions T3 Code pins at the followed commit: Node 24, pnpm 11, Vite+, Electron 44, and TypeScript 7 with `@effect/tsgo` and tsc-rs. It moves when a weekly review adopts T3 Code's change.
 - **A development machine** needs Git and Vite+, which brings Node and pnpm. Electron's binary comes from Electron's own installer, `install-electron` or the first `require("electron")`, which checks the download against checksums in the package and caches it once per machine. T3 Code's `apps/desktop/scripts/ensure-electron-runtime.mjs` extracts it with `python3` on Windows instead. No step needs Python, a compiler or Developer Mode. On Windows, work in a folder whose path starts with an upper-case drive letter, because Vitest can fail every file under `c:\`. Text files are LF everywhere (`.gitattributes`); `.cmd` and `.bat` files need CRLF, as T3 Code's `.gitattributes` gives them.
 - **A clean environment.** The development runner starts its children with only the variables they need, and the launcher removes `ELECTRON_RUN_AS_NODE` before starting Electron, as T3 Code's `scripts/dev-runner.ts` and `apps/desktop/scripts/dev-electron.mjs` do. Agents work on Playstead inside T3 Code, whose shells carry `ELECTRON_RUN_AS_NODE`, `T3CODE_*` and the provider's own variables.
-- **Installers** come with the first public release, with signing and auto-update. Until then Playstead runs from source with its development commands. `scripts/build-desktop-artifact.ts` will make a DMG on macOS and an NSIS installer on Windows with electron-builder, each on its own platform; electron-builder downloads Electron itself. Without `native/`, the build needs no Rust or Visual Studio Build Tools: T3 Code's `preflightWindowsDesktopBuild` asks for them only to build its resource monitor.
-- **Untested on Windows.** Smart App Control and Defender were off during the Windows run. Smart App Control can block unsigned native files, such as Electron's zip extractor and the oxlint and Rolldown bindings; Windows' own `tar.exe` can extract Electron's zip instead. Security software is checked with the signed installers at the first public release.
+- **Installers** come with the first public release, 0.1, with signing and auto-update ([the roadmap](ROADMAP.md#01-the-first-public-release)). Until then Playstead runs from source with its development commands. `scripts/build-desktop-artifact.ts` will make a DMG on macOS, an NSIS installer on Windows and an AppImage and deb on Linux with electron-builder, each on a runner of its own platform and architecture; electron-builder downloads Electron itself. Without `native/`, the build needs no Rust or Visual Studio Build Tools: T3 Code's `preflightWindowsDesktopBuild` asks for them only to build its resource monitor.
+- **Untested on Windows.** Smart App Control and Defender were off during the Windows run. Smart App Control can block unsigned native files, such as Electron's zip extractor and the oxlint and Rolldown bindings; Windows' own `tar.exe` can extract Electron's zip instead. Security software is checked with the signed installers before each stable release, in a Windows 11 VM with Defender and Smart App Control on.
 
 ## Continuous integration
 
@@ -154,7 +156,7 @@ Until the first public release, pull requests get fast checks:
 
 - **Every pull request** runs one required job on GitHub's Linux runner: format, lint, typecheck, the unused-code check and the tests, in about 5 minutes, like T3 Code's CI. When the tests outgrow that, server test files are split across runners by duration, as `apps/server/src/testUtils/weightedShardSequencer.ts` does. Each runner keeps T3 Code's one-file-at-a-time rule for server tests (`apps/server/vite.config.ts`).
 - **Every merge to `main`** runs the same checks, the desktop app's build and a short boot of it on macOS and Windows; until installers come, that is the built Electron app, not an installer. They report and block nothing, so a Windows break shows up the same day. T3 Code has such a boot test, `apps/desktop/scripts/smoke-test.mjs`, but no workflow runs it. On Windows, CI caches pnpm's store directly, because setup-vp's cache restores "a Linux-shaped store" there (`.github/workflows/windows-tests.yml`).
-- **From the first public release,** the macOS and Windows checks run on every pull request and must pass.
+- **From the first public release,** the macOS and Windows checks run on every pull request and must pass, and the six platforms' installer and game checks run as [the roadmap](ROADMAP.md#release) sets out.
 
 ## Keeping this document current
 

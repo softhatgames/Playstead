@@ -9,6 +9,7 @@ import {
   type DesktopEnvironmentBootstrap,
   PRIMARY_LOCAL_ENVIRONMENT_ID,
 } from "@playstead/contracts/ipc";
+import { identity } from "@playstead/shared/identity";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
@@ -91,6 +92,16 @@ const failStartup = (error: unknown) => {
   app.exit(1);
 };
 
+/** As T3 Code's `onStateDirOwned` in `DesktopBackendPool.ts`: say why, then quit. */
+const reportHomeOwned = Effect.sync(() => {
+  const name = identity.productName.production;
+  dialog.showErrorBox(
+    `This ${name} home is unavailable`,
+    `Another ${name} server is already using this ${name} home, ${environment.playsteadHome}. Stop that server and reopen ${environment.displayName}, or set a separate ${identity.home.variable}.`,
+  );
+  app.quit();
+});
+
 const start = Effect.gen(function* () {
   if (environment.isDevelopment && environment.backendPort === undefined) {
     return yield* Effect.die(
@@ -109,6 +120,7 @@ const start = Effect.gen(function* () {
       ...(environment.devUrl === undefined ? {} : { devUrl: environment.devUrl }),
       desktopBootstrapToken: bootstrapToken,
     },
+    onHomeOwned: reportHomeOwned,
   }).pipe(Scope.provide(backendScope));
   return yield* awaitBackendReady(backend);
 });

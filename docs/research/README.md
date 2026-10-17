@@ -1,6 +1,6 @@
 # Research notes
 
-Playstead's own investigations, with sources, versions, findings and limits. Accepted conclusions move into the design documents and [decisions](https://github.com/softhatgames/playstead-v0/blob/v0/docs/adr/README.md); these notes keep the evidence and the open points.
+Playstead's own investigations, with sources, versions, findings and limits. Accepted conclusions move into the design documents and [decisions](../adr/); these notes keep the evidence and the open points.
 
 | Note                                          | Question                                                                                                                                        |
 | --------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |

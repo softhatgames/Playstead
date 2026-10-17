@@ -8,7 +8,7 @@
 
 ## Summary for Playstead
 
-- **No product examined documents a label on its live preview saying which version it shows.** Coding agents show whatever the development server serves; app builders tie a view to a version only in history views. Engines do signal the running copy, loudly. Showing the loaded revision beside edited source is open ground for Playstead and a requirement of its [harness contract](../HARNESS.md#apply-changes-to-a-running-game).
+- **No product examined documents a label on its live preview saying which version it shows.** Coding agents show whatever the development server serves; app builders tie a view to a version only in history views. Engines do signal the running copy, loudly. Showing the loaded revision beside edited source is open ground for Playstead and a requirement of its [development layer](../DEVELOPMENT-LAYER.md#changing-the-game).
 - **Layouts have converged.** Coding agents use a session list, the conversation and a tabbed panel (Changes, Terminal, Files, Browser). App builders put chat beside a live preview with code one tab away. Both serve non-programmers through presentation modes, not separate products.
 - **Activity is summarised and expanded on demand.** One record drives a one-line status, a list of changes and the full trace.
 - **Pointing at the running product is now common.** Marks on a frozen frame or annotated screenshot become agent context. None records which revision was marked.

@@ -11,6 +11,7 @@ import * as Stream from "effect/Stream";
 import { makeTestServerConfig } from "../testUtils/testServer.ts";
 import type { ClaudeAgentSdkQueryRunner } from "./Adapters/ClaudeAdapterV2.ts";
 import { makeClaudeReplay } from "./Adapters/ClaudeAdapterV2.testkit.ts";
+import { makeCodexReplay } from "./Adapters/CodexAdapterV2.testkit.ts";
 import { makeOrchestrationHarness } from "./testkit/OrchestratorHarness.ts";
 import { readRecording } from "./testkit/ProviderReplay.ts";
 import {
@@ -19,8 +20,11 @@ import {
   sendFileCreateMessage,
 } from "./testkit/fixtures/fileCreate.ts";
 import {
+  CODEX_RESTART_RESUME_MODES_SCENARIO,
+  CODEX_RESTART_RESUME_SCENARIO,
   RESTART_RESUME_IDS,
   RESTART_RESUME_SCENARIO,
+  type RestartResumeScenario,
   runFirstTurn,
   runSecondTurn,
 } from "./testkit/fixtures/restartResume.ts";
@@ -228,6 +232,62 @@ describe("Survive a restart", () => {
           [recorded.header.metadata?.["nativeSessionId"]],
         );
       }).pipe(Effect.scoped),
+    );
+
+    /** A Codex recording across a restart, replayed: the thread after the second turn. */
+    const replayCodexRestart = (scenario: RestartResumeScenario) =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const config = yield* makeTestServerConfig();
+        const recorded = yield* readRecording(`${scenario.scenario}.codex.ndjson`);
+        const replay = yield* makeCodexReplay(
+          yield* materializeReplayWorkspace(recorded, path.join(config.baseDir, "resumed-game")),
+        );
+        const first = yield* Effect.scoped(
+          Effect.flatMap(makeOrchestrationHarness({ codexClients: replay.clients, config }), (h) =>
+            runFirstTurn(h, scenario),
+          ),
+        );
+        assert.strictEqual(first.run.status, "completed");
+
+        const restarted = yield* makeOrchestrationHarness({
+          codexClients: replay.clients,
+          config,
+          recoverOnStartup: true,
+        });
+        const second = yield* runSecondTurn(restarted, scenario);
+
+        // The replay holds the second app-server's `thread/resume` of the
+        // first one's thread: the restarted server does not start a new one.
+        yield* replay.assertComplete;
+        assert.strictEqual(second.status, "completed");
+        const projection = Option.getOrThrow(
+          yield* restarted.orchestrator.getThreadProjection(RESTART_RESUME_IDS.threadId),
+        );
+        const replies = projection.messages.filter((message) => message.role === "assistant");
+        assert.match(replies.at(-1)?.text ?? "", new RegExp(scenario.codeWord, "i"));
+        assert.deepStrictEqual(
+          projection.providerThreads.map((thread) => thread.nativeThreadRef?.nativeId),
+          [recorded.header.metadata?.["nativeThreadId"]],
+        );
+        return projection;
+      });
+
+    it.effect("after a restart Codex resumes the thread's Codex thread and remembers it", () =>
+      replayCodexRestart(CODEX_RESTART_RESUME_SCENARIO).pipe(Effect.asVoid, Effect.scoped),
+    );
+
+    it.effect(
+      "a Codex thread that planned in Auto resumes after a restart and answers in Supervised, not planning",
+      () =>
+        Effect.gen(function* () {
+          // The recording's turn after `thread/resume` names the default
+          // collaboration mode and Supervised's approval policy, so a
+          // resumed thread that sent neither fails the replay.
+          const thread = yield* replayCodexRestart(CODEX_RESTART_RESUME_MODES_SCENARIO);
+          assert.strictEqual(thread.thread.runtimeMode, "approval-required");
+          assert.strictEqual(thread.thread.interactionMode, "default");
+        }).pipe(Effect.scoped),
     );
 
     it.effect(
