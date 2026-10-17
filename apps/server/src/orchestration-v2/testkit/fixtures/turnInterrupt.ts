@@ -83,6 +83,7 @@ export const sendLongMessage = (harness: Harness, scenario: TurnInterruptScenari
     });
     const sent = yield* harness.orchestrator.dispatch({
       type: "message.dispatch",
+      dispatchMode: { type: "start_immediately" },
       commandId: CommandId.make("command:turn-interrupt:message:1"),
       threadId: TURN_INTERRUPT_IDS.threadId,
       messageId: TURN_INTERRUPT_IDS.longMessageId,
@@ -127,6 +128,7 @@ const sendNextMessage = (harness: Harness, scenario: TurnInterruptScenario) =>
   Effect.gen(function* () {
     const sent = yield* harness.orchestrator.dispatch({
       type: "message.dispatch",
+      dispatchMode: { type: "start_immediately" },
       commandId: CommandId.make("command:turn-interrupt:message:2"),
       threadId: TURN_INTERRUPT_IDS.threadId,
       messageId: TURN_INTERRUPT_IDS.nextMessageId,

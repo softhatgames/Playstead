@@ -90,6 +90,7 @@ export const sendSupervisedMessage = (harness: Harness, scenario: SupervisedScen
     });
     const sent = yield* harness.orchestrator.dispatch({
       type: "message.dispatch",
+      dispatchMode: { type: "start_immediately" },
       commandId: CommandId.make("command:supervised:message:1"),
       threadId: SUPERVISED_IDS.threadId,
       messageId: SUPERVISED_IDS.messageId,

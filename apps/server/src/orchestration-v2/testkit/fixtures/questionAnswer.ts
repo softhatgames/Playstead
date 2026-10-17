@@ -87,6 +87,7 @@ export const sendQuestionMessage = (harness: Harness, scenario: QuestionScenario
     });
     const sent = yield* harness.orchestrator.dispatch({
       type: "message.dispatch",
+      dispatchMode: { type: "start_immediately" },
       commandId: CommandId.make("command:question:message:1"),
       threadId: QUESTION_IDS.threadId,
       messageId: QUESTION_IDS.messageId,

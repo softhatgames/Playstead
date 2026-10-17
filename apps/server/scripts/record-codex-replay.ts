@@ -52,6 +52,11 @@ import {
   runTraitsChangeScenario,
 } from "../src/orchestration-v2/testkit/fixtures/traitsChange.ts";
 import {
+  CODEX_QUEUED_TURN_SCENARIO,
+  queuedTurnPrompt,
+  runQueuedTurnScenario,
+} from "../src/orchestration-v2/testkit/fixtures/queuedTurn.ts";
+import {
   readMachineIdentity,
   recordingReplacements,
   scrubbed,
@@ -67,7 +72,7 @@ import {
  * `codex` on PATH, in a temporary empty folder, and writes
  * `src/orchestration-v2/testkit/fixtures/<scenario>.codex.ndjson`.
  *
- *   node apps/server/scripts/record-codex-replay.ts [file_create | turn_interrupt | auto_mode | traits_change | approval_accept | approval_decline | approval_cancel | approval_interrupt | auto_accept_edits | session_command | session_edits | --help]
+ *   node apps/server/scripts/record-codex-replay.ts [file_create | turn_interrupt | auto_mode | traits_change | approval_accept | approval_decline | approval_cancel | approval_interrupt | auto_accept_edits | session_command | session_edits | queued_turn | --help]
  *
  * `turn_interrupt` interrupts a long command once it runs, then sends one
  * more message. `auto_mode` writes a file in Auto, then sends one more
@@ -78,6 +83,8 @@ import {
  * on one. `auto_accept_edits`, `session_command` and `session_edits` send
  * turns in Auto-accept edits and Supervised and answer each turn's
  * approvals with its decision, **Always allow this session** among them.
+ * `queued_turn` queues messages behind a turn, removes one, and holds the
+ * queue with Stop before resuming it.
  *
  * `question_answer` and `question_interrupt` cannot be recorded, and the
  * recorder says so when asked for them: Codex 0.163.0 refuses
@@ -149,6 +156,22 @@ const recordTraitsChange = (harness: Harness) =>
     );
     if (runs.some((run) => run.status !== "completed")) {
       return yield* Effect.die("A traits turn did not complete.");
+    }
+    return workspace;
+  });
+
+/** Queued turns, one removed, and a queue held by Stop and resumed. */
+const recordQueuedTurn = (harness: Harness) =>
+  Effect.gen(function* () {
+    const { workspace, one, two, five } = yield* runQueuedTurnScenario(
+      harness,
+      CODEX_QUEUED_TURN_SCENARIO,
+    );
+    yield* Effect.logInfo("The turns ended.").pipe(
+      Effect.annotateLogs({ runs: [one, two, five].map((run) => run.status).join(", ") }),
+    );
+    if ([one, two, five].some((run) => run.status !== "completed")) {
+      return yield* Effect.die("A queued turn did not complete.");
     }
     return workspace;
   });
@@ -236,6 +259,14 @@ const SCENARIOS = {
   auto_accept_edits: sessionApprovalEntry(SESSION_APPROVAL_SCENARIOS.codex.auto_accept_edits),
   session_command: sessionApprovalEntry(SESSION_APPROVAL_SCENARIOS.codex.session_command),
   session_edits: sessionApprovalEntry(SESSION_APPROVAL_SCENARIOS.codex.session_edits),
+  [CODEX_QUEUED_TURN_SCENARIO.scenario]: {
+    record: recordQueuedTurn,
+    metadata: {
+      model: CODEX_QUEUED_TURN_SCENARIO.model,
+      prompts: [1, 2, 5].map(queuedTurnPrompt),
+      queuedOptions: CODEX_QUEUED_TURN_SCENARIO.queuedOptions,
+    },
+  },
   [CODEX_TRAITS_CHANGE_SCENARIO.scenario]: {
     record: recordTraitsChange,
     metadata: {

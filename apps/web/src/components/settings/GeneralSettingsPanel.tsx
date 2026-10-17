@@ -1,6 +1,9 @@
+import { ACTIVE_TURN_COMPOSER_ACTIONS } from "@playstead/client-runtime/state/composerDispatch";
+import { DEFAULT_CLIENT_SETTINGS, type FollowUpBehavior } from "@playstead/contracts/ipc";
 import { DEFAULT_SERVER_SETTINGS, type ServerSettingsPatch } from "@playstead/contracts/settings";
 import { type ReactNode, useState } from "react";
 
+import { updateClientSettings, useClientSettings } from "../../clientSettings.ts";
 import { requestPrimary, usePrimaryConnectionState } from "../../connection/runtime.ts";
 import { RuntimeModePicker } from "../chat/RuntimeModePicker.tsx";
 
@@ -8,15 +11,23 @@ import { RuntimeModePicker } from "../chat/RuntimeModePicker.tsx";
  * **Settings → General**, with only the rows Playstead has so far (T3 Code's
  * `GeneralSettingsPanel` in `apps/web/src/components/settings/SettingsPanels.tsx`
  * at 2577baf): the **New threads** section's **Permissions** row (T3 Code's
- * `ProjectDefaultsSettings.tsx`). Projects can't override it yet, so its
- * description leaves out T3 Code's "Projects can override them." The rest of
- * General waits for its features and slice 5.
+ * `ProjectDefaultsSettings.tsx`), and the **Behavior** section's
+ * **Follow-up behavior** row, a client setting. Projects can't override the
+ * permissions yet, so that description leaves out T3 Code's "Projects can
+ * override them."; queueing is the one follow-up so far, so the follow-up
+ * row offers only **Queue** and says nothing yet of Mod+Enter doing the
+ * opposite. The rest of General waits for its features and slice 5.
  */
 export function GeneralSettingsPanel() {
   const state = usePrimaryConnectionState();
   const settings = state?.config?.settings;
   const [permissionsOpen, setPermissionsOpen] = useState(false);
   const [saveFailed, setSaveFailed] = useState(false);
+  const clientSettings = useClientSettings();
+  const saveClient = (patch: { readonly followUpBehavior: FollowUpBehavior }) => {
+    setSaveFailed(false);
+    void updateClientSettings(patch).catch(() => setSaveFailed(true));
+  };
 
   const save = (patch: ServerSettingsPatch) => {
     setSaveFailed(false);
@@ -60,6 +71,44 @@ export function GeneralSettingsPanel() {
           </div>
         </section>
       )}
+      <section aria-labelledby="settings-behavior" className="flex flex-col gap-2">
+        <h2
+          id="settings-behavior"
+          className="text-sm font-medium text-neutral-600 dark:text-neutral-300"
+        >
+          Behavior
+        </h2>
+        <div className="divide-y divide-neutral-200 rounded-lg border border-neutral-200 dark:divide-neutral-800 dark:border-neutral-800">
+          <SettingsRow
+            title="Follow-up behavior"
+            description="Queue follow-ups while the agent runs."
+            resetLabel="follow-up behavior"
+            isDefault={clientSettings.followUpBehavior === DEFAULT_CLIENT_SETTINGS.followUpBehavior}
+            onReset={() =>
+              saveClient({ followUpBehavior: DEFAULT_CLIENT_SETTINGS.followUpBehavior })
+            }
+            control={
+              <select
+                aria-label="Follow-up behavior"
+                value={clientSettings.followUpBehavior}
+                onChange={(event) => {
+                  const value = ACTIVE_TURN_COMPOSER_ACTIONS.find(
+                    (action) => action === event.target.value,
+                  );
+                  if (value !== undefined) saveClient({ followUpBehavior: value });
+                }}
+                className="rounded-md border border-neutral-200 bg-white px-2 py-1 text-sm dark:border-neutral-700 dark:bg-neutral-900"
+              >
+                {ACTIVE_TURN_COMPOSER_ACTIONS.map((action) => (
+                  <option key={action} value={action}>
+                    {FOLLOW_UP_LABELS[action]}
+                  </option>
+                ))}
+              </select>
+            }
+          />
+        </div>
+      </section>
       {saveFailed ? (
         <p role="alert" className="text-sm text-red-600 dark:text-red-400">
           Failed to save settings.
@@ -68,6 +117,8 @@ export function GeneralSettingsPanel() {
     </div>
   );
 }
+
+const FOLLOW_UP_LABELS: Record<FollowUpBehavior, string> = { queue: "Queue" };
 
 /**
  * A setting's row: its title, description and control, and **Reset** while

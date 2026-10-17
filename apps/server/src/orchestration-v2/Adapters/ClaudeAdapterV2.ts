@@ -1346,7 +1346,10 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (input
     instanceId: input.instanceId,
     driver: "claudeAgent",
     // A query keeps the permission mode it opened with; another mode reopens it.
-    capabilities: { sessions: { supportsRuntimeModeSwitchInSession: false } },
+    capabilities: {
+      sessions: { supportsRuntimeModeSwitchInSession: false },
+      turns: { supportsQueuedMessages: true },
+    },
     openSession,
   } satisfies ProviderAdapterV2;
 });

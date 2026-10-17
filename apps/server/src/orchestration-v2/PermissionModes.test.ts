@@ -182,6 +182,7 @@ describe("Permission modes", () => {
         const harness = yield* harnessWithThread("full-access");
         yield* harness.orchestrator.dispatch({
           type: "message.dispatch",
+          dispatchMode: { type: "start_immediately" },
           commandId: CommandId.make("command:permission-modes:message"),
           threadId: THREAD_ID,
           messageId: MessageId.make("message:permission-modes:1"),

@@ -173,6 +173,7 @@ describe("Answer a provider's question", () => {
             assert.strictEqual(late.message, `Runtime request ${pending.request.id} is cancelled.`);
             const next = yield* harness.orchestrator.dispatch({
               type: "message.dispatch",
+              dispatchMode: { type: "start_immediately" },
               commandId: CommandId.make("command:question:message:2"),
               threadId: QUESTION_IDS.threadId,
               messageId: QUESTION_IDS.nextMessageId,

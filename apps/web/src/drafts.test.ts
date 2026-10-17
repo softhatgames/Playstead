@@ -16,6 +16,7 @@ const firstSend = (draftId: string) => {
       modelSelection: { instanceId: "codex", model: "gpt-5.6-terra" },
     },
     runtimeMode: draft.runtimeMode,
+    dispatchMode: "auto",
     text: "Make a game",
     ids: {
       threadCommandId: draft.threadCommandId,

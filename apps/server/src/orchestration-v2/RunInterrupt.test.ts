@@ -193,6 +193,7 @@ describe("Interrupt a turn", () => {
 
           const sent = yield* harness.orchestrator.dispatch({
             type: "message.dispatch",
+            dispatchMode: { type: "start_immediately" },
             commandId: CommandId.make("command:interrupt:again"),
             threadId: FILE_CREATE_IDS.threadId,
             messageId: MessageId.make("message:interrupt:again"),
@@ -334,6 +335,7 @@ describe("Interrupt a turn", () => {
           assertInterrupted(yield* threadProjection(harness), run.id);
           const accepted = yield* harness.orchestrator.dispatch({
             type: "message.dispatch",
+            dispatchMode: { type: "start_immediately" },
             commandId: CommandId.make("command:turn-interrupt:message:2"),
             threadId: TURN_INTERRUPT_IDS.threadId,
             messageId: TURN_INTERRUPT_IDS.nextMessageId,

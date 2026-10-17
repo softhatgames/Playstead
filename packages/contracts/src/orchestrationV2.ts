@@ -96,8 +96,12 @@ export const OrchestrationV2AppThread = Schema.Struct({
 });
 export type OrchestrationV2AppThread = typeof OrchestrationV2AppThread.Type;
 
-/** T3 Code's run statuses without the queue, preparation and rollback ones. */
+/**
+ * T3 Code's run statuses without the preparation and rollback ones. A
+ * `queued` run waits behind the thread's active run for its turn.
+ */
 export const OrchestrationV2RunStatus = Schema.Literals([
+  "queued",
   "starting",
   "running",
   "waiting",
@@ -108,7 +112,10 @@ export const OrchestrationV2RunStatus = Schema.Literals([
 ]);
 export type OrchestrationV2RunStatus = typeof OrchestrationV2RunStatus.Type;
 
-/** The statuses in which a run is active, as T3 Code's `resolveMessageDispatchIntent` counts them. */
+/**
+ * The statuses in which a run is active, as T3 Code's `resolveMessageDispatchIntent`
+ * and `isBlockingRun` count them: a queued run is not.
+ */
 export const ACTIVE_RUN_STATUSES: ReadonlySet<OrchestrationV2RunStatus> = new Set([
   "starting",
   "running",
@@ -126,6 +133,10 @@ export const OrchestrationV2Run = Schema.Struct({
   rootNodeId: Schema.NullOr(NodeId),
   activeAttemptId: Schema.NullOr(RunAttemptId),
   status: OrchestrationV2RunStatus,
+  /** A queued run's place in the queue, 1 first (T3 Code's `queuePosition`); null once it leaves the queue. */
+  queuePosition: Schema.optionalKey(Schema.NullOr(PositiveInt)),
+  /** A queued run held until the person resumes the queue (T3 Code's `queueHeld`). */
+  queueHeld: Schema.optionalKey(Schema.Boolean),
   requestedAt: IsoDateTime,
   startedAt: Schema.NullOr(IsoDateTime),
   completedAt: Schema.NullOr(IsoDateTime),
@@ -360,6 +371,11 @@ export const OrchestrationV2TurnItem = Schema.Union([
     type: Schema.Literal("user_message"),
     messageId: MessageId,
     text: Schema.String,
+    /**
+     * How the message reached its run (T3 Code's `inputIntent`, without
+     * steering): it started the run, or waited in the queue first.
+     */
+    inputIntent: Schema.optionalKey(Schema.Literals(["turn_start", "queued_turn"])),
   }),
   Schema.Struct({
     ...TurnItemBaseFields,
@@ -546,6 +562,17 @@ export const OrchestrationV2ThreadStreamItem = Schema.Union([
 export type OrchestrationV2ThreadStreamItem = typeof OrchestrationV2ThreadStreamItem.Type;
 
 /**
+ * How a message reaches a run (T3 Code's `message.dispatch.dispatchMode`,
+ * without workspace preparation and steering): either starts a run when the
+ * thread has none active, and otherwise queues one behind it.
+ */
+export const MessageDispatchMode = Schema.Union([
+  Schema.Struct({ type: Schema.Literal("start_immediately") }),
+  Schema.Struct({ type: Schema.Literal("queue_after_active") }),
+]);
+export type MessageDispatchMode = typeof MessageDispatchMode.Type;
+
+/**
  * The commands a client sends, trimmed from T3 Code's `OrchestrationV2Command`.
  * A thread is created with its project, provider instance, model and runtime
  * mode, in the default interaction mode. Its model can change to another of
@@ -553,9 +580,12 @@ export type OrchestrationV2ThreadStreamItem = typeof OrchestrationV2ThreadStream
  * its next run. A message is plain text; the first one's `titleSeed` titles
  * the thread, and its `modelSelection`, when given, becomes the thread's
  * before its run starts (the composer sends the model's options this way, as
- * T3 Code's does). `run.interrupt` stops a run
- * that is still active. `runtime-request.respond` answers a provider's
- * request: an approval with a `decision`, questions with `answers`.
+ * T3 Code's does). A message sent while a run is active is queued behind
+ * it; queued runs can be reordered, edited and cancelled, and once held
+ * wait for `queue.resume`. `run.interrupt` stops a run that is still
+ * active, and **Stop** holds the queue with it. `runtime-request.respond`
+ * answers a provider's request: an approval with a `decision`, questions
+ * with `answers`.
  */
 export const OrchestrationV2Command = Schema.Union([
   Schema.Struct({
@@ -588,12 +618,50 @@ export const OrchestrationV2Command = Schema.Union([
     titleSeed: Schema.optionalKey(TrimmedNonEmptyString),
     /** The model and options for this message's run, when they differ from the thread's. */
     modelSelection: Schema.optionalKey(ModelSelection),
+    /** How the message reaches a run; see `MessageDispatchMode`. */
+    dispatchMode: MessageDispatchMode,
+    /**
+     * Lets the server choose the dispatch mode from the thread as it is
+     * when the message arrives (T3 Code's `deliveryIntent`, without
+     * `steer` and `restart`, which come with steering).
+     */
+    deliveryIntent: Schema.optionalKey(Schema.Literal("auto")),
+    /** **Resume** after a stop: the interrupted run this message continues (T3 Code's `manualContinuationOfRunId`). */
+    manualContinuationOfRunId: Schema.optionalKey(RunId),
   }),
   Schema.Struct({
     type: Schema.Literal("run.interrupt"),
     commandId: CommandId,
     threadId: ThreadId,
     runId: RunId,
+    /** **Stop**: hold the thread's queued runs until the person resumes them. */
+    holdQueue: Schema.optionalKey(Schema.Boolean),
+  }),
+  Schema.Struct({
+    type: Schema.Literal("queue.resume"),
+    commandId: CommandId,
+    threadId: ThreadId,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("queued-run.reorder"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    runId: RunId,
+    /** The queued run it moves in front of, or null for the end of the queue. */
+    beforeRunId: Schema.NullOr(RunId),
+  }),
+  Schema.Struct({
+    type: Schema.Literal("queued-run.cancel"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    runId: RunId,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("queued-run.edit"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    runId: RunId,
+    text: Schema.String,
   }),
   Schema.Struct({
     type: Schema.Literal("runtime-request.respond"),

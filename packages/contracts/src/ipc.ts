@@ -1,3 +1,4 @@
+import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
 /**
@@ -27,11 +28,27 @@ export interface DesktopEnvironmentBootstrap {
 }
 
 /**
- * The interface's settings that live with the desktop app rather than the
- * server. The slice has none yet; each arrives with the feature that uses it.
+ * What Enter does while a run is active (T3 Code's `followUpBehavior` in
+ * `packages/contracts/src/settings.ts` at 2577baf). Playstead has queueing
+ * so far; steering adds `steer`.
  */
-export const ClientSettings = Schema.Struct({});
+export const FollowUpBehavior = Schema.Literals(["queue"]);
+export type FollowUpBehavior = typeof FollowUpBehavior.Type;
+
+/**
+ * The interface's settings that live with the client rather than the server
+ * (T3 Code's `ClientSettingsSchema`, `packages/contracts/src/settings.ts` at
+ * 2577baf): in the desktop app's `client-settings.json`, in a browser's
+ * localStorage. Each arrives with the feature that uses it, with T3 Code's
+ * default, which a file written before it decodes to.
+ */
+export const ClientSettings = Schema.Struct({
+  followUpBehavior: FollowUpBehavior.pipe(Schema.withDecodingDefault(Effect.succeed("queue"))),
+});
 export type ClientSettings = typeof ClientSettings.Type;
+
+/** Every client setting at its default. */
+export const DEFAULT_CLIENT_SETTINGS: ClientSettings = Schema.decodeUnknownSync(ClientSettings)({});
 
 export const PickFolderOptions = Schema.Struct({
   initialPath: Schema.optionalKey(Schema.String),

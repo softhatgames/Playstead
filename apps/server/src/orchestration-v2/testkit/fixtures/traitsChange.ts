@@ -99,6 +99,7 @@ export const runTraitsChangeScenario = (harness: Harness, scenario: TraitsChange
     for (const [index, turn] of scenario.turns.entries()) {
       const sent = yield* harness.orchestrator.dispatch({
         type: "message.dispatch",
+        dispatchMode: { type: "start_immediately" },
         commandId: CommandId.make(`command:traits-change:message:${index + 1}`),
         threadId: TRAITS_CHANGE_IDS.threadId,
         messageId: MessageId.make(`message:traits-change:${index + 1}`),

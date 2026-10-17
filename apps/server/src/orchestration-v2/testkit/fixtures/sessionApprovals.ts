@@ -223,6 +223,7 @@ const runTurn = (
     }
     const sent = yield* harness.orchestrator.dispatch({
       type: "message.dispatch",
+      dispatchMode: { type: "start_immediately" },
       commandId: CommandId.make(`command:session-approvals:message:${index + 1}`),
       threadId,
       messageId: MessageId.make(`message:session-approvals:${index + 1}`),

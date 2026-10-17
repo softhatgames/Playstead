@@ -63,6 +63,7 @@ const sendAndAwait = (harness: Harness, turn: 1 | 2, messageId: MessageId, text:
   Effect.gen(function* () {
     const sent = yield* harness.orchestrator.dispatch({
       type: "message.dispatch",
+      dispatchMode: { type: "start_immediately" },
       commandId: CommandId.make(`command:auto-mode:message:${turn}`),
       threadId: AUTO_MODE_IDS.threadId,
       messageId,
