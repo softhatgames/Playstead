@@ -32,6 +32,12 @@ import {
   QUESTION_INTERRUPT_SCENARIO_NAME,
 } from "../src/orchestration-v2/testkit/fixtures/questionAnswer.ts";
 import {
+  describeSessionApprovalRun,
+  runSessionApprovalScenario,
+  SESSION_APPROVAL_SCENARIOS,
+  type SessionApprovalScenario,
+} from "../src/orchestration-v2/testkit/fixtures/sessionApprovals.ts";
+import {
   CODEX_SUPERVISED_SCENARIO,
   runSupervisedScenario,
   SUPERVISED_ANSWERS,
@@ -61,7 +67,7 @@ import {
  * `codex` on PATH, in a temporary empty folder, and writes
  * `src/orchestration-v2/testkit/fixtures/<scenario>.codex.ndjson`.
  *
- *   node apps/server/scripts/record-codex-replay.ts [file_create | turn_interrupt | auto_mode | traits_change | approval_accept | approval_decline | approval_cancel | approval_interrupt | --help]
+ *   node apps/server/scripts/record-codex-replay.ts [file_create | turn_interrupt | auto_mode | traits_change | approval_accept | approval_decline | approval_cancel | approval_interrupt | auto_accept_edits | session_command | session_edits | --help]
  *
  * `turn_interrupt` interrupts a long command once it runs, then sends one
  * more message. `auto_mode` writes a file in Auto, then sends one more
@@ -69,7 +75,9 @@ import {
  * each carry another reasoning effort and service tier. The `approval_*` scenarios ask
  * Codex, in Supervised, to write a file, and approve, decline or cancel each
  * approval through `runtime-request.respond`, or interrupt the turn waiting
- * on one.
+ * on one. `auto_accept_edits`, `session_command` and `session_edits` send
+ * turns in Auto-accept edits and Supervised and answer each turn's
+ * approvals with its decision, **Always allow this session** among them.
  *
  * `question_answer` and `question_interrupt` cannot be recorded, and the
  * recorder says so when asked for them: Codex 0.163.0 refuses
@@ -191,6 +199,24 @@ const recordSupervised = (harness: Harness, name: SupervisedScenarioName) =>
     return workspace;
   });
 
+/** Turns whose approvals are each answered with the turn's decision. */
+const recordSessionApprovals = (harness: Harness, scenario: SessionApprovalScenario) =>
+  Effect.gen(function* () {
+    const { workspace, turns } = yield* runSessionApprovalScenario(harness, scenario);
+    yield* Effect.logInfo("The turns ended.").pipe(
+      Effect.annotateLogs(yield* describeSessionApprovalRun(workspace, scenario, turns)),
+    );
+    if (turns.some((turn) => turn.run.status !== "completed")) {
+      return yield* Effect.die("A turn did not complete.");
+    }
+    return workspace;
+  });
+
+const sessionApprovalEntry = (scenario: SessionApprovalScenario) => ({
+  record: (harness: Harness) => recordSessionApprovals(harness, scenario),
+  metadata: { model: scenario.model, turns: scenario.turns },
+});
+
 const supervisedEntry = (name: SupervisedScenarioName) => ({
   record: (harness: Harness) => recordSupervised(harness, name),
   metadata: {
@@ -207,6 +233,9 @@ const SCENARIOS = {
   approval_decline: supervisedEntry("approval_decline"),
   approval_cancel: supervisedEntry("approval_cancel"),
   approval_interrupt: supervisedEntry("approval_interrupt"),
+  auto_accept_edits: sessionApprovalEntry(SESSION_APPROVAL_SCENARIOS.codex.auto_accept_edits),
+  session_command: sessionApprovalEntry(SESSION_APPROVAL_SCENARIOS.codex.session_command),
+  session_edits: sessionApprovalEntry(SESSION_APPROVAL_SCENARIOS.codex.session_edits),
   [CODEX_TRAITS_CHANGE_SCENARIO.scenario]: {
     record: recordTraitsChange,
     metadata: {

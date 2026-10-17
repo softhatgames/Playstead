@@ -87,7 +87,12 @@ import { codexClientInfo, spawnCodexAppServer } from "../../provider/CodexProvid
  *   goes back as T3 Code maps it: `acceptAlways` approves for the session,
  *   and a permissions request is granted for the turn or the session, or
  *   not at all. An interrupt stops waiting without answering, as for a
- *   question. T3 Code's session allowance is not kept yet.
+ *   question.
+ * - Approving a command or a file change for the session allows that kind
+ *   of request for the rest of the session while the runtime mode stays
+ *   the same, as T3 Code's `sessionApprovals` does: the adapter answers
+ *   Codex's later requests of that kind itself, without asking. A turn in
+ *   another mode starts with nothing allowed.
  *
  * Absent: resuming a thread after a restart; and, as in the slice as a
  * whole, MCP, plans, showing reasoning, collaboration modes, subagents, goals and
@@ -820,6 +825,50 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (input: 
           return decided;
         });
 
+      /**
+       * The kinds of request the person allowed for the rest of the session
+       * (T3 Code's `sessionApprovals`), and the runtime mode they were
+       * allowed in. Codex's own `acceptForSession` only skips the exact
+       * command or patch it answered, so every new command would ask again.
+       * The session has one Codex thread, so T3 Code's key by thread is the
+       * session here.
+       */
+      let sessionApprovals:
+        | { readonly runtimeMode: RuntimeMode; readonly kinds: Set<ProviderRequestKind> }
+        | undefined;
+      /** T3 Code's `endSessionApprovalsOnModeChange`: a turn in another mode starts with none. */
+      const endSessionApprovalsOnModeChange = (turn: ProviderAdapterV2TurnInput) => {
+        if (sessionApprovals?.runtimeMode !== turn.runtimePolicy.runtimeMode) {
+          sessionApprovals = undefined;
+        }
+      };
+      /**
+       * T3 Code's `sessionAllowance`: the allowed kinds for a request's turn,
+       * read when the request arrives and added to when the person answers,
+       * so a late answer from a turn whose mode has since ended is dropped.
+       */
+      const sessionAllowance = (turn: ActiveTurn): Set<ProviderRequestKind> => {
+        const runtimeMode = turn.input.runtimePolicy.runtimeMode;
+        if (sessionApprovals?.runtimeMode === runtimeMode) return sessionApprovals.kinds;
+        if (sessionApprovals !== undefined) return new Set();
+        sessionApprovals = { runtimeMode, kinds: new Set() };
+        return sessionApprovals.kinds;
+      };
+      /**
+       * Asks for an approval the session has not allowed yet: `undefined`
+       * when it has, else the decision, remembering a session approval.
+       */
+      const askUnlessAllowed = (input: Parameters<typeof askForApproval>[0]) =>
+        Effect.gen(function* () {
+          const allowance = sessionAllowance(input.turn);
+          if (allowance.has(input.requestKind)) return undefined;
+          const decision = yield* askForApproval(input);
+          if (decision === "acceptForSession" || decision === "acceptAlways") {
+            allowance.add(input.requestKind);
+          }
+          return decision;
+        });
+
       const noTurn = (method: string, detail: string) =>
         CodexAppServerRequestError.internal(method, `No turn is running for ${detail}.`);
 
@@ -839,14 +888,14 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (input: 
           if (turn === undefined) {
             return yield* noTurn(method, `the command approval of turn ${params.turnId}`);
           }
-          const decision = yield* askForApproval({
+          const decision = yield* askUnlessAllowed({
             turn,
             nativeItemId: params.itemId,
             nativeRequestId: params.approvalId ?? params.itemId,
             requestKind: "command",
             prompt: params.reason ?? params.command,
           });
-          return { decision: codexApprovalDecision(decision) };
+          return { decision: codexApprovalDecision(decision ?? "acceptForSession") };
         }),
       );
       yield* client.handleServerRequest("item/fileChange/requestApproval", (params) =>
@@ -856,14 +905,14 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (input: 
           if (turn === undefined) {
             return yield* noTurn(method, `the file change approval of turn ${params.turnId}`);
           }
-          const decision = yield* askForApproval({
+          const decision = yield* askUnlessAllowed({
             turn,
             nativeItemId: params.itemId,
             nativeRequestId: params.itemId,
             requestKind: "file-change",
             prompt: fileChangeApprovalPrompt(params),
           });
-          return { decision: codexApprovalDecision(decision) };
+          return { decision: codexApprovalDecision(decision ?? "acceptForSession") };
         }),
       );
       yield* client.handleServerRequest("item/permissions/requestApproval", (params) =>
@@ -890,14 +939,14 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (input: 
           if (turn === undefined) {
             return yield* noTurn(method, `the command approval of ${params.conversationId}`);
           }
-          const decision = yield* askForApproval({
+          const decision = yield* askUnlessAllowed({
             turn,
             nativeItemId: params.callId,
             nativeRequestId: params.approvalId ?? params.callId,
             requestKind: "command",
             prompt: params.reason ?? params.command.join(" "),
           });
-          return { decision: legacyReviewDecision(decision) };
+          return { decision: legacyReviewDecision(decision ?? "acceptForSession") };
         }),
       );
       yield* client.handleServerRequest("applyPatchApproval", (params) =>
@@ -907,14 +956,14 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (input: 
           if (turn === undefined) {
             return yield* noTurn(method, `the patch approval of ${params.conversationId}`);
           }
-          const decision = yield* askForApproval({
+          const decision = yield* askUnlessAllowed({
             turn,
             nativeItemId: params.callId,
             nativeRequestId: params.callId,
             requestKind: "file-change",
             prompt: fileChangeApprovalPrompt(params),
           });
-          return { decision: legacyReviewDecision(decision) };
+          return { decision: legacyReviewDecision(decision ?? "acceptForSession") };
         }),
       );
 
@@ -985,6 +1034,7 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (input: 
             if (threadId === undefined) {
               return yield* adapterError("start-turn")("Codex has no thread for this turn.");
             }
+            endSessionApprovalsOnModeChange(turnInput);
             const turn: ActiveTurn = {
               input: turnInput,
               nativeTurnId: undefined,
