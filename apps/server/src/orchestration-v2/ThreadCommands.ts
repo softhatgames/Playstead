@@ -46,6 +46,11 @@ export interface ThreadCommandState {
   readonly projectExists: boolean;
   /** For `thread.create`: whether the provider instance can run a thread. */
   readonly instanceHasAdapter: boolean;
+  /**
+   * For a first `message.dispatch`: the folder claimed for a thread without
+   * a project, which becomes its `worktreePath`.
+   */
+  readonly worktreePath?: string;
 }
 
 /** Ids a message needs, allocated before deciding so the decision stays pure. */
@@ -114,7 +119,8 @@ const reject = (command: OrchestrationV2ServerCommand, reason: string) =>
  *   Playstead refuses.
  * - `message.dispatch` starts a run at once. T3 Code queues a message sent
  *   while a run is active; Playstead has no queue and refuses it. The first
- *   message titles the thread with its seed and asks a provider for a title.
+ *   message titles the thread with its seed and asks a provider for a title,
+ *   and gives a thread without a project the folder claimed for it.
  * - `run.interrupt` stops an active run, as T3 Code's `dispatchRunInterrupt`
  *   does: a run whose provider turn has not started ends interrupted at
  *   once and its start is cancelled; otherwise the provider is asked to
@@ -182,6 +188,7 @@ export function decideThreadCommand(input: {
       lastSnoozeWakeAt: null,
       autoSettleDisabledAt: null,
       titleRegeneration: null,
+      worktreePath: null,
     };
     return Result.succeed({
       events: [{ type: "thread.created", threadId: thread.id, occurredAt: now, payload: thread }],
@@ -246,7 +253,7 @@ export function decideThreadCommand(input: {
           `Thread ${command.threadId} is still working on run ${active.id}. Wait for it to finish before sending another message.`,
         );
       }
-      return Result.succeed(dispatchMessage(command, projection, ids, now));
+      return Result.succeed(dispatchMessage(command, projection, ids, now, state.worktreePath));
     }
     case "run.interrupt": {
       const run = projection.runs.find((candidate) => candidate.id === command.runId);
@@ -912,6 +919,7 @@ function dispatchMessage(
   projection: OrchestrationV2ThreadProjection,
   ids: ThreadCommandIds,
   now: string,
+  claimedWorktreePath: string | undefined,
 ): ThreadCommandDecision {
   const threadId = projection.thread.id;
   const runId = ids.runId;
@@ -960,7 +968,15 @@ function dispatchMessage(
     updatedAt: now,
   };
 
-  if (firstTitle || titled !== thread.title || existingProviderThread === undefined) {
+  // A thread without a project runs in the folder claimed for it (T3 Code's
+  // `ThreadLaunchService` turning a root launch into `existing_worktree`).
+  const worktreePath = thread.worktreePath ?? claimedWorktreePath ?? null;
+  if (
+    firstTitle ||
+    titled !== thread.title ||
+    existingProviderThread === undefined ||
+    worktreePath !== thread.worktreePath
+  ) {
     events.push({
       type: "thread.metadata-updated",
       threadId,
@@ -968,6 +984,7 @@ function dispatchMessage(
       payload: {
         ...thread,
         title: titled,
+        worktreePath,
         activeProviderThreadId: providerThread.id,
         ...(firstTitle
           ? { titleRegeneration: { requestId: command.commandId, startedAt: now } }

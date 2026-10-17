@@ -42,6 +42,7 @@ const thread = (
   hasPendingUserInput: false,
   autoSettleDisabledAt: null,
   titleRegeneration: null,
+  worktreePath: null,
   ...overrides,
 });
 

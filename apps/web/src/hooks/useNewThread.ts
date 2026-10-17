@@ -8,6 +8,7 @@ import { createDraft, useDraft } from "../drafts.ts";
 import { buildSidebarProjectGroups } from "../components/Sidebar.inbox.logic.ts";
 import { resolveNewThreadProjectId } from "../components/threadNavigation.logic.ts";
 import { openProject, useActiveProjectId } from "../uiState.ts";
+import { useIsScratchProject } from "./useScratchProject.ts";
 
 /**
  * Starting a new thread from where the person is (T3 Code's
@@ -25,10 +26,17 @@ export function useNewThread(options?: { readonly scopedProjectIds?: ReadonlySet
   const draft = useDraft(draftId ?? "");
   const openedProjectId = useActiveProjectId();
   const navigate = useNavigate();
+  const isScratchProject = useIsScratchProject();
 
   const groups = useMemo(
-    () => buildSidebarProjectGroups({ projects, threads, sortOrder: sidebarProjectSortOrder }),
-    [projects, threads, sidebarProjectSortOrder],
+    () =>
+      buildSidebarProjectGroups({
+        projects,
+        threads,
+        sortOrder: sidebarProjectSortOrder,
+        isScratchProject,
+      }),
+    [projects, threads, sidebarProjectSortOrder, isScratchProject],
   );
   const contextProjectId = resolveNewThreadProjectId({
     threadProjectId: threads.find((thread) => thread.id === threadId)?.projectId,

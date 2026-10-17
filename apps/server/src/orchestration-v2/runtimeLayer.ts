@@ -12,6 +12,7 @@ import * as ProviderSessionManager from "./ProviderSessionManager.ts";
 import * as ProviderTurnStartService from "./ProviderTurnStartService.ts";
 import * as RunExecutionService from "./RunExecutionService.ts";
 import * as ThreadSettlementService from "./ThreadSettlementService.ts";
+import * as ManagedProjectFolders from "../project/ManagedProjectFolders.ts";
 import * as ThreadSearch from "./ThreadSearch.ts";
 import * as ThreadTitleRegenerationService from "./ThreadTitleRegenerationService.ts";
 
@@ -20,9 +21,10 @@ import * as ThreadTitleRegenerationService from "./ThreadTitleRegenerationServic
  * once for the server and its tests (T3 Code's
  * `apps/server/src/orchestration-v2/runtimeLayer.ts` at 2577baf). The sink
  * and the stream readers must share one event store, whose publishing is in
- * memory.
+ * memory. The managed project folders (threads without a project) sit
+ * beside them: the orchestrator and the project service both read them.
  */
-export const layer = EventSink.layer.pipe(
+export const layer = Layer.mergeAll(EventSink.layer, ManagedProjectFolders.layer).pipe(
   Layer.provideMerge(
     Layer.mergeAll(
       CommandReceiptStore.layer,

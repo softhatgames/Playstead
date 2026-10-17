@@ -117,6 +117,9 @@ export type OrchestrationV2TitleRegeneration = typeof OrchestrationV2TitleRegene
  * `snoozedUntil` is ahead and no run has completed since `snoozedAt`.
  * `lastSnoozeWakeAt` is when the person last woke it, or a pin did.
  * `titleRegeneration` is set while a title is being generated.
+ * `worktreePath` is the thread's own working folder, which its provider and
+ * title generation run in instead of the project's: a thread without a
+ * project gets one with its first message (T3 Code's `worktreePath`).
  */
 export const OrchestrationV2AppThread = Schema.Struct({
   id: ThreadId,
@@ -143,6 +146,9 @@ export const OrchestrationV2AppThread = Schema.Struct({
   lastSnoozeWakeAt: NullOrTimeDefaultNull,
   autoSettleDisabledAt: NullOrTimeDefaultNull,
   titleRegeneration: Schema.NullOr(OrchestrationV2TitleRegeneration).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
+  worktreePath: Schema.NullOr(TrimmedNonEmptyString).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
 });
@@ -532,6 +538,8 @@ export const OrchestrationV2ThreadShell = Schema.Struct({
   autoSettleDisabledAt: Schema.NullOr(IsoDateTime),
   /** Set while a title is being generated; the sidebar dims the title. */
   titleRegeneration: Schema.NullOr(OrchestrationV2TitleRegeneration),
+  /** The thread's own folder, if it has one; Copy → Path copies it before the project's. */
+  worktreePath: Schema.NullOr(TrimmedNonEmptyString),
 });
 export type OrchestrationV2ThreadShell = typeof OrchestrationV2ThreadShell.Type;
 

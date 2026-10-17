@@ -21,6 +21,17 @@ export const findProjectByPath = <P extends { readonly workspaceRoot: string }>(
   );
 };
 
+/**
+ * Whether the project is "No project", the one at the server's scratch
+ * folder (T3 Code's `isScratchProject`). No project is while the server
+ * offers no scratch folder.
+ */
+export const isScratchProject = (
+  project: { readonly workspaceRoot: string },
+  scratchWorkspaceRoot: string | null | undefined,
+): boolean =>
+  scratchWorkspaceRoot != null && findProjectByPath([project], scratchWorkspaceRoot) !== undefined;
+
 /** A new project's title: its folder's name. */
 export const inferProjectTitleFromPath = (value: string): string => {
   const normalized = normalizeProjectPathForDispatch(value);

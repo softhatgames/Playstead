@@ -26,6 +26,7 @@ import { requestPrimary, usePrimaryConnectionState } from "../connection/runtime
 import { useThreadSearch } from "../connection/useThreadSearch.ts";
 import { desktopBridge } from "../env.ts";
 import { useNewThread } from "../hooks/useNewThread.ts";
+import { useScratchProject } from "../hooks/useScratchProject.ts";
 import { copyThreadReference } from "../hooks/useThreadShortcuts.ts";
 import { newId } from "../ids.ts";
 import {
@@ -55,6 +56,7 @@ import {
   getCommandPaletteMode,
   RECENT_THREAD_LIMIT,
   reduceCommandPaletteUiState,
+  withNoProjectItem,
 } from "./CommandPalette.logic.ts";
 import {
   ArrowLeftIcon,
@@ -63,6 +65,7 @@ import {
   FolderPlusIcon,
   FolderUpIcon,
   LinkIcon,
+  MessageSquareDashedIcon,
   MessageSquareIcon,
   SettingsIcon,
   SquarePenIcon,
@@ -93,6 +96,8 @@ function ItemIcon({ icon }: { readonly icon: CommandPaletteIcon }) {
   switch (icon) {
     case "new-thread":
       return <SquarePenIcon className={ICON_CLASS} />;
+    case "no-project":
+      return <MessageSquareDashedIcon className={ICON_CLASS} />;
     case "add-project":
       return <FolderPlusIcon className={ICON_CLASS} />;
     case "settings":
@@ -193,6 +198,7 @@ function OpenCommandPalette(props: {
   const { threadId: routeThreadId } = useParams({ strict: false });
   const routeThread = threads.find((thread) => thread.id === routeThreadId);
   const { groups: projectGroups, contextProjectId, startInProject } = useNewThread();
+  const { scratchWorkspaceRoot, startScratchThread } = useScratchProject();
 
   useLayoutEffect(() => {
     inputRef.current?.focus();
@@ -281,21 +287,25 @@ function OpenCommandPalette(props: {
     [orderedProjects, threads, settings.sidebarThreadSortOrder, openThread, startInProject],
   );
 
-  // #43 puts "No project" among these (first when the current thread has none, else second).
-  const projectThreadItems = useMemo(
-    () =>
-      enumerateCommandPaletteItems(
-        buildProjectActionItems({
-          projects: orderedProjects,
-          valuePrefix: "new-thread-in",
-          icon: "project",
-          runProject: async (project) => {
-            await startInProject(project.id);
-          },
-        }),
-      ),
-    [orderedProjects, startInProject],
-  );
+  const contextIsScratch =
+    projectGroups.find(
+      (group) => contextProjectId !== undefined && group.projectIds.includes(contextProjectId),
+    )?.isScratch ?? false;
+  const projectThreadItems = useMemo(() => {
+    const projectItems = enumerateCommandPaletteItems(
+      buildProjectActionItems({
+        projects: orderedProjects,
+        valuePrefix: "new-thread-in",
+        icon: "project",
+        runProject: async (project) => {
+          await startInProject(project.id);
+        },
+      }),
+    );
+    return scratchWorkspaceRoot === null
+      ? projectItems
+      : withNoProjectItem(projectItems, { contextIsScratch, run: startScratchThread });
+  }, [orderedProjects, startInProject, scratchWorkspaceRoot, contextIsScratch, startScratchThread]);
   const newThreadInGroups: ReadonlyArray<CommandPaletteGroup> = useMemo(
     () => [{ value: "projects", label: "Projects", items: projectThreadItems }],
     [projectThreadItems],
@@ -357,7 +367,17 @@ function OpenCommandPalette(props: {
       groups: newThreadInGroups,
     });
   }
-  // #43: "New thread without a project" (`chat.newWithoutProject`) goes here.
+  if (scratchWorkspaceRoot !== null) {
+    actionItems.push({
+      kind: "action",
+      value: "action:new-thread-without-project",
+      searchTerms: ["new thread", "no project", "without project", "none", "chat"],
+      title: "New thread without a project",
+      icon: "no-project",
+      shortcutCommand: "chat.newWithoutProject",
+      run: startScratchThread,
+    });
+  }
   if (routeThread !== undefined) {
     actionItems.push({
       kind: "action",

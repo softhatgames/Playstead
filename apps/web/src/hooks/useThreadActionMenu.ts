@@ -19,6 +19,7 @@ import {
 } from "../components/threadActionMenu.logic.ts";
 import { usePrimaryConnectionState } from "../connection/runtime.ts";
 import { readLocalApi } from "../localApi.ts";
+import { useIsScratchProject } from "./useScratchProject.ts";
 import { settleAndAdvance } from "../settleAndAdvance.ts";
 import { failureToast, successToast } from "../toast.ts";
 import { readSidebarProjectScopeKey, setSidebarProjectScopeKey } from "../uiState.ts";
@@ -81,6 +82,7 @@ export function useThreadActionMenu(
   const { archiveThread, confirmAndDeleteThread } = useThreadActions();
   const shell = usePrimaryConnectionState()?.shell;
   const navigate = useNavigate();
+  const isScratchProject = useIsScratchProject();
 
   const openMenu = useCallback(
     (position: ContextMenuPosition) => {
@@ -92,6 +94,7 @@ export function useThreadActionMenu(
               projects: shell.projects,
               threads: shell.threads,
               sortOrder: "manual",
+              isScratchProject,
             }).find((candidate) => candidate.projectIds.includes(thread.projectId))
           : undefined;
       void (async () => {
@@ -188,15 +191,19 @@ export function useThreadActionMenu(
             );
             return;
           case "copy-path": {
-            if (project === undefined) {
+            // The thread's own folder first, as T3 Code's `thread.worktreePath ?? projectCwd`.
+            const workspacePath =
+              shell?.threads.find((candidate) => candidate.id === thread.id)?.worktreePath ??
+              project?.workspaceRoot;
+            if (workspacePath === undefined) {
               failureToast(
                 "Path unavailable",
                 new Error("This thread does not have a workspace path to copy."),
               );
               return;
             }
-            await copyTextToClipboard(project.workspaceRoot).then(
-              () => successToast("Path copied", project.workspaceRoot),
+            await copyTextToClipboard(workspacePath).then(
+              () => successToast("Path copied", workspacePath),
               (error: unknown) => failureToast("Failed to copy path", error),
             );
             return;
@@ -243,6 +250,7 @@ export function useThreadActionMenu(
     [
       archiveThread,
       confirmAndDeleteThread,
+      isScratchProject,
       navigate,
       onSnooze,
       onStartRename,

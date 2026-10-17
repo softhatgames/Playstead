@@ -27,6 +27,7 @@ import {
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
+import * as ManagedProjectFolders from "./ManagedProjectFolders.ts";
 
 export interface ProjectCreateInput extends ProjectCreatePayload {
   readonly commandId: CommandId;
@@ -104,6 +105,11 @@ export type ProjectServiceError =
  * deleted first through the orchestrator under a command id of its own
  * (`<command>:delete-thread:<thread>`), and only then is the project
  * removed, so a removal cut short is finished by sending it again.
+ *
+ * `ensureScratchProject` finds or creates the "No project" project at the
+ * scratch folder, making the folder again if it was deleted (T3 Code's
+ * `ManagedProjectFolders.ensureScratchProject`): the one already there wins,
+ * and so does the winner of a concurrent first create.
  */
 export class ProjectService extends Context.Service<
   ProjectService,
@@ -119,6 +125,10 @@ export class ProjectService extends Context.Service<
     readonly listShells: Effect.Effect<
       ReadonlyArray<OrchestrationProjectShell>,
       ProjectOperationError
+    >;
+    readonly ensureScratchProject: Effect.Effect<
+      { readonly projectId: ProjectId },
+      ManagedProjectFolders.ScratchError
     >;
   }
 >()("@playstead/server/project/ProjectService") {}
@@ -137,6 +147,7 @@ const make = Effect.gen(function* () {
   const orchestrator = yield* Orchestrator.OrchestratorV2;
   const eventSink = yield* EventSink.EventSinkV2;
   const workspacePaths = yield* WorkspacePaths.WorkspacePaths;
+  const folders = yield* ManagedProjectFolders.ManagedProjectFolders;
   const crypto = yield* Crypto.Crypto;
   const projectLocks = yield* KeyedLock.make<ProjectId>();
   const workspaceLocks = yield* KeyedLock.make<string>();
@@ -323,7 +334,35 @@ const make = Effect.gen(function* () {
     return yield* readCommitted(projectId);
   });
 
+  const ensureScratchProject = Effect.gen(function* () {
+    const root = yield* folders.scratchRoot;
+    if (Option.isNone(root)) return yield* new ManagedProjectFolders.ScratchUnavailableError();
+    const workspaceRoot = root.value;
+    yield* folders.makeScratchRoot(workspaceRoot);
+    const projectError = (cause: unknown) =>
+      new ManagedProjectFolders.ScratchProjectError({ workspaceRoot, cause });
+    const existing = yield* projects
+      .findActiveByWorkspaceRoot(workspaceRoot)
+      .pipe(Effect.mapError(projectError));
+    if (Option.isSome(existing)) return { projectId: existing.value.projectId };
+    const id = yield* crypto.randomUUIDv4().pipe(Effect.mapError(projectError));
+    return yield* create({
+      commandId: CommandId.make(`scratch-project:${id}`),
+      projectId: ProjectId.make(id),
+      title: ManagedProjectFolders.SCRATCH_PROJECT_TITLE,
+      workspaceRoot,
+    }).pipe(
+      Effect.map((project) => ({ projectId: project.id })),
+      // A racing first create loses with a conflict that names the winner.
+      Effect.catchTag("ProjectConflictError", (conflict) =>
+        Effect.succeed({ projectId: conflict.conflictingProjectId }),
+      ),
+      Effect.mapError(projectError),
+    );
+  });
+
   return ProjectService.of({
+    ensureScratchProject,
     create,
     update,
     delete: deleteProject,

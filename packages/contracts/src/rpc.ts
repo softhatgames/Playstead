@@ -19,7 +19,14 @@ import {
   OrchestrationV2SubscribeThreadInput,
   OrchestrationV2ThreadStreamItem,
 } from "./orchestrationV2.ts";
-import { Project, ProjectConflictError, ProjectMutation, ProjectMutationError } from "./project.ts";
+import {
+  Project,
+  ProjectConflictError,
+  ProjectEnsureScratchError,
+  ProjectEnsureScratchResult,
+  ProjectMutation,
+  ProjectMutationError,
+} from "./project.ts";
 import { ProviderInstanceId, ProviderInstanceMutation } from "./providerInstance.ts";
 import {
   ServerConfig,
@@ -41,6 +48,7 @@ export const WS_METHODS = {
   subscribeServerConfig: "subscribeServerConfig",
   subscribeServerLifecycle: "subscribeServerLifecycle",
   projectsMutate: "projects.mutate",
+  projectsEnsureScratch: "projects.ensureScratch",
   filesystemBrowse: "filesystem.browse",
 } as const;
 
@@ -86,6 +94,13 @@ const WsProjectsMutateRpc = Rpc.make(WS_METHODS.projectsMutate, {
   payload: ProjectMutation,
   success: Project,
   error: Schema.Union([ProjectMutationError, ProjectConflictError]),
+});
+
+/** Finds or creates the "No project" project, for a thread without a project. */
+const WsProjectsEnsureScratchRpc = Rpc.make(WS_METHODS.projectsEnsureScratch, {
+  payload: Schema.Struct({}),
+  success: ProjectEnsureScratchResult,
+  error: ProjectEnsureScratchError,
 });
 
 /** The folders under a partly typed path, for Add project's autocompletion. */
@@ -148,6 +163,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsSubscribeServerConfigRpc,
   WsSubscribeServerLifecycleRpc,
   WsProjectsMutateRpc,
+  WsProjectsEnsureScratchRpc,
   WsFilesystemBrowseRpc,
   WsOrchestrationSubscribeShellRpc,
   WsOrchestrationGetArchivedShellSnapshotRpc,

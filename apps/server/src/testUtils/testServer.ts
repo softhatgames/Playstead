@@ -1,10 +1,13 @@
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
 import * as Queue from "effect/Queue";
 import * as References from "effect/References";
 import * as HttpServer from "effect/http/HttpServer";
 import * as NetAddress from "effect/net/NetAddress";
+import * as Path from "effect/Path";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
 import * as HostProcess from "@playstead/shared/hostProcess";
 import { makeTempDirectoryScoped } from "@playstead/shared/tempDirectory";
@@ -16,11 +19,34 @@ import type { StartupOptions } from "../serverRuntimeStartup.ts";
 /** A temporary Playstead home, removed when the scope closes. */
 export const makeTempHome = makeTempDirectoryScoped("playstead-home-");
 
+/**
+ * A temporary Playstead home inside a new Git checkout, as a development
+ * worktree's `.playstead` is: threads without a project are not offered there.
+ */
+export const makeHomeInsideGitCheckout = Effect.gen(function* () {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  const checkout = yield* makeTempHome;
+  const exitCode = yield* spawner.exitCode(
+    ChildProcess.make("git", ["init", "--quiet"], { cwd: checkout }),
+  );
+  if (exitCode !== 0) return yield* Effect.die(`git init exited with ${exitCode}.`);
+  const home = path.join(checkout, ".playstead");
+  yield* fs.makeDirectory(home);
+  return home;
+});
+
 /** The server's config over a temporary Playstead home. */
 export const makeTestServerConfig = Effect.fn("makeTestServerConfig")(function* (
-  options: { readonly devUrl?: URL; readonly desktopBootstrapToken?: string } = {},
+  options: {
+    readonly devUrl?: URL;
+    readonly desktopBootstrapToken?: string;
+    /** An existing folder to be the home, instead of a new temporary one. */
+    readonly home?: string;
+  } = {},
 ) {
-  const home = yield* makeTempHome;
+  const home = options.home ?? (yield* makeTempHome);
   const paths = yield* ServerConfig.deriveServerPaths(home, options.devUrl);
   return ServerConfig.ServerConfig.of({
     cwd: home,

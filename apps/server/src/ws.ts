@@ -2,11 +2,12 @@ import {
   ORCHESTRATION_V2_WS_METHODS,
   OrchestrationDispatchCommandError,
 } from "@playstead/contracts/orchestrationV2";
-import { ProjectMutationError } from "@playstead/contracts/project";
+import { ProjectEnsureScratchError, ProjectMutationError } from "@playstead/contracts/project";
 import { WS_METHODS, WsRpcGroup } from "@playstead/contracts/rpc";
 import { OrchestrationSearchThreadsError } from "@playstead/contracts/threadSearch";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import type * as Path from "effect/Path";
 import * as Stream from "effect/Stream";
 import * as HttpRouter from "effect/http/HttpRouter";
@@ -26,6 +27,7 @@ import {
 } from "./orchestration-v2/ShellStream.ts";
 import * as ThreadSearch from "./orchestration-v2/ThreadSearch.ts";
 import { streamThread } from "./orchestration-v2/ThreadStream.ts";
+import * as ManagedProjectFolders from "./project/ManagedProjectFolders.ts";
 import * as ProjectService from "./project/ProjectService.ts";
 import * as ProviderRegistry from "./provider/ProviderRegistry.ts";
 import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
@@ -55,12 +57,20 @@ const layerWsRpc = WsRpcGroup.toLayer(
       | Stream.Services<ReturnType<typeof streamThread>>
       | Path.Path
     >();
+    const folders = yield* ManagedProjectFolders.ManagedProjectFolders;
     const getConfig = Effect.all({
       environment: environment.getDescriptor,
       auth: Effect.succeed(auth.descriptor),
       providers: providers.getProviders,
       settings: settings.getSettings,
-    });
+      scratchWorkspaceRoot: folders.scratchRoot,
+    }).pipe(
+      Effect.map(({ scratchWorkspaceRoot, ...config }) =>
+        Option.isSome(scratchWorkspaceRoot)
+          ? { ...config, scratchWorkspaceRoot: scratchWorkspaceRoot.value }
+          : config,
+      ),
+    );
     return WsRpcGroup.of({
       [WS_METHODS.serverGetConfig]: () => getConfig,
       [WS_METHODS.serverRefreshProviders]: ({ instanceId }) =>
@@ -141,6 +151,10 @@ const layerWsRpc = WsRpcGroup.toLayer(
                 }),
               ),
           }),
+        ),
+      [WS_METHODS.projectsEnsureScratch]: () =>
+        projects.ensureScratchProject.pipe(
+          Effect.mapError((cause) => new ProjectEnsureScratchError({ message: cause.message })),
         ),
       [WS_METHODS.filesystemBrowse]: (input) =>
         WorkspaceEntries.browse(input).pipe(Effect.provideContext(context)),

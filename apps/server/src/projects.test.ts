@@ -2,7 +2,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NodeSocket from "@effect/platform-node/NodeSocket";
 import { makeLocalConnection } from "@playstead/client-runtime/connection";
 import { CommandId, ProjectId, ThreadId } from "@playstead/contracts/baseSchemas";
-import type { ProjectMutation } from "@playstead/contracts/project";
+import { ProjectEnsureScratchError, type ProjectMutation } from "@playstead/contracts/project";
 import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -11,7 +11,11 @@ import * as Path from "effect/Path";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 
 import { awaitConnectionState, connectSignedIn } from "./testUtils/testClient.ts";
-import { startTestServer } from "./testUtils/testServer.ts";
+import {
+  makeHomeInsideGitCheckout,
+  makeTestServerConfig,
+  startTestServer,
+} from "./testUtils/testServer.ts";
 
 /**
  * Add project over the RPC contract, as the interface does it: browse for the
@@ -171,6 +175,55 @@ describe("project RPC methods", () => {
           assert.deepStrictEqual(after.shell?.threads, []);
           assert.strictEqual((yield* fs.stat(folder)).type, "Directory");
         }).pipe(Effect.scoped),
+    );
+
+    it.effect("names the scratch folder in the config and makes No project there once", () =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const server = yield* startTestServer();
+        const scratchRoot = path.resolve(server.config.baseDir, "scratch");
+        const { connection } = yield* connectSignedIn(server);
+        const ready = yield* awaitConnectionState(
+          connection,
+          (state) => state.config !== undefined && state.shell !== undefined,
+        );
+        assert.strictEqual(ready.config?.scratchWorkspaceRoot, scratchRoot);
+
+        const ensure = connection.request((client) => client["projects.ensureScratch"]({}));
+        const first = yield* ensure;
+        assert.deepStrictEqual(yield* ensure, first);
+        const live = yield* awaitConnectionState(
+          connection,
+          (state) => (state.shell?.projects.length ?? 0) > 0,
+        );
+        assert.deepStrictEqual(
+          live.shell?.projects.map((project) => [project.id, project.title, project.workspaceRoot]),
+          [[first.projectId, "No project", scratchRoot]],
+        );
+      }).pipe(Effect.scoped),
+    );
+
+    it.effect("offers no scratch folder when the home is inside a Git checkout", () =>
+      Effect.gen(function* () {
+        const home = yield* makeHomeInsideGitCheckout;
+        const server = yield* startTestServer({ config: yield* makeTestServerConfig({ home }) });
+        const { connection } = yield* connectSignedIn(server);
+        const ready = yield* awaitConnectionState(
+          connection,
+          (state) => state.config !== undefined,
+        );
+        assert.isUndefined(ready.config?.scratchWorkspaceRoot);
+
+        const refused = yield* Effect.flip(
+          connection.request((client) => client["projects.ensureScratch"]({})),
+        );
+        assert.deepStrictEqual(
+          refused,
+          new ProjectEnsureScratchError({
+            message: "Threads without a project are not available on this environment.",
+          }),
+        );
+      }).pipe(Effect.scoped),
     );
   });
 });
