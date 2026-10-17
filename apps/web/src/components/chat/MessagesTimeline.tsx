@@ -46,6 +46,28 @@ export function MessagesTimeline(props: {
             );
           case "work":
             return <WorkLogRow key={row.id} row={row} />;
+          case "question":
+            return (
+              <div
+                key={row.id}
+                data-question-state={row.state}
+                className="rounded-md border border-amber-300 px-3 py-1.5 text-xs dark:border-amber-800"
+              >
+                <span className="font-medium text-amber-800 dark:text-amber-300">
+                  {row.state === "waiting"
+                    ? "Waiting for your answer: "
+                    : row.state === "answered"
+                      ? "Asked: "
+                      : "Not answered: "}
+                </span>
+                <span>{row.question}</span>
+                {row.answer === undefined ? null : (
+                  <span className="block text-neutral-600 dark:text-neutral-300">
+                    You answered: {row.answer}
+                  </span>
+                )}
+              </div>
+            );
           // T3 Code's `V2LifecycleRow`: the request on the person's side,
           // the result as a divider across the timeline.
           case "interrupt-request":

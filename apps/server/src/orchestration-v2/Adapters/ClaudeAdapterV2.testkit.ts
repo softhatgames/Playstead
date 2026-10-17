@@ -1,4 +1,4 @@
-import type { SDKMessage, SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
+import type { CanUseTool, SDKMessage, SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
 import type {
   ProviderReplayEntry,
   ProviderReplayTranscript,
@@ -26,6 +26,13 @@ import {
  * `query.interrupt`) and every message Claude Code sent back, in order. A
  * replay compares each frame the adapter sends with the next recorded one,
  * strictly, and plays Claude's messages up to the next frame it expects.
+ * Claude Code's calls to the adapter's `canUseTool` are recorded as
+ * `permission.request` (inbound, where the call came) and what the adapter
+ * answered as `permission.response`, as T3 Code's replay keeps them; the
+ * replay calls the adapter's real callback and compares its answer with
+ * the response recorded for the same tool use, wherever it lies, since an
+ * interrupt makes its place a race. An interrupt aborts the callbacks still
+ * waiting, as Claude Code does.
  * A prompt's uuid is new each run, so the replay pairs the recorded uuid
  * with the one sent and puts it in Claude's messages, as T3 Code's replay
  * remaps prompt uuids. `assertComplete` fails unless the whole recording was
@@ -94,6 +101,17 @@ export const makeClaudeReplay = Effect.fn("makeClaudeReplay")(function* (
   const failure = yield* Ref.make<ClaudeReplayError | undefined>(undefined);
   const advanced = yield* Queue.sliding<void>(1);
 
+  // Recorded `permission.response` entries the adapter answered ahead of their place.
+  const consumed = new Set<number>();
+  const skipConsumed = Effect.flatMap(Ref.get(cursor), (at) => {
+    let next = at;
+    while (consumed.has(next)) next += 1;
+    return next === at ? Effect.void : Ref.set(cursor, next);
+  });
+  // How the open query asks the adapter about a tool, and the asks still waiting.
+  let askAdapter: ((frame: PermissionRequestFrame) => Effect.Effect<void>) | undefined;
+  const waitingAsks = new Set<AbortController>();
+
   // Recorded prompt uuid -> the uuid the adapter sent in its place.
   const promptUuids = new Map<string, string>();
   const promptUuidOf = (frame: unknown): string | undefined => {
@@ -123,7 +141,25 @@ export const makeClaudeReplay = Effect.fn("makeClaudeReplay")(function* (
     Effect.gen(function* () {
       const first = yield* Ref.get(failure);
       if (first !== undefined) return yield* first;
+      yield* skipConsumed;
       const at = yield* Ref.get(cursor);
+      const ahead = permissionResponseAt(actual, at);
+      if (ahead !== undefined && ahead !== at) {
+        if (!sameFrame(entries[ahead]?.frame, actual)) {
+          return yield* fail(
+            new ClaudeReplayError({
+              scenario,
+              cursor: ahead,
+              detail: "The adapter answered a tool request differently.",
+              expected: entries[ahead]?.frame,
+              actual,
+            }),
+          );
+        }
+        consumed.add(ahead);
+        yield* Queue.offer(advanced, undefined);
+        return;
+      }
       const entry = entries[at];
       if (entry === undefined) {
         return yield* fail(
@@ -165,6 +201,24 @@ export const makeClaudeReplay = Effect.fn("makeClaudeReplay")(function* (
       yield* Queue.offer(advanced, undefined);
     });
 
+  /** Where the recorded answer to this tool request is, if `actual` is one. */
+  function permissionResponseAt(actual: unknown, from: number): number | undefined {
+    if (!isFrame(actual, "permission.response")) return undefined;
+    const toolUseId = Reflect.get(actual, "toolUseID");
+    for (let at = from; at < entries.length; at += 1) {
+      const entry = entries[at]!;
+      if (
+        !consumed.has(at) &&
+        entry.type === "expect_outbound" &&
+        isFrame(entry.frame, "permission.response") &&
+        Reflect.get(entry.frame, "toolUseID") === toolUseId
+      ) {
+        return at;
+      }
+    }
+    return undefined;
+  }
+
   // Claude's next message, waiting while the recording expects a frame from
   // the adapter first. The stream ends with the recording.
   const nextInbound: Effect.Effect<SDKMessage | undefined, ClaudeReplayError> = Effect.gen(
@@ -172,9 +226,24 @@ export const makeClaudeReplay = Effect.fn("makeClaudeReplay")(function* (
       while (true) {
         const first = yield* Ref.get(failure);
         if (first !== undefined) return yield* first;
+        yield* skipConsumed;
         const at = yield* Ref.get(cursor);
         const entry = entries[at];
         if (entry === undefined) return undefined;
+        if (entry.type === "emit_inbound" && isFrame(entry.frame, "permission.request")) {
+          yield* Ref.set(cursor, at + 1);
+          if (askAdapter === undefined) {
+            return yield* fail(
+              new ClaudeReplayError({
+                scenario,
+                cursor: at,
+                detail: "Claude asked about a tool before a query was open.",
+              }),
+            );
+          }
+          yield* askAdapter(entry.frame as PermissionRequestFrame);
+          continue;
+        }
         if (entry.type === "emit_inbound") {
           if (options.holdBefore?.(entry.frame) === true) {
             yield* Deferred.succeed(held, undefined);
@@ -195,6 +264,47 @@ export const makeClaudeReplay = Effect.fn("makeClaudeReplay")(function* (
         yield* expectOutbound({ type: "query.open", options: recordedQueryOptions(input.options) });
         const asRunnerError = (cause: ClaudeReplayError) =>
           new ClaudeAgentSdkQueryRunnerError({ method: "replay", cause });
+        const scope = yield* Effect.scope;
+        const canUseTool = input.options.canUseTool;
+        // Asks the adapter's own callback in the background, as Claude Code
+        // does, and checks its answer once it gives one.
+        askAdapter = (frame) => {
+          const controller = new AbortController();
+          waitingAsks.add(controller);
+          return Effect.tryPromise({
+            try: () =>
+              canUseTool === undefined
+                ? Promise.reject(new Error("The adapter passed no canUseTool."))
+                : canUseTool(frame.toolName, frame.input, {
+                    signal: controller.signal,
+                    toolUseID: frame.toolUseID,
+                    requestId: frame.requestId,
+                  }),
+            catch: (cause) =>
+              new ClaudeReplayError({
+                scenario,
+                cursor: -1,
+                detail: `The adapter's canUseTool failed: ${String(cause)}`,
+              }),
+          }).pipe(
+            Effect.ensuring(Effect.sync(() => waitingAsks.delete(controller))),
+            Effect.flatMap((result) =>
+              expectOutbound(
+                JSON.parse(
+                  JSON.stringify({
+                    type: "permission.response",
+                    toolUseID: frame.toolUseID,
+                    result,
+                  }),
+                ),
+              ),
+            ),
+            Effect.catch(fail),
+            Effect.ignore,
+            Effect.forkIn(scope),
+            Effect.asVoid,
+          );
+        };
         return {
           messages: Stream.unfold(undefined, () =>
             Effect.map(nextInbound, (message) =>
@@ -206,6 +316,11 @@ export const makeClaudeReplay = Effect.fn("makeClaudeReplay")(function* (
           setModel: (model: string) =>
             expectOutbound({ type: "query.set_model", model }).pipe(Effect.mapError(asRunnerError)),
           interrupt: expectOutbound({ type: "query.interrupt" }).pipe(
+            Effect.andThen(
+              Effect.sync(() => {
+                for (const controller of waitingAsks) controller.abort();
+              }),
+            ),
             Effect.mapError(asRunnerError),
           ),
         };
@@ -217,6 +332,7 @@ export const makeClaudeReplay = Effect.fn("makeClaudeReplay")(function* (
   const assertComplete = Effect.gen(function* () {
     const first = yield* Ref.get(failure);
     if (first !== undefined) return yield* first;
+    yield* skipConsumed;
     const at = yield* Ref.get(cursor);
     if (at < entries.length) {
       return yield* new ClaudeReplayError({
@@ -230,6 +346,18 @@ export const makeClaudeReplay = Effect.fn("makeClaudeReplay")(function* (
 
   return { runner, assertComplete, awaitHeld: Deferred.await(held) } satisfies ClaudeReplay;
 });
+
+/** Claude Code asking the adapter's `canUseTool` about a tool, as a recording keeps it. */
+interface PermissionRequestFrame {
+  readonly type: "permission.request";
+  readonly toolName: string;
+  readonly input: Record<string, unknown>;
+  readonly toolUseID: string;
+  readonly requestId: string;
+}
+
+const isFrame = (frame: unknown, type: string): frame is object =>
+  typeof frame === "object" && frame !== null && Reflect.get(frame, "type") === type;
 
 /** A copy that holds plain JSON, as the recording will. */
 const asJson = (value: unknown): unknown => JSON.parse(JSON.stringify(value)) as unknown;
@@ -252,7 +380,37 @@ export const makeRecordingQueryRunner = (inner: ClaudeAgentSdkQueryRunner["Servi
           type: "expect_outbound",
           frame: asJson({ type: "query.open", options: recordedQueryOptions(input.options) }),
         });
-        const session = yield* inner.open(input);
+        const canUseTool = input.options.canUseTool;
+        const recordedCanUseTool: CanUseTool | undefined =
+          canUseTool === undefined
+            ? undefined
+            : async (toolName, toolInput, callbackOptions) => {
+                entries.push({
+                  type: "emit_inbound",
+                  frame: asJson({
+                    type: "permission.request",
+                    toolName,
+                    input: toolInput,
+                    toolUseID: callbackOptions.toolUseID,
+                    requestId: callbackOptions.requestId,
+                  }),
+                });
+                const result = await canUseTool(toolName, toolInput, callbackOptions);
+                entries.push({
+                  type: "expect_outbound",
+                  frame: asJson({
+                    type: "permission.response",
+                    toolUseID: callbackOptions.toolUseID,
+                    result,
+                  }),
+                });
+                return result;
+              };
+        const session = yield* inner.open(
+          recordedCanUseTool === undefined
+            ? input
+            : { ...input, options: { ...input.options, canUseTool: recordedCanUseTool } },
+        );
         return {
           messages: session.messages.pipe(
             Stream.tap((message) =>

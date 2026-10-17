@@ -1,4 +1,12 @@
-import { CommandId, ProviderTurnId, RunId, ThreadId } from "@playstead/contracts/baseSchemas";
+import {
+  CommandId,
+  ProviderSessionId,
+  ProviderTurnId,
+  RunId,
+  RuntimeRequestId,
+  ThreadId,
+} from "@playstead/contracts/baseSchemas";
+import { ProviderUserInputAnswers } from "@playstead/contracts/orchestrationV2";
 import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -12,8 +20,8 @@ import * as SqlClient from "effect/sql/SqlClient";
 /**
  * The work a command leaves for the effect worker (T3 Code's
  * `OrchestrationEffectRequestV2` at 2577baf): starting a run's provider
- * turn, and interrupting it. There is no checkpoint, title generation or
- * cleanup. Runtime-request answers (#25) join this union.
+ * turn, interrupting it, and giving the provider the person's answers to
+ * its question. There is no checkpoint, title generation or cleanup.
  */
 const OrchestrationEffectRequestV2 = Schema.Union([
   Schema.Struct({ type: Schema.Literal("provider-turn.start"), runId: RunId }),
@@ -21,6 +29,13 @@ const OrchestrationEffectRequestV2 = Schema.Union([
     type: Schema.Literal("provider-turn.interrupt"),
     runId: RunId,
     providerTurnId: ProviderTurnId,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("runtime-request.respond"),
+    runId: RunId,
+    providerSessionId: ProviderSessionId,
+    requestId: RuntimeRequestId,
+    answers: ProviderUserInputAnswers,
   }),
 ]);
 export type OrchestrationEffectRequestV2 = typeof OrchestrationEffectRequestV2.Type;
@@ -34,6 +49,7 @@ export type OrchestrationEffectRequestV2 = typeof OrchestrationEffectRequestV2.T
 const PROCESS_BOUND_EFFECT_TYPES: ReadonlyArray<OrchestrationEffectRequestV2["type"]> = [
   "provider-turn.start",
   "provider-turn.interrupt",
+  "runtime-request.respond",
 ];
 
 /** Which of a thread's effects a command cancels (T3 Code's `cancelUnsettledEffects`). */

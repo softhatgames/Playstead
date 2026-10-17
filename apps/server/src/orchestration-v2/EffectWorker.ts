@@ -13,10 +13,11 @@ const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
 /**
  * Runs the outbox's effects (T3 Code's
  * `apps/server/src/orchestration-v2/EffectWorker.ts` at 2577baf): starting a
- * run's provider turn and interrupting it; there is no checkpoint step. An
- * effect a command cancels while it runs is stopped, as T3 Code's `runOnce`
- * races `execute` against `awaitCancellation`. The server runs `runDaemon`;
- * tests call `drain` and then wait for the events they expect.
+ * run's provider turn, interrupting it, and giving it the person's answers;
+ * there is no checkpoint step. An effect a command cancels while it runs is
+ * stopped, as T3 Code's `runOnce` races `execute` against
+ * `awaitCancellation`. The server runs `runDaemon`; tests call `drain` and
+ * then wait for the events they expect.
  */
 export class OrchestrationEffectWorkerV2 extends Context.Service<
   OrchestrationEffectWorkerV2,
@@ -41,6 +42,9 @@ const make = Effect.gen(function* () {
     void,
     | ProviderTurnStartService.ProviderTurnStartError
     | Effect.Error<ReturnType<RunExecutionService.RunExecutionServiceV2["Service"]["interruptRun"]>>
+    | Effect.Error<
+        ReturnType<RunExecutionService.RunExecutionServiceV2["Service"]["respondToRuntimeRequest"]>
+      >
   > => {
     switch (effect.request.type) {
       case "provider-turn.start":
@@ -50,6 +54,13 @@ const make = Effect.gen(function* () {
           threadId: effect.threadId,
           runId: effect.request.runId,
           providerTurnId: effect.request.providerTurnId,
+        });
+      case "runtime-request.respond":
+        return runs.respondToRuntimeRequest({
+          runId: effect.request.runId,
+          providerSessionId: effect.request.providerSessionId,
+          requestId: effect.request.requestId,
+          answers: effect.request.answers,
         });
     }
   };

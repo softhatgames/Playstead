@@ -53,6 +53,11 @@ const applyEvent = (
           (left, right) => left.ordinal - right.ordinal,
         ),
       };
+    case "runtime-request.updated":
+      return {
+        ...projection,
+        runtimeRequests: upsertById(projection.runtimeRequests, event.payload),
+      };
   }
 };
 

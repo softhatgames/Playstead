@@ -9,6 +9,7 @@ import {
   OrchestrationV2ProviderTurn,
   OrchestrationV2Run,
   OrchestrationV2RunAttempt,
+  OrchestrationV2RuntimeRequest,
   type OrchestrationV2StoredEvent,
   type OrchestrationV2ThreadProjection,
   type OrchestrationV2ThreadShell,
@@ -55,6 +56,10 @@ const ENTITIES = {
     schema: OrchestrationV2ConversationMessage,
   },
   turnItems: { table: "orchestration_v2_projection_turn_items", schema: OrchestrationV2TurnItem },
+  runtimeRequests: {
+    table: "orchestration_v2_projection_runtime_requests",
+    schema: OrchestrationV2RuntimeRequest,
+  },
 } as const;
 type EntityKind = keyof typeof ENTITIES;
 
@@ -82,6 +87,8 @@ const entityKindOf = (event: OrchestrationV2StoredEvent["event"]): EntityKind | 
       return "messages";
     case "turn-item.updated":
       return "turnItems";
+    case "runtime-request.updated":
+      return "runtimeRequests";
   }
 };
 
@@ -219,16 +226,25 @@ const make = Effect.gen(function* () {
     Effect.gen(function* () {
       const thread = yield* readThread(threadId);
       if (Option.isNone(thread)) return Option.none();
-      const [runs, attempts, nodes, providerSessions, providerThreads, providerTurns, messages] =
-        yield* Effect.all([
-          readRows(ENTITIES.runs, threadId),
-          readRows(ENTITIES.attempts, threadId),
-          readRows(ENTITIES.nodes, threadId),
-          readRows(ENTITIES.providerSessions, threadId),
-          readRows(ENTITIES.providerThreads, threadId),
-          readRows(ENTITIES.providerTurns, threadId),
-          readRows(ENTITIES.messages, threadId),
-        ]);
+      const [
+        runs,
+        attempts,
+        nodes,
+        providerSessions,
+        providerThreads,
+        providerTurns,
+        messages,
+        runtimeRequests,
+      ] = yield* Effect.all([
+        readRows(ENTITIES.runs, threadId),
+        readRows(ENTITIES.attempts, threadId),
+        readRows(ENTITIES.nodes, threadId),
+        readRows(ENTITIES.providerSessions, threadId),
+        readRows(ENTITIES.providerThreads, threadId),
+        readRows(ENTITIES.providerTurns, threadId),
+        readRows(ENTITIES.messages, threadId),
+        readRows(ENTITIES.runtimeRequests, threadId),
+      ]);
       const turnItems = [...(yield* readRows(ENTITIES.turnItems, threadId))].sort(
         (left, right) => left.ordinal - right.ordinal,
       );
@@ -242,6 +258,7 @@ const make = Effect.gen(function* () {
         providerTurns,
         messages,
         turnItems,
+        runtimeRequests,
         updatedAt: thread.value.updatedAt,
       } satisfies OrchestrationV2ThreadProjection);
     }).pipe(Effect.mapError(failWith("getThread")));

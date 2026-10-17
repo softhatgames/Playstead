@@ -38,18 +38,38 @@ const isUnfinished = (status: string) =>
  * The events that settle what a thread's projection says is still at work
  * when no provider can be (T3 Code's `reconcileProjection` in
  * `ProviderRuntimeRecoveryService.ts` at 2577baf, without queued runs,
- * runtime requests, subagents, background work or the restart
- * continuation, which Playstead does not have). An active run and
- * everything under it is cancelled, a streaming message stops streaming,
- * an active provider thread is idle and every provider session is stopped.
- * Each run's own event comes after everything under it.
+ * subagents, background work or the restart continuation, which Playstead
+ * does not have). A question still waiting on the person can no longer be
+ * answered: it is `expired` at startup and `cancelled` at shutdown. An
+ * active run and everything under it is cancelled, a streaming message
+ * stops streaming, an active provider thread is idle and every provider
+ * session is stopped. Each run's own event comes after everything under it.
  */
 const reconcileEvents = (
   projection: OrchestrationV2ThreadProjection,
+  trigger: RecoveryTrigger,
+  reason: string,
   now: string,
 ): ReadonlyArray<EventSink.NewDomainEvent> => {
   const threadId = projection.thread.id;
   const events: Array<EventSink.NewDomainEvent> = [];
+  for (const request of projection.runtimeRequests.filter(
+    (candidate) => candidate.status === "pending",
+  )) {
+    const runId = projection.nodes.find((node) => node.id === request.nodeId)?.runId ?? null;
+    events.push({
+      threadId,
+      ...(runId === null ? {} : { runId }),
+      occurredAt: now,
+      type: "runtime-request.updated",
+      payload: {
+        ...request,
+        status: trigger === "startup" ? "expired" : "cancelled",
+        resolvedAt: now,
+        responseCapability: { type: "not_resumable", reason },
+      },
+    });
+  }
   const runs = projection.runs.filter((run) => ACTIVE_RUN_STATUSES.has(run.status));
   for (const run of runs) {
     const base = { threadId, runId: run.id, occurredAt: now };
@@ -169,7 +189,7 @@ const make = Effect.gen(function* () {
       const now = yield* DateTime.now;
       const nowIso = DateTime.formatIso(now);
       const reason = `Cancelled because the server ${trigger === "startup" ? "restarted" : "shut down"} before the provider work completed.`;
-      const events = reconcileEvents(projection.value, nowIso);
+      const events = reconcileEvents(projection.value, trigger, reason, nowIso);
       if (events.length === 0) {
         yield* outbox.cancelUnsettled({ threadId, reason, now: nowIso });
       } else {

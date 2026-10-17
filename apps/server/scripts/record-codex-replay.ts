@@ -45,6 +45,10 @@ import {
  * `turn_interrupt` interrupts a long command once it runs, then sends one
  * more message.
  *
+ * There is no question scenario: Codex 0.163.0 refuses `request_user_input`
+ * outside plan mode, so `question_answer.codex.ndjson` and
+ * `question_interrupt.codex.ndjson` are hand-made (see their headers).
+ *
  * The header carries `codex --version` and the capture date. The frames are
  * scrubbed of the folder (which becomes `<workspace>`), this machine's home,
  * user and host names, Codex's installation and account ids, account

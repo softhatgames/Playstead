@@ -31,6 +31,13 @@ import {
   runFileCreateScenario,
 } from "../src/orchestration-v2/testkit/fixtures/fileCreate.ts";
 import {
+  CLAUDE_QUESTION_SCENARIO,
+  QUESTION_ANSWER_SCENARIO_NAME,
+  QUESTION_INTERRUPT_SCENARIO_NAME,
+  runQuestionAnswerScenario,
+  runQuestionInterruptScenario,
+} from "../src/orchestration-v2/testkit/fixtures/questionAnswer.ts";
+import {
   RESTART_RESUME_IDS,
   RESTART_RESUME_SCENARIO,
   runFirstTurn,
@@ -50,11 +57,14 @@ import { makeTestServerConfig } from "../src/testUtils/testServer.ts";
  * adapter sends). It uses the signed-in `claude` on PATH, in a temporary
  * empty folder, and writes `src/orchestration-v2/testkit/fixtures/<scenario>.claude.ndjson`.
  *
- *   node apps/server/scripts/record-claude-replay.ts [file_create | restart_resume | turn_interrupt]
+ *   node apps/server/scripts/record-claude-replay.ts [file_create | restart_resume | turn_interrupt | question_answer | question_interrupt]
  *
  * `restart_resume` builds the services a second time over the same home
  * between its two turns, as a restarted server would. `turn_interrupt`
  * interrupts a long command once it runs, then sends one more message.
+ * `question_answer` answers Claude's `AskUserQuestion` through
+ * `runtime-request.respond`; `question_interrupt` interrupts the turn
+ * waiting on it instead.
  *
  * The header carries `claude --version` and the capture date. The frames are
  * scrubbed of the folder (which becomes `<workspace>`), this machine's home,
@@ -259,6 +269,22 @@ const recordTurnInterrupt = (options: HarnessOptions) =>
     return { harness, workspace };
   });
 
+/** Claude asks, and the question is answered, or its turn interrupted. */
+const recordQuestion = (options: HarnessOptions, interrupt: boolean) =>
+  Effect.gen(function* () {
+    const harness = yield* makeOrchestrationHarness(options);
+    const { workspace, pending, run } = yield* (
+      interrupt ? runQuestionInterruptScenario : runQuestionAnswerScenario
+    )(harness, CLAUDE_QUESTION_SCENARIO);
+    yield* Effect.logInfo("The turn ended.").pipe(
+      Effect.annotateLogs({ run: run.status, questions: JSON.stringify(pending.item.questions) }),
+    );
+    if (run.status !== (interrupt ? "interrupted" : "completed")) {
+      return yield* Effect.die(`The run ended ${run.status}.`);
+    }
+    return { harness, workspace };
+  });
+
 /** A turn, a restart over the same home, and a turn that needs the first one's context. */
 const recordRestartResume = (options: HarnessOptions) =>
   Effect.gen(function* () {
@@ -292,7 +318,9 @@ const program = Effect.gen(function* () {
   if (
     scenario !== FILE_CREATE_SCENARIO.scenario &&
     scenario !== RESTART_RESUME_SCENARIO.scenario &&
-    scenario !== CLAUDE_TURN_INTERRUPT_SCENARIO.scenario
+    scenario !== CLAUDE_TURN_INTERRUPT_SCENARIO.scenario &&
+    scenario !== QUESTION_ANSWER_SCENARIO_NAME &&
+    scenario !== QUESTION_INTERRUPT_SCENARIO_NAME
   ) {
     return yield* Effect.die(`No scenario is called ${scenario}.`);
   }
@@ -325,7 +353,10 @@ const program = Effect.gen(function* () {
       ? yield* recordRestartResume(harnessOptions)
       : scenario === CLAUDE_TURN_INTERRUPT_SCENARIO.scenario
         ? yield* recordTurnInterrupt(harnessOptions)
-        : yield* recordFileCreate(harnessOptions);
+        : scenario === QUESTION_ANSWER_SCENARIO_NAME ||
+            scenario === QUESTION_INTERRUPT_SCENARIO_NAME
+          ? yield* recordQuestion(harnessOptions, scenario === QUESTION_INTERRUPT_SCENARIO_NAME)
+          : yield* recordFileCreate(harnessOptions);
 
   const home = NodeOS.homedir();
   const user = NodeOS.userInfo().username;
@@ -376,7 +407,16 @@ const program = Effect.gen(function* () {
                 ],
                 interruptAfter: "command_execution running",
               }
-            : { model: FILE_CREATE_SCENARIO.model, prompt: FILE_CREATE_SCENARIO.prompt }),
+            : scenario === QUESTION_ANSWER_SCENARIO_NAME ||
+                scenario === QUESTION_INTERRUPT_SCENARIO_NAME
+              ? {
+                  model: CLAUDE_QUESTION_SCENARIO.model,
+                  prompt: CLAUDE_QUESTION_SCENARIO.prompt,
+                  ...(scenario === QUESTION_ANSWER_SCENARIO_NAME
+                    ? { answer: CLAUDE_QUESTION_SCENARIO.answer }
+                    : { interruptAfter: "user_input pending" }),
+                }
+              : { model: FILE_CREATE_SCENARIO.model, prompt: FILE_CREATE_SCENARIO.prompt }),
         nativeSessionId: recording.sessionIds[0],
         recorder: "apps/server/scripts/record-claude-replay.ts",
       },

@@ -25,6 +25,17 @@ export type TimelineRow =
       readonly tone: "tool" | "error";
       readonly running: boolean;
     }
+  /**
+   * A provider's question: waiting on the person (the pending user-input
+   * panel answers it), answered, or left unanswered when the turn ended.
+   */
+  | {
+      readonly kind: "question";
+      readonly id: string;
+      readonly question: string;
+      readonly state: "waiting" | "answered" | "unanswered";
+      readonly answer?: string;
+    }
   /** The person pressed **Interrupt** (T3 Code's `V2LifecycleRow`). */
   | { readonly kind: "interrupt-request"; readonly id: string; readonly label: string }
   /** The run has stopped. */
@@ -64,11 +75,35 @@ const workRow = (
   running: item.status === "running" || item.status === "pending",
 });
 
+const questionRow = (
+  item: Extract<OrchestrationV2TurnItem, { type: "user_input_request" }>,
+): TimelineRow => {
+  const question = item.questions.map((candidate) => candidate.question).join(" ");
+  if (item.status === "waiting" || item.status === "pending") {
+    return { kind: "question", id: item.id, question, state: "waiting" };
+  }
+  if (item.answers === undefined) {
+    return { kind: "question", id: item.id, question, state: "unanswered" };
+  }
+  const { answers } = item;
+  const answer = item.questions
+    .map((candidate) => answers[candidate.id])
+    .flatMap((given) =>
+      given === undefined ? [] : [typeof given === "string" ? given : given.join(", ")],
+    )
+    .join("; ");
+  return { kind: "question", id: item.id, question, state: "answered", answer };
+};
+
 export function deriveTimelineRows(
   items: ReadonlyArray<OrchestrationV2TurnItem>,
   workspaceRoot: string | undefined,
 ): ReadonlyArray<TimelineRow> {
-  return items.map((item): TimelineRow => {
+  // Claude's `AskUserQuestion` tool shows as its question, not as a tool too.
+  const shown = items.filter(
+    (item) => item.type !== "dynamic_tool" || item.toolName !== "AskUserQuestion",
+  );
+  return shown.map((item): TimelineRow => {
     switch (item.type) {
       case "user_message":
         return { kind: "user", id: item.id, text: item.text };
@@ -86,6 +121,8 @@ export function deriveTimelineRows(
         return workRow(item, item.toolName, undefined);
       case "error":
         return workRow(item, item.failure.message, undefined);
+      case "user_input_request":
+        return questionRow(item);
       case "run_interrupt_request":
         return { kind: "interrupt-request", id: item.id, label: "Interrupt requested" };
       case "run_interrupt_result":
