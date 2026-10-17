@@ -12,7 +12,7 @@ An experienced developer can inspect source, diffs, diagnostics and tools, and w
 
 Each person chooses whether to show technical details; Playstead asks once, at first run. Without them, results read in game terms, and every result can still show its work. With them, activities, diffs, loaded revisions and each thread's token use as the provider reports it appear by default, along with changes, a terminal, files and a usage screen. Approvals and permission requests stay in game terms either way.
 
-Playstead runs the real Codex and Claude agents as providers, following [T3 Code](t3-code.md). Its custom interface adds game development context, tools and workflows around them. Provider capabilities and limitations remain visible. A person can explicitly hand work to another provider.
+Playstead runs the real Codex and Claude agents as providers, following [T3 Code](t3-code.md). Its custom interface adds game development context, tools and workflows around them. Provider capabilities and limitations remain visible. A thread keeps the provider it started with.
 
 ## The whole development process
 

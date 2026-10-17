@@ -8,6 +8,7 @@ Playstead follows [T3 Code](https://github.com/pingdotgg/t3code) for working wit
 
 ## Where things are
 
+- [docs/ROADMAP.md](docs/ROADMAP.md): the versions, what 0.1 must pass, and the milestones' order. Read it before planning, ordering or specifying a milestone, or changing what a release promises.
 - [docs/adr/](docs/adr/): Playstead's decisions. Read the ADRs for the area you are deciding or building in.
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md): Playstead's structure, mapped onto T3 Code's, and what it leaves out. Read it before placing code, porting from T3 Code, writing tests or changing CI.
 - [docs/PRODUCT.md](docs/PRODUCT.md) and [docs/DEVELOPMENT-LAYER.md](docs/DEVELOPMENT-LAYER.md): the intended experience, and how each game is built so Playstead and the agent can see, drive and change it. Read them before designing or building a game feature.
