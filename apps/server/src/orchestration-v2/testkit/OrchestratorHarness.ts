@@ -1,4 +1,5 @@
 import * as Settlement from "../ThreadSettlementService.ts";
+import { streamShell } from "../ShellStream.ts";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import { writeFakeCli } from "@playstead/provider-testing/fakeCli";
@@ -27,6 +28,8 @@ import * as Orchestrator from "../Orchestrator.ts";
 import * as ProviderAdapterRegistry from "../ProviderAdapterRegistry.ts";
 import * as ProviderRuntimeRecoveryService from "../ProviderRuntimeRecoveryService.ts";
 import * as OrchestrationRuntime from "../runtimeLayer.ts";
+
+import { ThreadSearch } from "../ThreadSearch.ts";
 
 /**
  * Seam 1: the real server services at the orchestrator's command boundary
@@ -129,11 +132,12 @@ export const makeOrchestrationHarness = Effect.fn("makeOrchestrationHarness")(fu
       Layer.provideMerge(ServerSettings.layer),
       Layer.provideMerge(OrchestrationRuntime.layer),
       Layer.provide(WorkspacePaths.layer),
-      Layer.provide(SqlitePersistence.layerConfig),
+      Layer.provideMerge(SqlitePersistence.layerConfig),
       Layer.provide(ServerConfig.layer(config)),
     ),
   );
   const services = yield* Effect.all({
+    search: ThreadSearch,
     orchestrator: Orchestrator.OrchestratorV2,
     settlement: Settlement.ThreadSettlementService,
     settings: ServerSettings.ServerSettingsService,
@@ -167,5 +171,10 @@ export const makeOrchestrationHarness = Effect.fn("makeOrchestrationHarness")(fu
       ),
     );
 
-  return { ...services, home: config.baseDir, awaitRunEnded };
+  return {
+    ...services,
+    home: config.baseDir,
+    awaitRunEnded,
+    shell: streamShell.pipe(Stream.provideContext(context), Stream.orDie),
+  };
 });

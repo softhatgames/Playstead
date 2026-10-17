@@ -37,6 +37,7 @@ import { ProviderDriverKind, ProviderInstanceId } from "./providerInstance.ts";
  */
 
 export const ORCHESTRATION_V2_WS_METHODS = {
+  searchThreads: "orchestration.searchThreads",
   dispatchCommand: "orchestration.dispatchCommand",
   getArchivedShellSnapshot: "orchestration.getArchivedShellSnapshot",
   subscribeArchivedShell: "orchestration.subscribeArchivedShell",
@@ -126,6 +127,9 @@ export const OrchestrationV2AppThread = Schema.Struct({
   settledOverride: ThreadSettledOverride.pipe(Schema.withDecodingDefault(Effect.succeed(null))),
   settledAt: NullOrTimeDefaultNull,
   unsettledAt: NullOrTimeDefaultNull,
+  snoozedUntil: NullOrTimeDefaultNull,
+  snoozedAt: NullOrTimeDefaultNull,
+  lastSnoozeWakeAt: NullOrTimeDefaultNull,
   pinnedAt: NullOrTimeDefaultNull,
   pinOrderKey: NullOrOrderKeyDefaultNull,
   activeOrderKey: NullOrOrderKeyDefaultNull,
@@ -433,6 +437,8 @@ export const OrchestrationV2DomainEvent = Schema.Union([
   event("thread.auto-settle-set", OrchestrationV2AppThread),
   event("thread.settled", OrchestrationV2AppThread),
   event("thread.unsettled", OrchestrationV2AppThread),
+  event("thread.snoozed", OrchestrationV2AppThread),
+  event("thread.unsnoozed", OrchestrationV2AppThread),
   event("run.created", OrchestrationV2Run),
   event("run.updated", OrchestrationV2Run),
   event("run-attempt.created", OrchestrationV2RunAttempt),
@@ -504,6 +510,9 @@ export const OrchestrationV2ThreadShell = Schema.Struct({
   settledOverride: ThreadSettledOverride,
   settledAt: Schema.NullOr(IsoDateTime),
   unsettledAt: Schema.NullOr(IsoDateTime),
+  snoozedUntil: NullOrTimeDefaultNull,
+  snoozedAt: NullOrTimeDefaultNull,
+  lastSnoozeWakeAt: NullOrTimeDefaultNull,
   pinnedAt: Schema.NullOr(IsoDateTime),
   pinOrderKey: Schema.NullOr(TrimmedNonEmptyString),
   activeOrderKey: Schema.NullOr(TrimmedNonEmptyString),
@@ -723,6 +732,18 @@ export const OrchestrationV2Command = Schema.Union([
     commandId: CommandId,
     threadId: ThreadId,
     settledAt: Schema.optionalKey(IsoDateTime),
+  }),
+  Schema.Struct({
+    type: Schema.Literal("thread.snooze"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    snoozedUntil: IsoDateTime,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("thread.unsnooze"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    reason: Schema.Literal("user"),
   }),
   Schema.Struct({
     type: Schema.Literal("thread.unsettle"),

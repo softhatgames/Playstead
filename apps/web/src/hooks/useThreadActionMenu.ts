@@ -1,3 +1,7 @@
+import { canSnooze, effectiveSnoozed } from "@playstead/client-runtime/state/threadSnoozed";
+import { resolveSnoozePresets } from "../components/Sidebar.snooze.ts";
+import { requestCustomSnooze } from "../customSnooze.ts";
+import { snoozeAndAdvance } from "../snoozeAndAdvance.ts";
 import type { ContextMenuPosition } from "@playstead/contracts/ipc";
 import { useCallback } from "react";
 
@@ -17,6 +21,8 @@ import { failureToast, successToast } from "../toast.ts";
 import { readSidebarProjectScopeKey, setSidebarProjectScopeKey } from "../uiState.ts";
 import {
   setThreadAutoSettle,
+  snoozeThread,
+  unsnoozeThread,
   regenerateThreadTitle,
   markThreadUnread,
   pinThread,
@@ -76,11 +82,18 @@ export function useThreadActionMenu(
           : undefined;
       void (async () => {
         const api = readLocalApi();
+        const now = new Date();
+        const presets = resolveSnoozePresets(now);
         const items =
           variant === "tree"
             ? legacyThreadMenuItems
             : buildThreadActionMenuItems({
                 autoSettleEnabled: thread.autoSettleDisabledAt == null,
+                snooze: {
+                  isSnoozed: effectiveSnoozed(thread, now.toISOString()),
+                  canSnooze: canSnooze(thread),
+                  presets,
+                },
                 isRunning: !threadRuntimeCanArchive(thread.status),
                 isTitleRegenerating: thread.titleRegeneration != null,
                 isPinned: thread.pinnedAt !== null,
@@ -94,11 +107,28 @@ export function useThreadActionMenu(
                       },
               });
         const chosen = await api.contextMenu.show(items, position).catch(() => null);
+        if (chosen?.startsWith("snooze:")) {
+          const wake =
+            chosen === "snooze:custom"
+              ? await requestCustomSnooze()
+              : presets.find((preset) => `snooze:${preset.id}` === chosen)?.snoozedUntil;
+          if (wake != null && !snoozeAndAdvance(thread.id, wake)) {
+            await snoozeThread(thread.id, wake).catch((error: unknown) =>
+              failureToast("Failed to snooze thread", error),
+            );
+          }
+          return;
+        }
         switch (chosen) {
           case "auto-settle:enabled":
           case "auto-settle:disabled":
             await setThreadAutoSettle(thread.id, chosen === "auto-settle:enabled").catch(
               (error: unknown) => failureToast("Failed to change auto-settle behavior", error),
+            );
+            return;
+          case "unsnooze":
+            await unsnoozeThread(thread.id).catch((error: unknown) =>
+              failureToast("Failed to wake thread", error),
             );
             return;
           case "pin":

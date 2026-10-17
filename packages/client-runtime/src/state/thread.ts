@@ -38,6 +38,8 @@ const applyEvent = (
     case "thread.auto-settle-set":
     case "thread.settled":
     case "thread.unsettled":
+    case "thread.snoozed":
+    case "thread.unsnoozed":
       return { ...projection, thread: event.payload, updatedAt: event.payload.updatedAt };
     case "run.created":
     case "run.updated":

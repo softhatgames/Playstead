@@ -23,6 +23,7 @@ import {
   streamArchivedShell,
   streamShell,
 } from "./orchestration-v2/ShellStream.ts";
+import { ThreadSearch } from "./orchestration-v2/ThreadSearch.ts";
 import { streamThread } from "./orchestration-v2/ThreadStream.ts";
 import * as ProjectService from "./project/ProjectService.ts";
 import * as ProviderRegistry from "./provider/ProviderRegistry.ts";
@@ -46,6 +47,7 @@ const layerWsRpc = WsRpcGroup.toLayer(
     const providers = yield* ProviderRegistry.ProviderRegistry;
     const settings = yield* ServerSettings.ServerSettingsService;
     const projects = yield* ProjectService.ProjectService;
+    const search = yield* ThreadSearch;
     const orchestrator = yield* Orchestrator.OrchestratorV2;
     const context = yield* Effect.context<
       | Effect.Services<typeof streamShell>
@@ -59,6 +61,7 @@ const layerWsRpc = WsRpcGroup.toLayer(
       settings: settings.getSettings,
     });
     return WsRpcGroup.of({
+      [ORCHESTRATION_V2_WS_METHODS.searchThreads]: (input) => search.search(input),
       [WS_METHODS.serverGetConfig]: () => getConfig,
       [WS_METHODS.serverRefreshProviders]: ({ instanceId }) =>
         Effect.map(providers.refresh(instanceId), (list) => ({ providers: list })),

@@ -14,6 +14,8 @@ import * as ProviderSessionManager from "./ProviderSessionManager.ts";
 import * as ProviderTurnStartService from "./ProviderTurnStartService.ts";
 import * as RunExecutionService from "./RunExecutionService.ts";
 
+import * as ThreadSearch from "./ThreadSearch.ts";
+
 /**
  * Orchestration's stores and event sink over the server's SQLite, assembled
  * once for the server and its tests (T3 Code's
@@ -24,6 +26,7 @@ import * as RunExecutionService from "./RunExecutionService.ts";
 export const layer = EventSink.layer.pipe(
   Layer.provideMerge(
     Layer.mergeAll(
+      ThreadSearch.layer,
       CommandReceiptStore.layer,
       EventStore.layer,
       ProjectStore.layer,
