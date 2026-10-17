@@ -70,6 +70,12 @@ export const makeOrchestrationHarness = Effect.fn("makeOrchestrationHarness")(fu
   readonly recoverOnStartup?: boolean;
   /** Stands in for spawning processes, such as the Git check of threads without a project. */
   readonly childProcessSpawner?: ChildProcessSpawner.ChildProcessSpawner["Service"];
+  /**
+   * Wraps the event sink the orchestrator, the effect worker and the run
+   * execution write through, as when a test puts a command between a run's
+   * end and its write.
+   */
+  readonly eventSink?: (sink: EventSink.EventSinkV2Shape) => EventSink.EventSinkV2Shape;
 }) {
   const config = input.config ?? (yield* makeTestServerConfig());
   const platform = yield* HostProcess.Platform;
@@ -126,9 +132,20 @@ export const makeOrchestrationHarness = Effect.fn("makeOrchestrationHarness")(fu
       ProviderAdapterRegistry.layerFromAdapters(lists.flat().map(gated)),
     ),
   );
+  const wrapEventSink = input.eventSink;
   const context = yield* Layer.build(
     Layer.mergeAll(ProjectService.layer, ProviderRuntimeRecoveryService.layer).pipe(
       Layer.provideMerge(OrchestrationRuntime.layerCore),
+      Layer.provide(
+        wrapEventSink === undefined
+          ? Layer.empty
+          : Layer.effect(
+              EventSink.EventSinkV2,
+              Effect.gen(function* () {
+                return wrapEventSink(yield* EventSink.EventSinkV2);
+              }),
+            ),
+      ),
       Layer.provide(adapters),
       Layer.provide(
         Layer.succeed(TextGeneration.TextGeneration, input.textGeneration ?? keepsTheSeed),

@@ -45,6 +45,12 @@ type DistributiveOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, K>
 /** A thread event before the sink gives it its id. */
 export type NewDomainEvent = DistributiveOmit<OrchestrationV2DomainEvent, "id">;
 
+/** Events decided inside the write's transaction, reading the projections it commits against. */
+export type DecideEvents = Effect.Effect<
+  ReadonlyArray<NewDomainEvent>,
+  ProjectionStore.ProjectionStoreV2Error
+>;
+
 export interface EventSinkV2Shape {
   /**
    * Commits a project command's event, the project projection and the
@@ -111,14 +117,16 @@ export interface EventSinkV2Shape {
   /**
    * `write`, only while the run's status is one of `statuses`, checked in
    * the same transaction (T3 Code's `writeIfRunCurrent`), so a provider's
-   * late output cannot reopen a run that has ended. Says whether it wrote.
+   * late output cannot reopen a run that has ended. The events may be an
+   * effect that decides them inside that transaction, from the projections
+   * as they are when it commits. Says whether it wrote.
    */
   readonly writeIfRunStatus: (
     guard: {
       readonly runId: RunId;
       readonly statuses: ReadonlySet<OrchestrationV2RunStatus>;
     },
-    events: ReadonlyArray<NewDomainEvent>,
+    events: ReadonlyArray<NewDomainEvent> | DecideEvents,
   ) => Effect.Effect<boolean, EventSinkWriteError>;
 }
 
@@ -371,13 +379,18 @@ const make = Effect.gen(function* () {
       Effect.gen(function* () {
         const run = yield* projections.getRun(guard.runId);
         if (Option.isNone(run) || !guard.statuses.has(run.value.status)) return undefined;
-        return yield* appendAndApply(null, events);
+        return yield* appendAndApply(null, Effect.isEffect(events) ? yield* events : events);
       }),
       (stored) => (stored === undefined ? Effect.void : publishThreadEvents(stored)),
     ).pipe(
       Effect.map((stored) => stored !== undefined),
       Effect.mapError(
-        (cause) => new EventSinkWriteError({ commandId: null, eventCount: events.length, cause }),
+        (cause) =>
+          new EventSinkWriteError({
+            commandId: null,
+            eventCount: Effect.isEffect(events) ? 0 : events.length,
+            cause,
+          }),
       ),
     );
 

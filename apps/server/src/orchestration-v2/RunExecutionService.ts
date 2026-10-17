@@ -456,8 +456,10 @@ const make = Effect.gen(function* () {
   const serviceScope = yield* Effect.scope;
   const live = new Map<RunId, LiveRun>();
 
-  const whileActive = (runId: RunId, events: ReadonlyArray<EventSink.NewDomainEvent>) =>
-    eventSink.writeIfRunStatus({ runId, statuses: ACTIVE_RUN_STATUSES }, events);
+  const whileActive = (
+    runId: RunId,
+    events: ReadonlyArray<EventSink.NewDomainEvent> | EventSink.DecideEvents,
+  ) => eventSink.writeIfRunStatus({ runId, statuses: ACTIVE_RUN_STATUSES }, events);
 
   const finalize = (
     records: RootRunRecords,
@@ -466,22 +468,24 @@ const make = Effect.gen(function* () {
   ) =>
     Effect.gen(function* () {
       const now = yield* nowIso;
-      const projection = yield* projections.getThread(records.run.threadId);
-      const settlement = Option.match(projection, {
-        onNone: () => [],
-        onSome: (current) =>
-          status === "interrupted"
-            ? interruptedRunSettlement(current, records.run, records.providerTurn.id, now)
-            : unansweredRequestSettlement(current, records.run, records.providerTurn.id, now),
+      // Decided in the write's transaction, so a command committed just
+      // before, such as an archive stopping the session, is seen.
+      const decide = Effect.gen(function* () {
+        const projection = yield* projections.getThread(records.run.threadId);
+        const settlement = Option.match(projection, {
+          onNone: () => [],
+          onSome: (current) =>
+            status === "interrupted"
+              ? interruptedRunSettlement(current, records.run, records.providerTurn.id, now)
+              : unansweredRequestSettlement(current, records.run, records.providerTurn.id, now),
+        });
+        const session = Option.getOrUndefined(projection)?.providerSessions.find(
+          (candidate) => candidate.id === records.providerSession.id,
+        );
+        const sessionEnded = session?.status === "stopped" || session?.status === "error";
+        return [...settlement, ...finalRunEvents(records, status, failure, now, sessionEnded)];
       });
-      const session = Option.getOrUndefined(projection)?.providerSessions.find(
-        (candidate) => candidate.id === records.providerSession.id,
-      );
-      const sessionEnded = session?.status === "stopped" || session?.status === "error";
-      yield* whileActive(records.run.id, [
-        ...settlement,
-        ...finalRunEvents(records, status, failure, now, sessionEnded),
-      ]);
+      yield* whileActive(records.run.id, decide);
     });
 
   const startRootRun = (input: {
