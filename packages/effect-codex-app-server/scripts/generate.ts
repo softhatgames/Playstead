@@ -4,7 +4,8 @@
  * Generates `src/_generated/` from the JSON Schema that the installed Codex
  * writes about its own app-server protocol (`codex app-server
  * generate-json-schema`), so nothing is fetched and the schema matches the
- * Codex it came from. `pnpm --filter @playstead/effect-codex-app-server
+ * Codex it came from, plus the few experimental requests Playstead sends
+ * (`EXPERIMENTAL_CLIENT_REQUESTS`). `pnpm --filter @playstead/effect-codex-app-server
  * generate [--codex <path>]`.
  *
  * Follows T3 Code's `packages/effect-codex-app-server/scripts/generate.ts` at
@@ -216,6 +217,77 @@ const run = (command: string, args: ReadonlyArray<string>) =>
 
 const decodeJson = Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Json));
 
+/**
+ * Experimental requests Playstead sends, which Codex's schema has only with
+ * `--experimental`: stopping the commands an interrupted turn left running,
+ * as T3 Code's `terminateBackgroundTerminal` at 2577baf does. Each comes with
+ * its params, its response and what they refer to; the rest of the
+ * experimental protocol stays out.
+ */
+const EXPERIMENTAL_CLIENT_REQUESTS: ReadonlyArray<string> = [
+  "thread/backgroundTerminals/list",
+  "thread/backgroundTerminals/terminate",
+];
+
+interface SchemaBundle {
+  readonly root: JsonObject;
+  readonly v2: JsonObject;
+}
+
+/** The stable bundle plus `EXPERIMENTAL_CLIENT_REQUESTS` from the experimental one. */
+const withExperimentalClientRequests = (
+  stable: SchemaBundle,
+  experimental: SchemaBundle,
+): SchemaBundle => {
+  const root: Record<string, Json> = { ...stable.root };
+  const v2: Record<string, Json> = { ...stable.v2 };
+  const copy = (ref: string) => {
+    const segments = ref.replace(/^#\/definitions\//, "").split("/");
+    const [target, source, name] =
+      segments.length === 2
+        ? [v2, experimental.v2, segments[1]!]
+        : [root, experimental.root, segments[0]!];
+    if (Object.hasOwn(target, name) || !Object.hasOwn(source, name)) return;
+    target[name] = source[name]!;
+    copyReferenced(source[name]!);
+  };
+  const copyReferenced = (value: Json): void => {
+    if (Array.isArray(value)) return value.forEach(copyReferenced);
+    if (!isObject(value)) return;
+    for (const [key, child] of Object.entries(value)) {
+      if (key === "$ref" && typeof child === "string") copy(child);
+      else copyReferenced(child);
+    }
+  };
+  const stableRequests = stable.root.ClientRequest;
+  const experimentalRequests = experimental.root.ClientRequest;
+  if (
+    !isObject(stableRequests) ||
+    !Array.isArray(stableRequests.oneOf) ||
+    !isObject(experimentalRequests) ||
+    !Array.isArray(experimentalRequests.oneOf)
+  ) {
+    throw new Error("ClientRequest is not a oneOf union");
+  }
+  const experimentalVariants = experimentalRequests.oneOf;
+  const added = EXPERIMENTAL_CLIENT_REQUESTS.map((method) => {
+    const variant = experimentalVariants.find((candidate) =>
+      methodEntries({ oneOf: [candidate] }, "ClientRequest").some(
+        (entry) => entry.method === method,
+      ),
+    );
+    if (variant === undefined) throw new Error(`Codex's experimental schema has no ${method}`);
+    const params = methodEntries({ oneOf: [variant] }, "ClientRequest")[0]!.params;
+    copyReferenced(variant);
+    if (params !== undefined) {
+      copy(`#/definitions/v2/${params.replace(/^V2/, "").replace(/Params$/, "Response")}`);
+    }
+    return variant;
+  });
+  root.ClientRequest = { ...stableRequests, oneOf: [...stableRequests.oneOf, ...added] };
+  return { root, v2 };
+};
+
 const generate = Effect.gen(function* () {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -224,15 +296,22 @@ const generate = Effect.gen(function* () {
   const codex = codexFlag === -1 ? "codex" : argv[codexFlag + 1]!;
 
   const version = (yield* run(codex, ["--version"])).trim();
-  const schemaDirectory = yield* fs.makeTempDirectoryScoped({ prefix: "codex-schema-" });
-  yield* run(codex, ["app-server", "generate-json-schema", "--out", schemaDirectory]);
-  const bundle = yield* fs
-    .readFileString(path.join(schemaDirectory, "codex_app_server_protocol.schemas.json"))
-    .pipe(Effect.flatMap(decodeJson));
-  if (!isObject(bundle) || !isObject(bundle.definitions) || !isObject(bundle.definitions.v2)) {
-    return yield* new GenerateError({ detail: "Codex's schema bundle has no v2 definitions" });
-  }
-  const { v2, ...root } = bundle.definitions;
+  const readBundle = (flags: ReadonlyArray<string>) =>
+    Effect.gen(function* () {
+      const schemaDirectory = yield* fs.makeTempDirectoryScoped({ prefix: "codex-schema-" });
+      yield* run(codex, ["app-server", "generate-json-schema", ...flags, "--out", schemaDirectory]);
+      const bundle = yield* fs
+        .readFileString(path.join(schemaDirectory, "codex_app_server_protocol.schemas.json"))
+        .pipe(Effect.flatMap(decodeJson));
+      if (!isObject(bundle) || !isObject(bundle.definitions) || !isObject(bundle.definitions.v2)) {
+        return yield* new GenerateError({ detail: "Codex's schema bundle has no v2 definitions" });
+      }
+      const { v2, ...root } = bundle.definitions;
+      return { root, v2 };
+    });
+  const stable = yield* readBundle([]);
+  const experimental = yield* readBundle(["--experimental"]);
+  const { root, v2 } = withExperimentalClientRequests(stable, experimental);
 
   const definitions: Record<string, Json> = {};
   for (const [namespace, group] of [

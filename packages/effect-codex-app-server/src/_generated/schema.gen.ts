@@ -1432,6 +1432,48 @@ export const FuzzyFileSearchParams = Schema.Struct({
   query: Schema.String,
   roots: Schema.Array(Schema.String),
 }).annotate({ title: "FuzzyFileSearchParams", identifier: "FuzzyFileSearchParams" });
+export type V2ThreadBackgroundTerminalsListParams = {
+  readonly cursor?: string | null;
+  readonly limit?: number | null;
+  readonly threadId: string;
+};
+export const V2ThreadBackgroundTerminalsListParams = Schema.Struct({
+  cursor: Schema.optionalKey(
+    Schema.Union([
+      Schema.String.annotate({
+        description: "Opaque pagination cursor returned by a previous call.",
+      }),
+      Schema.Null,
+    ]),
+  ),
+  limit: Schema.optionalKey(
+    Schema.Union([
+      Schema.Number.annotate({ description: "Optional page size.", format: "uint32" })
+        .check(Schema.isInt().annotate({ expected: "an integer" }))
+        .check(
+          Schema.isGreaterThanOrEqualTo(0).annotate({
+            expected: "a value greater than or equal to 0",
+          }),
+        ),
+      Schema.Null,
+    ]),
+  ),
+  threadId: Schema.String,
+}).annotate({
+  title: "ThreadBackgroundTerminalsListParams",
+  identifier: "V2ThreadBackgroundTerminalsListParams",
+});
+export type V2ThreadBackgroundTerminalsTerminateParams = {
+  readonly processId: string;
+  readonly threadId: string;
+};
+export const V2ThreadBackgroundTerminalsTerminateParams = Schema.Struct({
+  processId: Schema.String,
+  threadId: Schema.String,
+}).annotate({
+  title: "ThreadBackgroundTerminalsTerminateParams",
+  identifier: "V2ThreadBackgroundTerminalsTerminateParams",
+});
 export type CommandExecutionApprovalKind = "command" | "writeStdin";
 export const CommandExecutionApprovalKind = Schema.Literals(["command", "writeStdin"]).annotate({
   description: "Distinguishes a command approval from input sent to an existing terminal.",
@@ -4320,6 +4362,53 @@ export const V2CommandAction = Schema.Union(
   ],
   { mode: "oneOf" },
 ).annotate({ identifier: "V2CommandAction" });
+export type V2ThreadBackgroundTerminal = {
+  readonly command: string;
+  readonly cpuPercent?: number | null;
+  readonly cwd: V2LegacyAppPathString;
+  readonly itemId: string;
+  readonly osPid?: number | null;
+  readonly processId: string;
+  readonly rssKb?: number | null;
+};
+export const V2ThreadBackgroundTerminal = Schema.Struct({
+  command: Schema.String,
+  cpuPercent: Schema.optionalKey(
+    Schema.Union([
+      Schema.Number.annotate({ format: "double" }).check(
+        Schema.isFinite().annotate({ expected: "a finite number" }),
+      ),
+      Schema.Null,
+    ]),
+  ),
+  cwd: V2LegacyAppPathString,
+  itemId: Schema.String,
+  osPid: Schema.optionalKey(
+    Schema.Union([
+      Schema.Number.annotate({ format: "uint32" })
+        .check(Schema.isInt().annotate({ expected: "an integer" }))
+        .check(
+          Schema.isGreaterThanOrEqualTo(0).annotate({
+            expected: "a value greater than or equal to 0",
+          }),
+        ),
+      Schema.Null,
+    ]),
+  ),
+  processId: Schema.String,
+  rssKb: Schema.optionalKey(
+    Schema.Union([
+      Schema.Number.annotate({ format: "uint64" })
+        .check(Schema.isInt().annotate({ expected: "an integer" }))
+        .check(
+          Schema.isGreaterThanOrEqualTo(0).annotate({
+            expected: "a value greater than or equal to 0",
+          }),
+        ),
+      Schema.Null,
+    ]),
+  ),
+}).annotate({ identifier: "V2ThreadBackgroundTerminal" });
 export type ApplyPatchApprovalParams = {
   readonly callId: string;
   readonly conversationId: V2ThreadId;
@@ -11730,6 +11819,16 @@ export type ClientRequest =
       readonly id: V2RequestId;
       readonly method: "fuzzyFileSearch";
       readonly params: FuzzyFileSearchParams;
+    }
+  | {
+      readonly id: V2RequestId;
+      readonly method: "thread/backgroundTerminals/list";
+      readonly params: V2ThreadBackgroundTerminalsListParams;
+    }
+  | {
+      readonly id: V2RequestId;
+      readonly method: "thread/backgroundTerminals/terminate";
+      readonly params: V2ThreadBackgroundTerminalsTerminateParams;
     };
 export const ClientRequest = Schema.Union(
   [
@@ -12407,6 +12506,20 @@ export const ClientRequest = Schema.Union(
       method: Schema.Literal("fuzzyFileSearch").annotate({ title: "FuzzyFileSearchRequestMethod" }),
       params: FuzzyFileSearchParams,
     }).annotate({ title: "FuzzyFileSearchRequest" }),
+    Schema.Struct({
+      id: V2RequestId,
+      method: Schema.Literal("thread/backgroundTerminals/list").annotate({
+        title: "Thread/backgroundTerminals/listRequestMethod",
+      }),
+      params: V2ThreadBackgroundTerminalsListParams,
+    }).annotate({ title: "Thread/backgroundTerminals/listRequest" }),
+    Schema.Struct({
+      id: V2RequestId,
+      method: Schema.Literal("thread/backgroundTerminals/terminate").annotate({
+        title: "Thread/backgroundTerminals/terminateRequestMethod",
+      }),
+      params: V2ThreadBackgroundTerminalsTerminateParams,
+    }).annotate({ title: "Thread/backgroundTerminals/terminateRequest" }),
   ],
   { mode: "oneOf" },
 ).annotate({ title: "ClientRequest", description: "Request from the client to the server." });
@@ -15476,6 +15589,26 @@ export const V2ThreadAttachmentRemoveResponse = Schema.Record(
   title: "ThreadAttachmentRemoveResponse",
   description: "Successful deletion does not return additional attachment data.",
 });
+export type V2ThreadBackgroundTerminalsListResponse = {
+  readonly data: ReadonlyArray<V2ThreadBackgroundTerminal>;
+  readonly nextCursor?: string | null;
+};
+export const V2ThreadBackgroundTerminalsListResponse = Schema.Struct({
+  data: Schema.Array(V2ThreadBackgroundTerminal),
+  nextCursor: Schema.optionalKey(
+    Schema.Union([
+      Schema.String.annotate({
+        description:
+          "Opaque cursor to pass to the next call to continue after the last item. If None, there are no more items to return.",
+      }),
+      Schema.Null,
+    ]),
+  ),
+}).annotate({ title: "ThreadBackgroundTerminalsListResponse" });
+export type V2ThreadBackgroundTerminalsTerminateResponse = { readonly terminated: boolean };
+export const V2ThreadBackgroundTerminalsTerminateResponse = Schema.Struct({
+  terminated: Schema.Boolean,
+}).annotate({ title: "ThreadBackgroundTerminalsTerminateResponse" });
 export type V2ThreadCompactStartResponse = { readonly [x: string]: Schema.Json };
 export const V2ThreadCompactStartResponse = Schema.Record(
   Schema.String,
