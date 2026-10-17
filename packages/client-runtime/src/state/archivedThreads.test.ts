@@ -35,6 +35,12 @@ const thread = (
   deletedAt: null,
   latestRunCompletedAt: null,
   lastVisitedAt: null,
+  settledOverride: null,
+  settledAt: null,
+  unsettledAt: null,
+  pinnedAt: null,
+  pinOrderKey: null,
+  activeOrderKey: null,
   ...overrides,
 });
 
