@@ -174,6 +174,7 @@ describe("Chat with Codex in a thread", () => {
             projectId: FILE_CREATE_IDS.projectId,
             title: "New thread",
             modelSelection: { instanceId: "codex", model: CODEX_FILE_CREATE_SCENARIO.model },
+            runtimeMode: "full-access",
           }),
         );
 

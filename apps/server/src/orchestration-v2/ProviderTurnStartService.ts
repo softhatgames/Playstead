@@ -29,9 +29,9 @@ import * as ProviderSessionManager from "./ProviderSessionManager.ts";
 import * as RunExecutionService from "./RunExecutionService.ts";
 
 /**
- * Every thread runs in Full access with the default interaction mode, in its
- * project's folder (T3 Code's `RuntimePolicyV2.resolve` at 2577baf, with
- * nothing to choose).
+ * A turn runs in its thread's runtime mode, with the default interaction
+ * mode, in its project's folder (T3 Code's `RuntimePolicyV2.resolve` at
+ * 2577baf, without project or instance overrides).
  */
 const resolveRuntimePolicy = (
   thread: OrchestrationV2AppThread,
@@ -194,6 +194,15 @@ const make = Effect.gen(function* () {
         .pipe(Effect.result);
       if (opened._tag === "Failure") return yield* fail(opened.failure.message);
       const { session } = opened.success;
+      // A new session replaces the thread's earlier one, closed when it opened.
+      const replacedSessions = opened.success.opened
+        ? projection.providerSessions.filter(
+            (candidate) =>
+              candidate.id !== session.providerSession.id &&
+              candidate.status !== "stopped" &&
+              candidate.status !== "error",
+          )
+        : [];
 
       const readyThread = yield* session.ensureThread({ providerThread }).pipe(Effect.result);
       if (readyThread._tag === "Failure") return yield* fail(readyThread.failure.message);
@@ -237,6 +246,11 @@ const make = Effect.gen(function* () {
       const stillStarting = yield* eventSink.writeIfRunStatus(
         { runId: run.id, statuses: STARTING },
         [
+          ...replacedSessions.map((replaced): EventSink.NewDomainEvent => ({
+            ...base,
+            type: "provider-session.updated",
+            payload: { ...replaced, status: "stopped", updatedAt: now },
+          })),
           { ...base, type: "provider-session.updated", payload: records.providerSession },
           { ...base, type: "provider-thread.updated", payload: records.providerThread },
           { ...base, type: "provider-turn.updated", payload: records.providerTurn },
