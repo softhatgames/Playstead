@@ -5,7 +5,7 @@ import type {
 } from "@playstead/contracts/orchestrationV2";
 import { type KeyboardEvent, useState } from "react";
 
-import { ArrowUpIcon } from "../icons.tsx";
+import { ArrowUpIcon, WifiOffIcon } from "../icons.tsx";
 import { canChooseModel, type ComposerAction, type ModelPickerEntry } from "./composer.logic.ts";
 import { ComposerPendingUserInputPanel } from "./ComposerPendingUserInputPanel.tsx";
 import type { PendingUserInput } from "./pendingUserInput.logic.ts";
@@ -24,12 +24,17 @@ const errorMessage = (cause: unknown, fallback: string) =>
  * **Interrupt**, and once pressed the composer says the run is stopping. A
  * question the provider waits on shows above it, in the pending user-input
  * panel, the oldest first (T3 Code's `ChatComposer` renders it there too).
+ * While the server is unavailable typing goes on but nothing is sent or
+ * interrupted, and a banner attached to the composer can say why.
  */
 export function ChatComposer(props: {
   readonly entries: ReadonlyArray<ModelPickerEntry>;
   readonly selection: ModelSelection | undefined;
   readonly onSelectModel: (selection: ModelSelection) => void | Promise<void>;
   readonly action: ComposerAction;
+  /** The server is not connected, so nothing can reach it. */
+  readonly unavailable: boolean;
+  readonly banner: string | undefined;
   readonly onSend: (text: string) => Promise<void>;
   readonly onInterrupt: (
     runId: Extract<ComposerAction, { kind: "interrupt" }>["runId"],
@@ -46,7 +51,11 @@ export function ChatComposer(props: {
   const [interrupting, setInterrupting] = useState(false);
   const [error, setError] = useState<string | undefined>(undefined);
   const canSend =
-    text.trim().length > 0 && action.kind === "send" && !sending && props.selection !== undefined;
+    text.trim().length > 0 &&
+    action.kind === "send" &&
+    !sending &&
+    !props.unavailable &&
+    props.selection !== undefined;
 
   const interrupt = async (runId: Extract<ComposerAction, { kind: "interrupt" }>["runId"]) => {
     setInterrupting(true);
@@ -104,7 +113,16 @@ export function ChatComposer(props: {
           {error}
         </p>
       )}
-      <div className="rounded-2xl border border-neutral-200 bg-white p-2 shadow-sm dark:border-neutral-800 dark:bg-neutral-900">
+      {props.banner === undefined ? null : (
+        <div
+          role="status"
+          className="-mb-4 flex items-center gap-2 rounded-t-2xl border border-amber-300/60 bg-amber-50 px-3 pt-2 pb-6 text-xs text-amber-900 dark:border-amber-500/30 dark:bg-amber-950/40 dark:text-amber-200"
+        >
+          <WifiOffIcon className="size-3.5 shrink-0" />
+          <span>{props.banner}</span>
+        </div>
+      )}
+      <div className="relative rounded-2xl border border-neutral-200 bg-white p-2 shadow-sm dark:border-neutral-800 dark:bg-neutral-900">
         <textarea
           aria-label="Message"
           rows={3}
@@ -122,7 +140,10 @@ export function ChatComposer(props: {
             onSelect={(selection) => void selectModel(selection)}
           />
           {action.kind === "interrupt" ? (
-            <InterruptButton disabled={interrupting} onClick={() => void interrupt(action.runId)} />
+            <InterruptButton
+              disabled={interrupting || props.unavailable}
+              onClick={() => void interrupt(action.runId)}
+            />
           ) : action.kind === "interrupting" ? (
             <span className="px-2 text-xs text-neutral-500 dark:text-neutral-400">
               Interrupting…

@@ -1,8 +1,13 @@
+import type { ThreadId } from "@playstead/contracts/baseSchemas";
 import type {
+  OrchestrationThreadNotFoundError,
   OrchestrationV2DomainEvent,
   OrchestrationV2ThreadProjection,
   OrchestrationV2ThreadStreamItem,
 } from "@playstead/contracts/orchestrationV2";
+import * as Stream from "effect/Stream";
+
+import type { LocalConnection } from "../connection/local.ts";
 
 /** One thread as the thread view holds it: its projection and the last event folded in. */
 export interface ThreadState {
@@ -77,3 +82,36 @@ export const applyThreadStreamItem = (
   if (state === undefined || item.sequence <= state.sequence) return state;
   return { sequence: item.sequence, projection: applyEvent(state.projection, item.event) };
 };
+
+/**
+ * One thread, followed through the connection dropping and coming back,
+ * after T3 Code's thread store (`packages/client-runtime/src/state/threads.ts`
+ * at a9c9c7c): while the server is away the last state stays, and each new
+ * session subscribes again, its snapshot replacing what was held. Only a
+ * thread the server does not have ends it.
+ */
+export const followThread = (
+  connection: Pick<LocalConnection, "changes" | "stream">,
+  threadId: ThreadId,
+): Stream.Stream<ThreadState, OrchestrationThreadNotFoundError> =>
+  connection.changes.pipe(
+    Stream.map((state) => state.phase === "connected"),
+    Stream.changes,
+    Stream.switchMap((connected) =>
+      connected
+        ? connection
+            .stream((client) => client["orchestration.subscribeThread"]({ threadId }))
+            .pipe(
+              // The session closed under it; the next one subscribes again.
+              Stream.catch((error) =>
+                error._tag === "OrchestrationThreadNotFoundError"
+                  ? Stream.fail(error)
+                  : Stream.empty,
+              ),
+            )
+        : Stream.empty,
+    ),
+    Stream.scan((): ThreadState | undefined => undefined, applyThreadStreamItem),
+    Stream.filter((state): state is ThreadState => state !== undefined),
+    Stream.changes,
+  );
