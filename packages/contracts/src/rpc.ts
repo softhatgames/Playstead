@@ -28,6 +28,11 @@ import {
   ServerProviderUpdatedPayload,
 } from "./server.ts";
 import { ServerSettings, ServerSettingsError, ServerSettingsPatch } from "./settings.ts";
+import {
+  OrchestrationSearchThreadsError,
+  OrchestrationSearchThreadsInput,
+  OrchestrationSearchThreadsResult,
+} from "./threadSearch.ts";
 
 export const WS_METHODS = {
   serverGetConfig: "server.getConfig",
@@ -109,6 +114,13 @@ const WsOrchestrationSubscribeArchivedShellRpc = Rpc.make(
   { payload: Schema.Struct({}), success: OrchestrationV2ArchivedShellStreamItem, stream: true },
 );
 
+/** The sidebar's and the palette's thread search over what was said in active threads. */
+const WsOrchestrationSearchThreadsRpc = Rpc.make(ORCHESTRATION_V2_WS_METHODS.searchThreads, {
+  payload: OrchestrationSearchThreadsInput,
+  success: OrchestrationSearchThreadsResult,
+  error: OrchestrationSearchThreadsError,
+});
+
 /** Sends an orchestration command; the result is the last event it produced. */
 const WsOrchestrationDispatchCommandRpc = Rpc.make(ORCHESTRATION_V2_WS_METHODS.dispatchCommand, {
   payload: OrchestrationV2Command,
@@ -140,6 +152,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsOrchestrationSubscribeShellRpc,
   WsOrchestrationGetArchivedShellSnapshotRpc,
   WsOrchestrationSubscribeArchivedShellRpc,
+  WsOrchestrationSearchThreadsRpc,
   WsOrchestrationDispatchCommandRpc,
   WsOrchestrationSubscribeThreadRpc,
 );

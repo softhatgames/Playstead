@@ -3,13 +3,14 @@ import * as NodeSocket from "@effect/platform-node/NodeSocket";
 import { assert, describe, it } from "@effect/vitest";
 import { applyArchivedShellStreamItem } from "@playstead/client-runtime/state/archivedThreads";
 import type { LocalConnection } from "@playstead/client-runtime/connection";
-import { CommandId, ProjectId, ThreadId } from "@playstead/contracts/baseSchemas";
+import { CommandId, MessageId, ProjectId, ThreadId } from "@playstead/contracts/baseSchemas";
 import type {
   OrchestrationV2ArchivedShellSnapshot,
   OrchestrationV2Command,
   OrchestrationV2ThreadShell,
 } from "@playstead/contracts/orchestrationV2";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -233,6 +234,68 @@ describe("archive and delete over RPC", () => {
               thread.settledAt !== null &&
               thread.pinnedAt === null,
           );
+        }).pipe(Effect.scoped),
+    );
+
+    it.effect(
+      "searching threads finds what the person said, and refuses a query under two characters",
+      () =>
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const server = yield* startTestServer();
+          const folder = path.join(server.config.baseDir, "space-game");
+          yield* fs.makeDirectory(folder);
+          const { connection } = yield* connectSignedIn(server);
+          const projectId = ProjectId.make("project:space-game");
+          const threadId = ThreadId.make("thread:searched");
+          const dispatch = (command: OrchestrationV2Command) =>
+            connection.request((client) => client["orchestration.dispatchCommand"](command));
+          yield* connection.request((client) =>
+            client["projects.mutate"]({
+              type: "project.create",
+              commandId: CommandId.make("command:space-game"),
+              projectId,
+              title: "space-game",
+              workspaceRoot: folder,
+            }),
+          );
+          yield* dispatch({
+            type: "thread.create",
+            commandId: CommandId.make("command:create"),
+            threadId,
+            projectId,
+            title: "New thread",
+            modelSelection: { instanceId: "claudeAgent", model: "claude-haiku-5-5" },
+          });
+          yield* dispatch({
+            type: "message.dispatch",
+            commandId: CommandId.make("command:message"),
+            threadId,
+            messageId: MessageId.make("message:searched:1"),
+            text: "Add an asteroid belt",
+          });
+
+          const result = yield* connection.request((client) =>
+            client["orchestration.searchThreads"]({ query: "  ASTEROID  " }),
+          );
+          assert.deepStrictEqual(
+            result.matches.map((match) => [
+              match.threadId,
+              match.projectId,
+              match.source,
+              match.snippet,
+            ]),
+            [[threadId, projectId, "user", "Add an asteroid belt"]],
+          );
+          assert.isNotNull(result.matches[0]?.messageCreatedAt);
+
+          // The contract bounds the query, so the client refuses it before sending.
+          const refused = yield* Effect.exit(
+            connection.request((client) => client["orchestration.searchThreads"]({ query: " a " })),
+          );
+          assert.isTrue(Exit.isFailure(refused));
+          assert.include(String(refused), "Expected a value with a length of at least 2");
         }).pipe(Effect.scoped),
     );
   });

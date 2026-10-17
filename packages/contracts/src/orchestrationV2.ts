@@ -40,6 +40,7 @@ import { ProviderDriverKind, ProviderInstanceId } from "./providerInstance.ts";
 export const ORCHESTRATION_V2_WS_METHODS = {
   dispatchCommand: "orchestration.dispatchCommand",
   getArchivedShellSnapshot: "orchestration.getArchivedShellSnapshot",
+  searchThreads: "orchestration.searchThreads",
   subscribeArchivedShell: "orchestration.subscribeArchivedShell",
   subscribeShell: "orchestration.subscribeShell",
   subscribeThread: "orchestration.subscribeThread",

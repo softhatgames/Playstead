@@ -21,6 +21,7 @@ import * as Orchestrator from "../Orchestrator.ts";
 import * as ProviderAdapterRegistry from "../ProviderAdapterRegistry.ts";
 import * as ProviderRuntimeRecoveryService from "../ProviderRuntimeRecoveryService.ts";
 import * as ThreadSettlementService from "../ThreadSettlementService.ts";
+import * as ThreadSearch from "../ThreadSearch.ts";
 import * as OrchestrationRuntime from "../runtimeLayer.ts";
 
 /** Text generation that never improves on the seed, for tests about other things. */
@@ -117,6 +118,7 @@ export const makeOrchestrationHarness = Effect.fn("makeOrchestrationHarness")(fu
     recovery: ProviderRuntimeRecoveryService.ProviderRuntimeRecoveryService,
     settlement: ThreadSettlementService.ThreadSettlementService,
     settings: ServerSettings.ServerSettingsService,
+    threadSearch: ThreadSearch.ThreadSearch,
   }).pipe(Effect.provideContext(context));
   if (input.recoverOnStartup === true) yield* services.recovery.recover;
 
