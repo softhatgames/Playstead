@@ -8,8 +8,8 @@ import {
 } from "@playstead/contracts/baseSchemas";
 import {
   OrchestrationDispatchCommandError,
-  type OrchestrationV2Command,
   type OrchestrationV2DispatchCommandResult,
+  type OrchestrationV2ServerCommand,
   type OrchestrationV2ThreadProjection,
 } from "@playstead/contracts/orchestrationV2";
 import * as KeyedLock from "@playstead/shared/keyedLock";
@@ -51,8 +51,9 @@ export class OrchestratorDispatchError extends Schema.TaggedError<OrchestratorDi
 export class OrchestratorV2 extends Context.Service<
   OrchestratorV2,
   {
+    /** Clients' commands, and the server's own internal ones. */
     readonly dispatch: (
-      command: OrchestrationV2Command,
+      command: OrchestrationV2ServerCommand,
     ) => Effect.Effect<
       OrchestrationV2DispatchCommandResult,
       OrchestrationDispatchCommandError | OrchestratorDispatchError
@@ -88,7 +89,7 @@ const make = Effect.gen(function* () {
   });
 
   const toOutcome = (
-    command: OrchestrationV2Command,
+    command: OrchestrationV2ServerCommand,
     receipt: CommandReceiptStore.CommandReceiptV2,
   ): Effect.Effect<OrchestrationV2DispatchCommandResult, OrchestrationDispatchCommandError> => {
     if (receipt.threadId !== command.threadId || receipt.commandType !== command.type) {
@@ -109,7 +110,7 @@ const make = Effect.gen(function* () {
         );
   };
 
-  const decideAndCommit = (command: OrchestrationV2Command) =>
+  const decideAndCommit = (command: OrchestrationV2ServerCommand) =>
     Effect.gen(function* () {
       const previous = yield* receipts.getByCommandId(command.commandId);
       if (Option.isSome(previous)) return previous.value;
@@ -155,7 +156,7 @@ const make = Effect.gen(function* () {
       return receipt;
     });
 
-  const dispatch = (command: OrchestrationV2Command) =>
+  const dispatch = (command: OrchestrationV2ServerCommand) =>
     threadLocks.withLock(command.threadId, decideAndCommit(command)).pipe(
       Effect.mapError(
         (cause) => new OrchestratorDispatchError({ commandId: command.commandId, cause }),

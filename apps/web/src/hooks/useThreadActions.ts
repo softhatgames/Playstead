@@ -17,7 +17,7 @@ import { readLocalApi } from "../localApi.ts";
 /** The thread an action is for: from the sidebar's shell, the archive, or the thread view. */
 export type ThreadActionTarget = Pick<
   OrchestrationV2ThreadShell,
-  "id" | "projectId" | "title" | "status"
+  "id" | "projectId" | "title" | "status" | "titleRegeneration"
 >;
 
 const dispatchThreadCommand = (
@@ -40,6 +40,20 @@ export const renameThread = (threadId: ThreadId, title: string) =>
       commandId: CommandId.make(`command:${newId()}`),
       threadId,
       title,
+    }),
+  );
+
+/**
+ * Has the **Text generation** provider write the thread a new title from its
+ * conversation (T3 Code's `thread.metadata.update {regenerateTitle: true}`).
+ */
+export const regenerateThreadTitle = (threadId: ThreadId) =>
+  requestPrimary((client) =>
+    client["orchestration.dispatchCommand"]({
+      type: "thread.metadata.update",
+      commandId: CommandId.make(`command:${newId()}`),
+      threadId,
+      regenerateTitle: true,
     }),
   );
 

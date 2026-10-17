@@ -25,6 +25,7 @@ import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
 import * as ServerOwnership from "./serverOwnership.ts";
 import * as ServerSettings from "./serverSettings.ts";
 import * as ServerRuntimeStartup from "./serverRuntimeStartup.ts";
+import * as TextGeneration from "./textGeneration/TextGeneration.ts";
 import * as WorkspacePaths from "./workspace/WorkspacePaths.ts";
 import * as Ws from "./ws.ts";
 
@@ -86,7 +87,9 @@ const layerOrchestration = Layer.mergeAll(
   ProviderRuntimeRecovery.layer,
   ProjectService.layer.pipe(Layer.provide(WorkspacePaths.layer)),
 ).pipe(
-  Layer.provide(ProviderAdapterRegistry.layerFromProviderRegistry),
+  Layer.provide(
+    Layer.mergeAll(ProviderAdapterRegistry.layerFromProviderRegistry, TextGeneration.layer),
+  ),
   Layer.provideMerge(OrchestrationRuntime.layer),
 );
 
