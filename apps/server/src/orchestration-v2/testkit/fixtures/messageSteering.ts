@@ -7,6 +7,7 @@ import {
 } from "@playstead/contracts/baseSchemas";
 import type {
   MessageDispatchMode,
+  OrchestrationDispatchCommandError,
   OrchestrationV2Command,
   OrchestrationV2DomainEvent,
   OrchestrationV2Run,
@@ -18,6 +19,7 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Stream from "effect/Stream";
 
+import type * as Orchestrator from "../../Orchestrator.ts";
 import type { makeOrchestrationHarness } from "../OrchestratorHarness.ts";
 
 /**
@@ -139,6 +141,16 @@ export interface MessageSteeringVariant {
   readonly steerBy: "message" | "promotion";
   /** When the late steer is sent: while the server still shows three's turn running, or after it ended. */
   readonly lateSteer: "while_shown_running" | "after_ended";
+  /**
+   * What the person does to the thread while one's command runs, before two
+   * steers it (snoozing it, say). It must not reach the provider.
+   */
+  readonly beforeSteer?: (
+    harness: Harness,
+  ) => Effect.Effect<
+    void,
+    OrchestrationDispatchCommandError | Orchestrator.OrchestratorDispatchError
+  >;
 }
 
 /** How the recorders run it. */
@@ -204,6 +216,7 @@ export const runMessageSteeringScenario = (
         event.payload.type === "command_execution" &&
         event.payload.status === "running",
     );
+    if (variant.beforeSteer !== undefined) yield* variant.beforeSteer(harness);
     if (variant.steerBy === "message") {
       yield* send(2, scenario.prompts.steer, STEER);
     } else {

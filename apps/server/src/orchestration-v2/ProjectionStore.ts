@@ -15,6 +15,7 @@ import {
   type OrchestrationV2ThreadProjection,
   type OrchestrationV2ThreadShell,
   OrchestrationV2TurnItem,
+  QUEUED_RUN_STATUSES,
 } from "@playstead/contracts/orchestrationV2";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -231,7 +232,9 @@ export class ProjectionStoreV2 extends Context.Service<
      * The threads automatic settlement may settle, least recently updated
      * first, or only the one given (T3 Code's `getSettlementCandidates`):
      * not deleted, archived, settled or un-settled, pinned or opted out, with
-     * no run active and nothing waiting on the person.
+     * no run active or queued and nothing waiting on the person. T3 Code
+     * leaves a thread with queued runs to its settle guard, which refuses it;
+     * leaving it out here keeps the sweep from asking every minute.
      */
     readonly getSettlementCandidates: (
       threadId?: ThreadId,
@@ -435,7 +438,10 @@ const make = Effect.gen(function* () {
           AND NOT EXISTS (
             SELECT 1 FROM orchestration_v2_projection_runs run
             WHERE run.thread_id = t.thread_id
-              AND json_extract(run.payload_json, '$.status') IN ${sql.in([...ACTIVE_RUN_STATUSES])}
+              AND json_extract(run.payload_json, '$.status') IN ${sql.in([
+                ...ACTIVE_RUN_STATUSES,
+                ...QUEUED_RUN_STATUSES,
+              ])}
           )
           AND NOT EXISTS (
             SELECT 1 FROM orchestration_v2_projection_runtime_requests request
