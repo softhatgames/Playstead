@@ -9,7 +9,7 @@ import {
   type OrchestrationV2ThreadProjection,
 } from "@playstead/contracts/orchestrationV2";
 import { modelSelectionsEqual } from "@playstead/shared/model";
-import { latestExecutedRun } from "@playstead/shared/orchestrationRuns";
+import { latestExecutedRun } from "@playstead/shared/orchestrationV2ThreadError";
 import * as Result from "effect/Result";
 
 import { decideMessageDispatch, resolveMessageDispatchIntent } from "./CommandPolicy.ts";

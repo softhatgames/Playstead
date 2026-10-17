@@ -33,7 +33,8 @@ import {
   ListPlusIcon,
   PlayIcon,
 } from "../icons.tsx";
-import { ComposerPlanFollowUpBanner, ComposerTasksBadge } from "./ComposerPlanBanners.tsx";
+import { ComposerPlanFollowUpBanner } from "./ComposerPlanFollowUpBanner.tsx";
+import { ComposerTasksBadge } from "./ComposerTasksBadge.tsx";
 import { InteractionModeToggle } from "./InteractionModeToggle.tsx";
 import {
   canChooseModel,

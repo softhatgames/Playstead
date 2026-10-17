@@ -14,7 +14,7 @@ import * as Path from "effect/Path";
  * its folders are made as needed. The result names the file as a relative
  * path with forward slashes.
  */
-export const writeFile = Effect.fn("WorkspaceFiles.writeFile")(function* (
+export const writeFile = Effect.fn("WorkspaceFileSystem.writeFile")(function* (
   input: ProjectWriteFileInput,
 ) {
   const fs = yield* FileSystem.FileSystem;

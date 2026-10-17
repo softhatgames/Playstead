@@ -5,9 +5,9 @@ import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 
 import { makeTempHome } from "../testUtils/testServer.ts";
-import * as WorkspaceFiles from "./WorkspaceFiles.ts";
+import * as WorkspaceFileSystem from "./WorkspaceFileSystem.ts";
 
-describe("WorkspaceFiles.writeFile", () => {
+describe("WorkspaceFileSystem.writeFile", () => {
   it.layer(NodeServices.layer)((it) => {
     it.effect("writes a file inside the project, making its folders", () =>
       Effect.gen(function* () {
@@ -15,7 +15,7 @@ describe("WorkspaceFiles.writeFile", () => {
         const path = yield* Path.Path;
         const root = yield* makeTempHome;
 
-        const result = yield* WorkspaceFiles.writeFile({
+        const result = yield* WorkspaceFileSystem.writeFile({
           cwd: root,
           relativePath: "plans/write-hello.md",
           contents: "# Write hello\n",
@@ -37,7 +37,11 @@ describe("WorkspaceFiles.writeFile", () => {
         yield* fs.makeDirectory(root);
 
         const refused = yield* Effect.flip(
-          WorkspaceFiles.writeFile({ cwd: root, relativePath: "../outside.md", contents: "x" }),
+          WorkspaceFileSystem.writeFile({
+            cwd: root,
+            relativePath: "../outside.md",
+            contents: "x",
+          }),
         );
 
         assert.strictEqual(refused.message, "../outside.md is not inside the project's folder.");
@@ -52,7 +56,7 @@ describe("WorkspaceFiles.writeFile", () => {
         const absolute = path.resolve(path.sep, "elsewhere", "plan.md");
 
         const refused = yield* Effect.flip(
-          WorkspaceFiles.writeFile({ cwd: root, relativePath: absolute, contents: "x" }),
+          WorkspaceFileSystem.writeFile({ cwd: root, relativePath: absolute, contents: "x" }),
         );
 
         assert.strictEqual(refused.message, `${absolute} is not inside the project's folder.`);

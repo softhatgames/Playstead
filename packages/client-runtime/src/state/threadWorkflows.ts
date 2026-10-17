@@ -3,7 +3,7 @@ import {
   type OrchestrationV2Run,
   type OrchestrationV2ThreadProjection,
 } from "@playstead/contracts/orchestrationV2";
-import { latestExecutedRun } from "@playstead/shared/orchestrationRuns";
+import { latestExecutedRun } from "@playstead/shared/orchestrationV2ThreadError";
 
 type Projection = Pick<OrchestrationV2ThreadProjection, "runs" | "messages"> &
   Partial<Pick<OrchestrationV2ThreadProjection, "providerTurns">>;

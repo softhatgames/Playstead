@@ -1,7 +1,9 @@
 /**
  * Which of a thread's runs ran last (T3 Code's `latestExecutedRun` and
  * `runRanAfter` in `packages/shared/src/orchestrationV2ThreadError.ts` at
- * 2577baf). Typed by shape, as the contracts depend on this package.
+ * 2577baf, the module's only part Playstead needs so far; its thread error
+ * summaries are not here yet). Typed by shape, as the contracts depend on
+ * this package.
  */
 interface RunShape {
   readonly ordinal: number;
