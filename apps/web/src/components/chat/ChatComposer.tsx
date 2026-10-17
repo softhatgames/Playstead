@@ -1,8 +1,14 @@
-import type { ModelSelection } from "@playstead/contracts/orchestrationV2";
+import type { RuntimeRequestId } from "@playstead/contracts/baseSchemas";
+import type {
+  ModelSelection,
+  ProviderUserInputAnswers,
+} from "@playstead/contracts/orchestrationV2";
 import { type KeyboardEvent, useState } from "react";
 
 import { ArrowUpIcon } from "../icons.tsx";
 import type { ComposerAction, ModelPickerEntry } from "./composer.logic.ts";
+import { ComposerPendingUserInputPanel } from "./ComposerPendingUserInputPanel.tsx";
+import type { PendingUserInput } from "./pendingUserInput.logic.ts";
 import { ProviderModelPicker } from "./ProviderModelPicker.tsx";
 
 const errorMessage = (cause: unknown, fallback: string) =>
@@ -15,7 +21,9 @@ const errorMessage = (cause: unknown, fallback: string) =>
  * `ComposerPrimaryActions.tsx` at 2577baf without rich text, attachments,
  * chips, commands, the queue or steering. Enter sends and Shift+Enter starts
  * a new line. While a run is active nothing can be sent: the one action is
- * **Interrupt**, and once pressed the composer says the run is stopping.
+ * **Interrupt**, and once pressed the composer says the run is stopping. A
+ * question the provider waits on shows above it, in the pending user-input
+ * panel, the oldest first (T3 Code's `ChatComposer` renders it there too).
  */
 export function ChatComposer(props: {
   readonly entries: ReadonlyArray<ModelPickerEntry>;
@@ -25,6 +33,11 @@ export function ChatComposer(props: {
   readonly onSend: (text: string) => Promise<void>;
   readonly onInterrupt: (
     runId: Extract<ComposerAction, { kind: "interrupt" }>["runId"],
+  ) => Promise<void>;
+  readonly pendingUserInput: PendingUserInput | undefined;
+  readonly onRespondToUserInput: (
+    requestId: RuntimeRequestId,
+    answers: ProviderUserInputAnswers,
   ) => Promise<void>;
 }) {
   const { action } = props;
@@ -79,6 +92,13 @@ export function ChatComposer(props: {
 
   return (
     <div className="mx-auto w-full max-w-3xl px-6 pb-6">
+      {props.pendingUserInput === undefined ? null : (
+        <ComposerPendingUserInputPanel
+          key={props.pendingUserInput.requestId}
+          pending={props.pendingUserInput}
+          onRespond={props.onRespondToUserInput}
+        />
+      )}
       {error === undefined ? null : (
         <p role="alert" className="mb-2 text-xs text-red-700 dark:text-red-400">
           {error}

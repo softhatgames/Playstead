@@ -1,6 +1,8 @@
 import {
+  type ProviderSessionId,
   type ProviderTurnId,
   type RunId,
+  type RuntimeRequestId,
   type ThreadId,
   TurnItemId,
 } from "@playstead/contracts/baseSchemas";
@@ -15,8 +17,10 @@ import {
   type OrchestrationV2RunAttempt,
   type OrchestrationV2ThreadProjection,
   type OrchestrationV2TurnItem,
+  type ProviderUserInputAnswers,
 } from "@playstead/contracts/orchestrationV2";
 import type {
+  ProviderAdapterV2Error,
   ProviderAdapterV2Event,
   ProviderAdapterV2SessionRuntime,
   ProviderAdapterV2TurnInput,
@@ -28,6 +32,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
+import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
 import type { EventSinkWriteError } from "./EventSink.ts";
@@ -63,6 +68,8 @@ const ingestProviderEvent = (
       return [{ ...base, type: "node.updated", payload: event.node }];
     case "turn_item.updated":
       return itemEvents(event.turnItem, base, now);
+    case "runtime_request.updated":
+      return [{ ...base, type: "runtime-request.updated", payload: event.runtimeRequest }];
   }
 };
 
@@ -100,15 +107,58 @@ const UNFINISHED_ITEM_STATUSES: ReadonlySet<OrchestrationV2TurnItem["status"]> =
 ]);
 
 /**
- * What an interrupted run leaves settled, read from its projection: every
- * item still open ends interrupted, a streaming reply stops, and an
- * interrupt the person asked for gets its result item (T3 Code writes it
- * when the turn's terminal pairs a `run_interrupt_request`, in
- * `RunExecutionService.ts` `makeInterruptResultTurnItem`).
- *
- * #25: a question still waiting on the person belongs here too: its runtime
- * request is cancelled and its item ends, so the panel clears. T3 Code's
- * adapters leave it pending.
+ * The questions a turn leaves unanswered when it ends, however it ends:
+ * each pending runtime request is cancelled, with its node and item, so the
+ * pending user-input panel clears (T3 Code's `dismissNativeUserInputs` in
+ * `ProviderEventIngestor.ts` at 2577baf).
+ */
+const unansweredQuestionSettlement = (
+  projection: OrchestrationV2ThreadProjection,
+  run: OrchestrationV2Run,
+  providerTurnId: ProviderTurnId | null,
+  now: string,
+): ReadonlyArray<EventSink.NewDomainEvent> => {
+  const base = { threadId: run.threadId, runId: run.id, occurredAt: now };
+  return projection.runtimeRequests.flatMap((request) => {
+    if (request.status !== "pending" || request.providerTurnId !== providerTurnId) return [];
+    const node = projection.nodes.find((candidate) => candidate.id === request.nodeId);
+    const items = projection.turnItems.filter(
+      (item) => item.type === "user_input_request" && item.requestId === request.id,
+    );
+    return [
+      {
+        ...base,
+        type: "runtime-request.updated",
+        payload: { ...request, status: "cancelled", resolvedAt: now },
+      } as const,
+      ...(node === undefined
+        ? []
+        : [
+            {
+              ...base,
+              type: "node.updated",
+              payload: { ...node, status: "cancelled", completedAt: now },
+            } as const,
+          ]),
+      ...items.map(
+        (item) =>
+          ({
+            ...base,
+            type: "turn-item.updated",
+            payload: { ...item, status: "cancelled", completedAt: now, updatedAt: now },
+          }) as const,
+      ),
+    ];
+  });
+};
+
+/**
+ * What an interrupted run leaves settled, read from its projection: a
+ * question it waits on is cancelled, every other item still open ends
+ * interrupted, a streaming reply stops, and an interrupt the person asked
+ * for gets its result item (T3 Code writes it when the turn's terminal
+ * pairs a `run_interrupt_request`, in `RunExecutionService.ts`
+ * `makeInterruptResultTurnItem`).
  */
 const interruptedRunSettlement = (
   projection: OrchestrationV2ThreadProjection,
@@ -117,8 +167,10 @@ const interruptedRunSettlement = (
   now: string,
 ): ReadonlyArray<EventSink.NewDomainEvent> => {
   const base = { threadId: run.threadId, runId: run.id, occurredAt: now };
+  const questions = unansweredQuestionSettlement(projection, run, providerTurnId, now);
   const open = projection.turnItems.flatMap((item) => {
     if (item.runId !== run.id || !UNFINISHED_ITEM_STATUSES.has(item.status)) return [];
+    if (item.type === "user_input_request") return [];
     const ended = { ...item, status: "interrupted" as const, completedAt: now, updatedAt: now };
     return itemEvents(
       ended.type === "assistant_message" ? { ...ended, streaming: false } : ended,
@@ -141,7 +193,7 @@ const interruptedRunSettlement = (
         },
       ]
     : [];
-  return [...open, ...result];
+  return [...questions, ...open, ...result];
 };
 
 /**
@@ -316,8 +368,29 @@ export class RunExecutionServiceV2 extends Context.Service<
       readonly runId: RunId;
       readonly providerTurnId: ProviderTurnId;
     }) => Effect.Effect<void, EventSinkWriteError | ProjectionStore.ProjectionStoreV2Error>;
+    /**
+     * The effect worker's `runtime-request.respond` (T3 Code's
+     * `RuntimeRequestServiceV2.respond`): gives the run's live session the
+     * person's answers. Fails when the session that asked is gone.
+     */
+    readonly respondToRuntimeRequest: (input: {
+      readonly runId: RunId;
+      readonly providerSessionId: ProviderSessionId;
+      readonly requestId: RuntimeRequestId;
+      readonly answers: ProviderUserInputAnswers;
+    }) => Effect.Effect<void, ProviderAdapterV2Error | RuntimeRequestResponseError>;
   }
 >()("@playstead/server/orchestration-v2/RunExecutionService/RunExecutionServiceV2") {}
+
+/** The answers have nowhere to go: the session that asked is gone (T3 Code's `RuntimeRequestResponseExecutionError`). */
+export class RuntimeRequestResponseError extends Schema.TaggedError<RuntimeRequestResponseError>()(
+  "RuntimeRequestResponseError",
+  { requestId: Schema.String, detail: Schema.String },
+) {
+  override get message(): string {
+    return this.detail;
+  }
+}
 
 export const failureFrom = (detail: string): OrchestrationV2ProviderFailure => ({
   class: "provider_error",
@@ -340,14 +413,13 @@ const make = Effect.gen(function* () {
   ) =>
     Effect.gen(function* () {
       const now = yield* nowIso;
-      const settlement =
-        status === "interrupted"
-          ? Option.match(yield* projections.getThread(records.run.threadId), {
-              onNone: () => [],
-              onSome: (projection) =>
-                interruptedRunSettlement(projection, records.run, records.providerTurn.id, now),
-            })
-          : [];
+      const settlement = Option.match(yield* projections.getThread(records.run.threadId), {
+        onNone: () => [],
+        onSome: (projection) =>
+          status === "interrupted"
+            ? interruptedRunSettlement(projection, records.run, records.providerTurn.id, now)
+            : unansweredQuestionSettlement(projection, records.run, records.providerTurn.id, now),
+      });
       yield* whileActive(records.run.id, [
         ...settlement,
         ...finalRunEvents(records, status, failure, now),
@@ -476,7 +548,34 @@ const make = Effect.gen(function* () {
         );
     });
 
-  return RunExecutionServiceV2.of({ startRootRun, interruptRun });
+  const respondToRuntimeRequest = (input: {
+    readonly runId: RunId;
+    readonly providerSessionId: ProviderSessionId;
+    readonly requestId: RuntimeRequestId;
+    readonly answers: ProviderUserInputAnswers;
+  }) =>
+    Effect.suspend(
+      (): Effect.Effect<void, ProviderAdapterV2Error | RuntimeRequestResponseError> => {
+        const running = live.get(input.runId);
+        if (
+          running === undefined ||
+          running.session.providerSession.id !== input.providerSessionId
+        ) {
+          return Effect.fail(
+            new RuntimeRequestResponseError({
+              requestId: input.requestId,
+              detail: `Provider session ${input.providerSessionId} is not active for runtime request ${input.requestId}.`,
+            }),
+          );
+        }
+        return running.session.respondToRuntimeRequest({
+          requestId: input.requestId,
+          answers: input.answers,
+        });
+      },
+    );
+
+  return RunExecutionServiceV2.of({ startRootRun, interruptRun, respondToRuntimeRequest });
 });
 
 export const layer = Layer.effect(RunExecutionServiceV2, make);

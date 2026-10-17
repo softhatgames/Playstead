@@ -5,6 +5,7 @@ import type {
   ProviderTurnId,
   RunAttemptId,
   RunId,
+  RuntimeRequestId,
   ThreadId,
 } from "@playstead/contracts/baseSchemas";
 import type {
@@ -13,8 +14,10 @@ import type {
   OrchestrationV2ProviderFailure,
   OrchestrationV2ProviderSession,
   OrchestrationV2ProviderThread,
+  OrchestrationV2RuntimeRequest,
   OrchestrationV2TurnItem,
   ProviderInteractionMode,
+  ProviderUserInputAnswers,
   RuntimeMode,
 } from "@playstead/contracts/orchestrationV2";
 import { ProviderDriverKind, type ProviderInstanceId } from "@playstead/contracts/providerInstance";
@@ -29,9 +32,8 @@ import type * as Stream from "effect/Stream";
  * provider's protocol stays behind its adapter; the orchestration core sees
  * only sessions, turns and the events below.
  *
- * Trimmed to starting and interrupting turns. Steering, rollback and fork
- * are absent; runtime-request answers (#25) join this interface with their
- * ticket.
+ * Trimmed to starting and interrupting turns and answering the provider's
+ * questions. Steering, rollback, fork and approvals are absent.
  */
 
 /** Every thread runs in Full access with the default interaction mode, in its project's folder. */
@@ -75,6 +77,11 @@ export interface ProviderAdapterV2TurnInput {
 export type ProviderAdapterV2Event =
   | { readonly type: "node.updated"; readonly node: OrchestrationV2ExecutionNode }
   | { readonly type: "turn_item.updated"; readonly turnItem: OrchestrationV2TurnItem }
+  /** A question the provider waits on; its node and item come first. */
+  | {
+      readonly type: "runtime_request.updated";
+      readonly runtimeRequest: OrchestrationV2RuntimeRequest;
+    }
   | {
       readonly type: "turn.terminal";
       readonly providerTurnId: ProviderTurnId;
@@ -92,7 +99,13 @@ export class ProviderAdapterV2Error extends Schema.TaggedError<ProviderAdapterV2
   "ProviderAdapterV2Error",
   {
     driver: ProviderDriverKind,
-    operation: Schema.Literals(["open-session", "ensure-thread", "start-turn", "interrupt-turn"]),
+    operation: Schema.Literals([
+      "open-session",
+      "ensure-thread",
+      "start-turn",
+      "interrupt-turn",
+      "respond-to-runtime-request",
+    ]),
     detail: Schema.String,
     cause: Schema.optionalKey(Schema.Defect()),
   },
@@ -130,12 +143,21 @@ export interface ProviderAdapterV2SessionRuntime {
    * still ends with its `turn.terminal`, normally `interrupted`; when the
    * provider sends none within `INTERRUPT_TERMINAL_TIMEOUT`, the adapter ends
    * the turn interrupted itself, so the session can run the next one. Does
-   * nothing when the turn has already ended. An adapter that has a question
-   * waiting on the person (#25) must release it here.
+   * nothing when the turn has already ended. A question the turn waits on
+   * is released without an answer, so the provider can stop; T3 Code's
+   * adapters leave it waiting.
    */
   readonly interruptTurn: (input: {
     readonly providerThread: OrchestrationV2ProviderThread;
     readonly providerTurnId: ProviderTurnId;
+  }) => Effect.Effect<void, ProviderAdapterV2Error>;
+  /**
+   * Gives the provider the person's answers to a question it asked (T3
+   * Code's `respondToRuntimeRequest`). Fails when no such question waits.
+   */
+  readonly respondToRuntimeRequest: (input: {
+    readonly requestId: RuntimeRequestId;
+    readonly answers: ProviderUserInputAnswers;
   }) => Effect.Effect<void, ProviderAdapterV2Error>;
 }
 

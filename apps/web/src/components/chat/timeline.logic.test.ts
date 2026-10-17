@@ -1,5 +1,10 @@
 import { assert, describe, it } from "@effect/vitest";
-import { MessageId, ThreadId, TurnItemId } from "@playstead/contracts/baseSchemas";
+import {
+  MessageId,
+  RuntimeRequestId,
+  ThreadId,
+  TurnItemId,
+} from "@playstead/contracts/baseSchemas";
 import type { OrchestrationV2TurnItem } from "@playstead/contracts/orchestrationV2";
 
 import { deriveTimelineRows } from "./timeline.logic.ts";
@@ -100,6 +105,69 @@ describe("deriveTimelineRows", () => {
         ["Claude ran out of turns.", "error", false],
       ],
     );
+  });
+
+  it("shows a provider's question once, waiting, answered with what the person picked, or left unanswered", () => {
+    const question = (id: string, status: OrchestrationV2TurnItem["status"], answers?: object) =>
+      ({
+        ...base(id, 1, status),
+        type: "user_input_request",
+        requestId: RuntimeRequestId.make(`request:${id}`),
+        questions: [
+          {
+            id: "color",
+            header: "Color",
+            question: "Which color do you prefer?",
+            options: [{ label: "Blue", description: "" }],
+          },
+          {
+            id: "toppings",
+            header: "Toppings",
+            question: "Which toppings?",
+            options: [{ label: "Cheese", description: "" }],
+            multiSelect: true,
+          },
+        ],
+        ...(answers === undefined ? {} : { answers }),
+      }) as OrchestrationV2TurnItem;
+
+    const rows = deriveTimelineRows(
+      [
+        // Claude's own tool row for the question is the question row's.
+        {
+          ...base("item:ask-tool", 1, "completed"),
+          type: "dynamic_tool",
+          toolName: "AskUserQuestion",
+          input: {},
+        },
+        question("waiting", "waiting"),
+        question("answered", "completed", { color: "Blue", toppings: ["Cheese", "Olives"] }),
+        question("stopped", "cancelled"),
+      ],
+      undefined,
+    );
+
+    assert.deepStrictEqual(rows, [
+      {
+        kind: "question",
+        id: "waiting",
+        question: "Which color do you prefer? Which toppings?",
+        state: "waiting",
+      },
+      {
+        kind: "question",
+        id: "answered",
+        question: "Which color do you prefer? Which toppings?",
+        state: "answered",
+        answer: "Blue; Cheese, Olives",
+      },
+      {
+        kind: "question",
+        id: "stopped",
+        question: "Which color do you prefer? Which toppings?",
+        state: "unanswered",
+      },
+    ]);
   });
 
   it("shows an interrupt as T3 Code does: the request, the stopped work, then the run interrupted", () => {

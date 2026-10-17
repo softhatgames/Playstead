@@ -1,5 +1,7 @@
 import {
+  type CanUseTool,
   type Options as ClaudeQueryOptions,
+  type PermissionResult,
   query,
   type SDKAssistantMessage,
   type SDKMessage,
@@ -7,12 +9,20 @@ import {
   type SDKResultMessage,
   type SDKUserMessage,
 } from "@anthropic-ai/claude-agent-sdk";
-import { MessageId, NodeId, type ThreadId, TurnItemId } from "@playstead/contracts/baseSchemas";
+import {
+  MessageId,
+  NodeId,
+  RuntimeRequestId,
+  type ThreadId,
+  TurnItemId,
+} from "@playstead/contracts/baseSchemas";
 import type {
   ModelSelection,
   OrchestrationV2ExecutionNode,
   OrchestrationV2ProviderFailure,
   OrchestrationV2TurnItem,
+  OrchestrationV2UserInputQuestion,
+  ProviderUserInputAnswers,
   RuntimeMode,
 } from "@playstead/contracts/orchestrationV2";
 import type { ProviderInstanceId } from "@playstead/contracts/providerInstance";
@@ -65,8 +75,15 @@ import { resolveClaudeSdkExecutablePath } from "../../provider/Drivers/ClaudeExe
  *   `INTERRUPT_TERMINAL_TIMEOUT` without one. Unlike T3 Code, the query is
  *   not closed, so the thread's next message continues the same session.
  *
- * Absent until their tickets: `canUseTool` and `AskUserQuestion` (#25); and,
- * as in the slice as a whole, thinking, MCP, subagents, attachments and usage.
+ * - `AskUserQuestion` reaches the person as a user-input request, as T3
+ *   Code's `canUseTool` routes it: Claude Code asks `canUseTool` for it even
+ *   under `bypassPermissions` (Claude 2.1.301, SDK 0.3.276; the SDK's
+ *   warning that `canUseTool` is never called is wrong for this tool). The
+ *   answers go back as the tool's `answers`; an interrupt releases the
+ *   question unanswered. Every other tool is allowed.
+ *
+ * Absent, as in the slice as a whole: approvals, thinking, MCP, subagents,
+ * attachments and usage.
  */
 
 export type ClaudeAgentSdkQueryOptions = ClaudeQueryOptions;
@@ -181,8 +198,8 @@ const permissionModeForRuntimeMode = (runtimeMode: RuntimeMode) => {
 /**
  * The options a session's query opens with (T3 Code's `makeClaudeQueryOptions`):
  * Claude Code's own tools and system prompt, partial messages, the session id
- * the thread will keep (or resumes), and the person's `claude` with the server's
- * environment, in the project's folder.
+ * the thread will keep (or resumes), the permission callback, and the
+ * person's `claude` with the server's environment, in the project's folder.
  */
 const makeClaudeQueryOptions = (input: {
   readonly modelSelection: ModelSelection;
@@ -193,6 +210,7 @@ const makeClaudeQueryOptions = (input: {
   readonly cwd: string;
   readonly executablePath: string;
   readonly environment: ProcessEnvironment;
+  readonly canUseTool: CanUseTool;
 }): ClaudeAgentSdkQueryOptions => ({
   model: input.modelSelection.model,
   tools: { type: "preset", preset: "claude_code" },
@@ -204,6 +222,7 @@ const makeClaudeQueryOptions = (input: {
   additionalDirectories: [input.cwd],
   pathToClaudeCodeExecutable: input.executablePath,
   env: { ...input.environment },
+  canUseTool: input.canUseTool,
 });
 
 /**
@@ -255,6 +274,53 @@ const resultAnswers = (result: SDKResultMessage, promptUuid: string) => {
   if (uuids !== undefined) return uuids.includes(promptUuid);
   return result.result_index === undefined;
 };
+
+/**
+ * `AskUserQuestion`'s questions (T3 Code's `claudeUserInputQuestions`): the
+ * question's text is its id, which Claude's answers are keyed by.
+ */
+const claudeUserInputQuestions = (
+  input: Record<string, unknown>,
+): ReadonlyArray<OrchestrationV2UserInputQuestion> => {
+  const questions: unknown = input["questions"];
+  if (!Array.isArray(questions)) return [];
+  return questions.flatMap((value: unknown, index) => {
+    const question = stringField(value, "question")?.trim();
+    if (question === undefined) return [];
+    const options: unknown = Reflect.get(value as object, "options");
+    return [
+      {
+        id: question,
+        header: stringField(value, "header")?.trim() ?? `Question ${index + 1}`,
+        question,
+        options: Array.isArray(options)
+          ? options.flatMap((option: unknown) => {
+              const label = stringField(option, "label")?.trim();
+              return label === undefined
+                ? []
+                : [{ label, description: stringField(option, "description")?.trim() ?? "" }];
+            })
+          : [],
+        ...(Reflect.get(value as object, "multiSelect") === true ? { multiSelect: true } : {}),
+      },
+    ];
+  });
+};
+
+/** The answers as `AskUserQuestion` takes them (T3 Code's `claudeSdkUserInputAnswers`): several picks join with commas. */
+const claudeSdkUserInputAnswers = (answers: ProviderUserInputAnswers): Record<string, string> =>
+  Object.fromEntries(
+    Object.entries(answers).map(([question, answer]) => [
+      question,
+      typeof answer === "string" ? answer : answer.join(", "),
+    ]),
+  );
+
+/** A question Claude waits on; `undefined` releases it unanswered. */
+interface PendingQuestion {
+  readonly turn: ActiveTurn;
+  readonly answers: Deferred.Deferred<ProviderUserInputAnswers | undefined>;
+}
 
 type ClaudeToolItemType = "file_change" | "command_execution" | "dynamic_tool";
 
@@ -327,15 +393,13 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (input
     env: input.environment,
   });
 
-  const adapterError =
-    (operation: "open-session" | "ensure-thread" | "start-turn" | "interrupt-turn") =>
-    (cause: unknown) =>
-      new ProviderAdapterV2Error({
-        driver: "claudeAgent",
-        operation,
-        detail: cause instanceof Error ? cause.message : String(cause),
-        cause,
-      });
+  const adapterError = (operation: ProviderAdapterV2Error["operation"]) => (cause: unknown) =>
+    new ProviderAdapterV2Error({
+      driver: "claudeAgent",
+      operation,
+      detail: cause instanceof Error ? cause.message : String(cause),
+      cause,
+    });
 
   const openSession: ProviderAdapterV2["openSession"] = (open) =>
     Effect.gen(function* () {
@@ -344,6 +408,128 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (input
       // gets a session id of its own.
       const resume = open.initialNativeThreadId !== undefined;
       const nativeSessionId = open.initialNativeThreadId ?? (yield* runner.allocateSessionId);
+      const events = yield* PubSub.unbounded<ProviderAdapterV2Event>();
+      const activeTurn = yield* Ref.make<ActiveTurn | undefined>(undefined);
+      const pendingQuestions = new Map<RuntimeRequestId, PendingQuestion>();
+      const runPromise = Effect.runPromiseWith(yield* Effect.context<never>());
+      const publish = (event: ProviderAdapterV2Event) => PubSub.publish(events, event);
+
+      /** Releases the turn's questions unanswered, so Claude can stop. */
+      const releaseQuestions = (turn: ActiveTurn) =>
+        Effect.forEach(
+          [...pendingQuestions.values()].filter((pending) => pending.turn === turn),
+          (pending) => Deferred.succeed(pending.answers, undefined),
+          { discard: true },
+        );
+
+      /**
+       * T3 Code's `canUseToolEffect`, without approvals: `AskUserQuestion`
+       * becomes a user-input request (its node, its item, then the request,
+       * as T3 Code's `buildApprovalRequestArtifacts` builds them) and waits
+       * for the answers; every other tool is allowed as it is. The question
+       * belongs to the turn running now: a callback is not a frame Claude
+       * Code stamps with the prompt.
+       */
+      const canUseToolEffect = Effect.fnUntraced(function* (
+        toolName: Parameters<CanUseTool>[0],
+        toolInput: Parameters<CanUseTool>[1],
+        callbackOptions: Parameters<CanUseTool>[2],
+      ) {
+        const turn = yield* Ref.get(activeTurn);
+        if (turn === undefined) {
+          return {
+            behavior: "deny",
+            message: "No turn is running for this tool request.",
+            toolUseID: callbackOptions.toolUseID,
+          } satisfies PermissionResult;
+        }
+        if (toolName !== "AskUserQuestion") {
+          return {
+            behavior: "allow",
+            updatedInput: toolInput,
+            toolUseID: callbackOptions.toolUseID,
+          } satisfies PermissionResult;
+        }
+        const toolUseId = callbackOptions.toolUseID;
+        const requestId = RuntimeRequestId.make(`runtime-request:claude:${toolUseId}`);
+        const nodeId = NodeId.make(`node:claude:${toolUseId}:question`);
+        const now = yield* nowIso;
+        const answers = yield* Deferred.make<ProviderUserInputAnswers | undefined>();
+        pendingQuestions.set(requestId, { turn, answers });
+        yield* publish({
+          type: "node.updated",
+          node: {
+            id: nodeId,
+            threadId: turn.input.threadId,
+            runId: turn.input.runId,
+            parentNodeId: turn.input.rootNodeId,
+            rootNodeId: turn.input.rootNodeId,
+            kind: "user_input_request",
+            status: "waiting",
+            providerThreadId: turn.input.providerThread.id,
+            providerTurnId: turn.input.providerTurnId,
+            startedAt: now,
+            completedAt: null,
+          },
+        });
+        yield* publish({
+          type: "turn_item.updated",
+          turnItem: {
+            id: TurnItemId.make(`item:claude:${toolUseId}:question`),
+            threadId: turn.input.threadId,
+            runId: turn.input.runId,
+            nodeId,
+            providerThreadId: turn.input.providerThread.id,
+            providerTurnId: turn.input.providerTurnId,
+            ordinal: 0,
+            status: "waiting",
+            title: null,
+            startedAt: now,
+            completedAt: null,
+            updatedAt: now,
+            type: "user_input_request",
+            requestId,
+            questions: claudeUserInputQuestions(toolInput),
+          },
+        });
+        yield* publish({
+          type: "runtime_request.updated",
+          runtimeRequest: {
+            id: requestId,
+            nodeId,
+            providerTurnId: turn.input.providerTurnId,
+            kind: "user_input",
+            status: "pending",
+            responseCapability: { type: "live", providerSessionId: open.providerSessionId },
+            createdAt: now,
+            resolvedAt: null,
+          },
+        });
+        // An interrupt aborts the signal, and releases the question too.
+        const aborted = Effect.callback<undefined>((resume) => {
+          const abort = () => resume(Effect.succeed(undefined));
+          callbackOptions.signal.addEventListener("abort", abort, { once: true });
+          if (callbackOptions.signal.aborted) abort();
+          return Effect.sync(() => callbackOptions.signal.removeEventListener("abort", abort));
+        });
+        const given = yield* Effect.raceFirst(Deferred.await(answers), aborted).pipe(
+          Effect.ensuring(Effect.sync(() => pendingQuestions.delete(requestId))),
+        );
+        return given === undefined
+          ? ({
+              behavior: "deny",
+              message: "User cancelled tool execution.",
+            } satisfies PermissionResult)
+          : ({
+              behavior: "allow",
+              updatedInput: {
+                questions: toolInput["questions"],
+                answers: claudeSdkUserInputAnswers(given),
+              },
+              toolUseID: toolUseId,
+            } satisfies PermissionResult);
+      });
+
       const options = makeClaudeQueryOptions({
         modelSelection: open.modelSelection,
         runtimeMode: open.runtimePolicy.runtimeMode,
@@ -352,15 +538,13 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (input
         cwd: open.runtimePolicy.cwd,
         executablePath,
         environment: input.environment,
+        canUseTool: (toolName, toolInput, callbackOptions) =>
+          runPromise(canUseToolEffect(toolName, toolInput, callbackOptions)),
       });
       const session = yield* runner.open({ options, threadId: open.threadId });
-      const events = yield* PubSub.unbounded<ProviderAdapterV2Event>();
       const live = yield* Ref.make(true);
       const model = yield* Ref.make(open.modelSelection.model);
-      const activeTurn = yield* Ref.make<ActiveTurn | undefined>(undefined);
       const createdAt = yield* nowIso;
-
-      const publish = (event: ProviderAdapterV2Event) => PubSub.publish(events, event);
 
       const itemBase = (turn: ActiveTurn, id: TurnItemId, nodeId: NodeId, now: string) => ({
         id,
@@ -604,6 +788,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (input
             );
           }
           yield* Ref.set(activeTurn, undefined);
+          yield* releaseQuestions(turn);
           yield* Deferred.succeed(turn.ended, undefined);
           yield* publish(
             failure === null
@@ -756,6 +941,8 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (input
             if (turn === undefined || turn.input.providerTurnId !== providerTurnId) return;
             turn.interrupting = true;
             const stopped = yield* session.interrupt.pipe(
+              // Claude Code aborts a question's callback itself; release it anyway.
+              Effect.andThen(releaseQuestions(turn)),
               Effect.andThen(Deferred.await(turn.ended)),
               Effect.timeoutOption(INTERRUPT_TERMINAL_TIMEOUT),
               Effect.mapError(adapterError("interrupt-turn")),
@@ -773,6 +960,17 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (input
             if (stopped._tag === "None") {
               yield* Effect.logWarning("Claude did not end an interrupted turn in time.");
             }
+          }),
+        respondToRuntimeRequest: ({ requestId, answers }) =>
+          Effect.suspend(() => {
+            const pending = pendingQuestions.get(requestId);
+            return pending === undefined
+              ? Effect.fail(
+                  adapterError("respond-to-runtime-request")(
+                    `Claude is not waiting on runtime request ${requestId}.`,
+                  ),
+                )
+              : Deferred.succeed(pending.answers, answers).pipe(Effect.asVoid);
           }),
       };
       return runtime;

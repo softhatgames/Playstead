@@ -1,6 +1,7 @@
 import {
   type MessageId,
   type NodeId,
+  type ProviderSessionId,
   type ProviderThreadId,
   type RunAttemptId,
   type RunId,
@@ -12,6 +13,7 @@ import {
   type OrchestrationV2Command,
   type OrchestrationV2ProviderThread,
   type OrchestrationV2Run,
+  type OrchestrationV2RuntimeRequest,
   type OrchestrationV2ThreadProjection,
   type OrchestrationV2TurnItem,
 } from "@playstead/contracts/orchestrationV2";
@@ -110,6 +112,9 @@ const reject = (command: OrchestrationV2Command, reason: string) =>
  *   does: a run whose provider turn has not started ends interrupted at
  *   once and its start is cancelled; otherwise the provider is asked to
  *   stop, and the run ends when its turn does.
+ * - `runtime-request.respond` answers a question still pending and
+ *   answerable, once every question has an answer; the provider is given
+ *   the answers. There are no approval decisions.
  */
 export function decideThreadCommand(input: {
   readonly command: OrchestrationV2Command;
@@ -205,7 +210,111 @@ export function decideThreadCommand(input: {
       }
       return Result.succeed(dispatchRunInterrupt(projection, run, ids, now));
     }
+    case "runtime-request.respond": {
+      const projection = state.projection;
+      if (projection === undefined) {
+        return reject(command, `Thread ${command.threadId} does not exist.`);
+      }
+      const request = projection.runtimeRequests.find(
+        (candidate) => candidate.id === command.requestId,
+      );
+      if (request === undefined) {
+        return reject(command, `Runtime request ${command.requestId} was not found.`);
+      }
+      if (request.status !== "pending") {
+        return reject(command, `Runtime request ${request.id} is ${request.status}.`);
+      }
+      if (request.responseCapability.type === "not_resumable") {
+        return reject(command, request.responseCapability.reason);
+      }
+      const item = projection.turnItems.find(
+        (candidate) =>
+          candidate.type === "user_input_request" && candidate.requestId === request.id,
+      );
+      if (item?.type !== "user_input_request" || item.runId === null) {
+        return reject(command, `The question for runtime request ${request.id} was not found.`);
+      }
+      const unanswered = item.questions.some((question) => {
+        const answer = command.answers[question.id];
+        return typeof answer === "string"
+          ? answer.trim().length === 0
+          : answer === undefined || answer.length === 0;
+      });
+      if (unanswered) return reject(command, "Answer each question before sending.");
+      return Result.succeed(
+        dispatchRuntimeRequestRespond(
+          command,
+          projection,
+          request,
+          item,
+          request.responseCapability.providerSessionId,
+          item.runId,
+          ids,
+          now,
+        ),
+      );
+    }
   }
+}
+
+/**
+ * The person answered a question (T3 Code's `dispatchRuntimeRequestRespond`,
+ * live answers only): the request is resolved with the answers, its node
+ * and item complete, and the provider is given the answers.
+ */
+function dispatchRuntimeRequestRespond(
+  command: Extract<OrchestrationV2Command, { type: "runtime-request.respond" }>,
+  projection: OrchestrationV2ThreadProjection,
+  request: OrchestrationV2RuntimeRequest,
+  item: Extract<OrchestrationV2TurnItem, { type: "user_input_request" }>,
+  providerSessionId: ProviderSessionId,
+  runId: RunId,
+  ids: ThreadCommandIds,
+  now: string,
+): ThreadCommandDecision {
+  const base = { threadId: command.threadId, runId, occurredAt: now };
+  const node = projection.nodes.find((candidate) => candidate.id === request.nodeId);
+  return {
+    events: [
+      {
+        ...base,
+        type: "runtime-request.updated",
+        payload: { ...request, status: "resolved", resolvedAt: now, answers: command.answers },
+      },
+      ...(node === undefined
+        ? []
+        : [
+            {
+              ...base,
+              type: "node.updated",
+              payload: { ...node, status: "completed", completedAt: now },
+            } as const,
+          ]),
+      {
+        ...base,
+        type: "turn-item.updated",
+        payload: {
+          ...item,
+          answers: command.answers,
+          status: "completed",
+          completedAt: now,
+          updatedAt: now,
+        },
+      },
+    ],
+    effects: [
+      {
+        id: ids.effectId,
+        request: {
+          type: "runtime-request.respond",
+          runId,
+          providerSessionId,
+          requestId: request.id,
+          answers: command.answers,
+        },
+      },
+    ],
+  };
 }
 
 function dispatchRunInterrupt(

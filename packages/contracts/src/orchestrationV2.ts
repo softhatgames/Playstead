@@ -14,6 +14,7 @@ import {
   ProviderTurnId,
   RunAttemptId,
   RunId,
+  RuntimeRequestId,
   ThreadId,
   TrimmedNonEmptyString,
   TurnItemId,
@@ -29,8 +30,9 @@ import { ProviderDriverKind, ProviderInstanceId } from "./providerInstance.ts";
  * produce, and the thread and shell streams. Times are ISO strings, as the
  * project contract keeps them, so one schema serves the database and the wire.
  *
- * Absent until their tickets: subagents, plans, checkpoints, context
- * handoffs and runtime requests (#25).
+ * Runtime requests are only the provider's questions to the person; there
+ * are no approvals, since every thread runs in Full access. Absent:
+ * subagents, plans, checkpoints and context handoffs.
  */
 
 export const ORCHESTRATION_V2_WS_METHODS = {
@@ -134,7 +136,7 @@ export const OrchestrationV2ExecutionNode = Schema.Struct({
   runId: Schema.NullOr(RunId),
   parentNodeId: Schema.NullOr(NodeId),
   rootNodeId: NodeId,
-  kind: Schema.Literals(["root_turn", "assistant_message", "tool_call"]),
+  kind: Schema.Literals(["root_turn", "assistant_message", "tool_call", "user_input_request"]),
   status: Schema.Literals(["pending", "running", "waiting", ...TerminalWorkStatuses]),
   providerThreadId: Schema.NullOr(ProviderThreadId),
   providerTurnId: Schema.NullOr(ProviderTurnId),
@@ -212,6 +214,52 @@ export const OrchestrationV2ProviderFailure = Schema.Struct({
 });
 export type OrchestrationV2ProviderFailure = typeof OrchestrationV2ProviderFailure.Type;
 
+/** One question a provider asks (T3 Code's `OrchestrationV2UserInputQuestion`, trimmed). */
+export const OrchestrationV2UserInputQuestion = Schema.Struct({
+  /** What the answer is keyed by: Codex's question id, or Claude's question text. */
+  id: TrimmedNonEmptyString,
+  header: TrimmedNonEmptyString,
+  question: TrimmedNonEmptyString,
+  options: Schema.Array(
+    Schema.Struct({ label: TrimmedNonEmptyString, description: Schema.String }),
+  ),
+  multiSelect: Schema.optionalKey(Schema.Boolean),
+});
+export type OrchestrationV2UserInputQuestion = typeof OrchestrationV2UserInputQuestion.Type;
+
+/**
+ * The person's answers by question id: an option's label, several labels
+ * for a multiple choice, or their own words (T3 Code's
+ * `ProviderUserInputAnswers`, typed as its interface builds them).
+ */
+export const ProviderUserInputAnswers = Schema.Record(
+  Schema.String,
+  Schema.Union([Schema.String, Schema.Array(Schema.String)]),
+);
+export type ProviderUserInputAnswers = typeof ProviderUserInputAnswers.Type;
+
+/**
+ * Something a provider waits on the person for (T3 Code's
+ * `OrchestrationV2RuntimeRequest`, trimmed to questions). It is pending until
+ * answered (`resolved`). A turn that ends first cancels it, and a server
+ * that stops while it is pending leaves it `expired`, no longer answerable.
+ */
+export const OrchestrationV2RuntimeRequest = Schema.Struct({
+  id: RuntimeRequestId,
+  nodeId: NodeId,
+  providerTurnId: Schema.NullOr(ProviderTurnId),
+  kind: Schema.Literal("user_input"),
+  status: Schema.Literals(["pending", "resolved", "expired", "cancelled"]),
+  responseCapability: Schema.Union([
+    Schema.Struct({ type: Schema.Literal("live"), providerSessionId: ProviderSessionId }),
+    Schema.Struct({ type: Schema.Literal("not_resumable"), reason: Schema.String }),
+  ]),
+  createdAt: IsoDateTime,
+  resolvedAt: Schema.NullOr(IsoDateTime),
+  answers: Schema.optionalKey(ProviderUserInputAnswers),
+});
+export type OrchestrationV2RuntimeRequest = typeof OrchestrationV2RuntimeRequest.Type;
+
 const TurnItemBaseFields = {
   id: TurnItemId,
   threadId: ThreadId,
@@ -231,10 +279,13 @@ const TurnItemBaseFields = {
 /**
  * What the thread view shows, item by item: T3 Code's turn items trimmed to
  * messages, file changes, commands, other tools, errors and a run's
- * interrupt. A `file_change` carries the written content in `newStr`, which
- * T3 Code's Claude adapter leaves out. An interrupt is a request, written
- * when the person asks, and a result, written when the run has stopped; the
- * result names its request in `parentItemId`.
+ * interrupt, and the provider's questions. A `file_change` carries the
+ * written content in `newStr`, which T3 Code's Claude adapter leaves out. An
+ * interrupt is a request, written when the person asks, and a result,
+ * written when the run has stopped; the result names its request in
+ * `parentItemId`. A `user_input_request` shows a runtime request's
+ * questions, and their answers once given (T3 Code's `questionAnswer`,
+ * trimmed).
  */
 export const OrchestrationV2TurnItem = Schema.Union([
   Schema.Struct({
@@ -276,6 +327,13 @@ export const OrchestrationV2TurnItem = Schema.Union([
   }),
   Schema.Struct({
     ...TurnItemBaseFields,
+    type: Schema.Literal("user_input_request"),
+    requestId: RuntimeRequestId,
+    questions: Schema.Array(OrchestrationV2UserInputQuestion),
+    answers: Schema.optionalKey(ProviderUserInputAnswers),
+  }),
+  Schema.Struct({
+    ...TurnItemBaseFields,
     type: Schema.Literal("run_interrupt_request"),
     message: Schema.String,
   }),
@@ -312,6 +370,7 @@ export const OrchestrationV2DomainEvent = Schema.Union([
   event("provider-turn.updated", OrchestrationV2ProviderTurn),
   event("message.updated", OrchestrationV2ConversationMessage),
   event("turn-item.updated", OrchestrationV2TurnItem),
+  event("runtime-request.updated", OrchestrationV2RuntimeRequest),
 ]);
 export type OrchestrationV2DomainEvent = typeof OrchestrationV2DomainEvent.Type;
 
@@ -336,6 +395,7 @@ export const OrchestrationV2ThreadProjection = Schema.Struct({
   messages: Schema.Array(OrchestrationV2ConversationMessage),
   /** In ordinal order. */
   turnItems: Schema.Array(OrchestrationV2TurnItem),
+  runtimeRequests: Schema.Array(OrchestrationV2RuntimeRequest),
   updatedAt: IsoDateTime,
 });
 export type OrchestrationV2ThreadProjection = typeof OrchestrationV2ThreadProjection.Type;
@@ -414,7 +474,8 @@ export type OrchestrationV2ThreadStreamItem = typeof OrchestrationV2ThreadStream
  * Full access and the default interaction mode. Its model can change to
  * another of the same provider instance's. A message is plain text; the
  * first one's `titleSeed` titles the thread. `run.interrupt` stops a run
- * that is still active.
+ * that is still active. `runtime-request.respond` answers a provider's
+ * question; there are no approval decisions.
  */
 export const OrchestrationV2Command = Schema.Union([
   Schema.Struct({
@@ -444,6 +505,13 @@ export const OrchestrationV2Command = Schema.Union([
     commandId: CommandId,
     threadId: ThreadId,
     runId: RunId,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("runtime-request.respond"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    requestId: RuntimeRequestId,
+    answers: ProviderUserInputAnswers,
   }),
 ]);
 export type OrchestrationV2Command = typeof OrchestrationV2Command.Type;

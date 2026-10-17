@@ -1,5 +1,15 @@
-import { CommandId, MessageId, type RunId, type ThreadId } from "@playstead/contracts/baseSchemas";
-import { ACTIVE_RUN_STATUSES, type ModelSelection } from "@playstead/contracts/orchestrationV2";
+import {
+  CommandId,
+  MessageId,
+  type RunId,
+  type RuntimeRequestId,
+  type ThreadId,
+} from "@playstead/contracts/baseSchemas";
+import {
+  ACTIVE_RUN_STATUSES,
+  type ModelSelection,
+  type ProviderUserInputAnswers,
+} from "@playstead/contracts/orchestrationV2";
 import { useNavigate } from "@tanstack/react-router";
 import { useMemo } from "react";
 
@@ -16,6 +26,7 @@ import {
   type SendTarget,
 } from "./composer.logic.ts";
 import { MessagesTimeline } from "./MessagesTimeline.tsx";
+import { derivePendingUserInputs } from "./pendingUserInput.logic.ts";
 import { deriveTimelineRows } from "./timeline.logic.ts";
 
 const sendCommands = async (target: SendTarget, text: string, threadCommandId: CommandId) => {
@@ -55,6 +66,22 @@ const interruptRun = (threadId: ThreadId, runId: RunId) =>
     }),
   );
 
+/** The person's answers to a provider's question (T3 Code's `runtime-request.respond`). */
+const respondToUserInput = (
+  threadId: ThreadId,
+  requestId: RuntimeRequestId,
+  answers: ProviderUserInputAnswers,
+) =>
+  requestPrimary((client) =>
+    client["orchestration.dispatchCommand"]({
+      type: "runtime-request.respond",
+      commandId: CommandId.make(`command:${newId()}`),
+      threadId,
+      requestId,
+      answers,
+    }),
+  );
+
 /**
  * The thread view: the chat column only, after T3 Code's `ChatView.tsx` at
  * 2577baf without its right-hand panel, terminal, diffs, branch toolbar or
@@ -81,6 +108,11 @@ export function ChatView(
   );
   const working = projection?.runs.some((run) => ACTIVE_RUN_STATUSES.has(run.status)) ?? false;
   const action = deriveComposerAction(projection?.runs ?? [], projection?.turnItems ?? []);
+  const pendingUserInput = useMemo(
+    () =>
+      derivePendingUserInputs(projection?.runtimeRequests ?? [], projection?.turnItems ?? [])[0],
+    [projection?.runtimeRequests, projection?.turnItems],
+  );
   const lockedInstanceId = projection?.thread.providerInstanceId;
   const entries = deriveModelPickerEntries(providers, lockedInstanceId);
   const selection =
@@ -150,6 +182,10 @@ export function ChatView(
         action={action}
         onSend={onSend}
         onInterrupt={(runId) => interruptRun(threadId, runId).then(() => undefined)}
+        pendingUserInput={pendingUserInput}
+        onRespondToUserInput={(requestId, answers) =>
+          respondToUserInput(threadId, requestId, answers).then(() => undefined)
+        }
       />
     </div>
   );

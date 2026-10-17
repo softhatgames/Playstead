@@ -1,13 +1,23 @@
-import { MessageId, NodeId, type ThreadId, TurnItemId } from "@playstead/contracts/baseSchemas";
+import {
+  MessageId,
+  NodeId,
+  RuntimeRequestId,
+  type ThreadId,
+  TurnItemId,
+} from "@playstead/contracts/baseSchemas";
 import type {
   OrchestrationV2ExecutionNode,
   OrchestrationV2ProviderFailure,
   OrchestrationV2TurnItem,
+  ProviderUserInputAnswers,
   RuntimeMode,
 } from "@playstead/contracts/orchestrationV2";
 import type { ProviderInstanceId } from "@playstead/contracts/providerInstance";
 import * as CodexClient from "@playstead/effect-codex-app-server/client";
-import type { CodexAppServerError } from "@playstead/effect-codex-app-server/errors";
+import {
+  type CodexAppServerError,
+  CodexAppServerRequestError,
+} from "@playstead/effect-codex-app-server/errors";
 import type * as CodexSchema from "@playstead/effect-codex-app-server/schema";
 import {
   INTERRUPT_TERMINAL_TIMEOUT,
@@ -52,9 +62,16 @@ import { codexClientInfo, spawnCodexAppServer } from "../../provider/CodexProvid
  *   ends interrupted on Codex's `turn/completed`, even one that says
  *   completed, or after `INTERRUPT_TERMINAL_TIMEOUT` without one.
  *
- * Absent until their tickets: user-input requests (#25), resuming a thread
- * after a restart; and, as in the slice as a whole, MCP, plans, reasoning,
- * collaboration modes, subagents, goals, approvals and usage. A server request nobody handles gets "method not
+ * - Codex's `item/tool/requestUserInput` reaches the person as a user-input
+ *   request, as T3 Code's handler routes it, and its answer is the
+ *   request's response. Codex 0.163.0 asks only in plan mode, which
+ *   Playstead does not run, so this path is proven only by a hand-made
+ *   recording. An interrupt stops waiting without answering: Codex drops
+ *   the request itself when the turn ends.
+ *
+ * Absent: resuming a thread after a restart; and, as in the slice as a
+ * whole, MCP, plans, reasoning, collaboration modes, subagents, goals,
+ * approvals and usage. A server request nobody handles gets "method not
  * found" from the client, so an unexpected approval fails loudly.
  */
 
@@ -150,6 +167,22 @@ type CodexThreadItem = CodexSchema.V2ThreadItem;
 const itemStatus = (status: "inProgress" | "completed" | "failed" | "declined") =>
   status === "inProgress" ? "running" : status === "completed" ? "completed" : "failed";
 
+/** The answers by question id, as Codex takes them (T3 Code's `toCodexUserInputAnswers`). */
+const toCodexUserInputAnswers = (
+  answers: ProviderUserInputAnswers,
+  questionIds: ReadonlySet<string>,
+): CodexSchema.ToolRequestUserInputResponse["answers"] =>
+  Object.fromEntries(
+    Object.entries(answers).flatMap(([questionId, answer]) =>
+      questionIds.has(questionId)
+        ? [[questionId, { answers: typeof answer === "string" ? [answer] : [...answer] }]]
+        : [],
+    ),
+  );
+
+const nonEmpty = (value: string | undefined, fallback: string) =>
+  value !== undefined && value.trim().length > 0 ? value.trim() : fallback;
+
 interface ActiveTurn {
   readonly input: ProviderAdapterV2TurnInput;
   /** Codex's id for the turn, once `turn/start` answers or a notification names it. */
@@ -176,15 +209,13 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (input: 
 }): Effect.fn.Return<ProviderAdapterV2, never, CodexAppServerClientFactory> {
   const clients = yield* CodexAppServerClientFactory;
 
-  const adapterError =
-    (operation: "open-session" | "ensure-thread" | "start-turn" | "interrupt-turn") =>
-    (cause: unknown) =>
-      new ProviderAdapterV2Error({
-        driver: CODEX,
-        operation,
-        detail: cause instanceof Error ? cause.message : String(cause),
-        cause,
-      });
+  const adapterError = (operation: ProviderAdapterV2Error["operation"]) => (cause: unknown) =>
+    new ProviderAdapterV2Error({
+      driver: CODEX,
+      operation,
+      detail: cause instanceof Error ? cause.message : String(cause),
+      cause,
+    });
 
   const openSession: ProviderAdapterV2["openSession"] = (open) =>
     Effect.gen(function* () {
@@ -202,6 +233,21 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (input: 
       const createdAt = yield* nowIso;
 
       const publish = (event: ProviderAdapterV2Event) => PubSub.publish(events, event);
+
+      /** Questions Codex waits on; `undefined` stops waiting without an answer. */
+      const pendingQuestions = new Map<
+        RuntimeRequestId,
+        {
+          readonly turn: ActiveTurn;
+          readonly answers: Deferred.Deferred<ProviderUserInputAnswers | undefined>;
+        }
+      >();
+      const releaseQuestions = (turn: ActiveTurn) =>
+        Effect.forEach(
+          [...pendingQuestions.values()].filter((pending) => pending.turn === turn),
+          (pending) => Deferred.succeed(pending.answers, undefined),
+          { discard: true },
+        );
 
       // Turns already ended, so a late notification of one is not taken
       // for the next turn's.
@@ -362,6 +408,7 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (input: 
             );
           }
           yield* Ref.set(activeTurn, undefined);
+          yield* releaseQuestions(turn);
           yield* Deferred.succeed(turn.ended, undefined);
           yield* publish(
             status === "failed"
@@ -434,6 +481,85 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (input: 
                     : message.slice(0, 4_096),
               });
           }
+        }),
+      );
+
+      // T3 Code's `item/tool/requestUserInput` handler and
+      // `buildUserInputRequestArtifacts`: the question's node, its item, then
+      // the request, and the answer once the person gives it.
+      yield* client.handleServerRequest("item/tool/requestUserInput", (params) =>
+        Effect.gen(function* () {
+          const turn = yield* turnFor(params.turnId);
+          if (turn === undefined) {
+            return yield* CodexAppServerRequestError.internal(
+              "item/tool/requestUserInput",
+              `No turn is running for the question of turn ${params.turnId}.`,
+            );
+          }
+          const now = yield* nowIso;
+          const base = itemBase(turn, params.itemId, now);
+          const nodeId = base.nodeId;
+          const requestId = RuntimeRequestId.make(`runtime-request:codex:${params.itemId}`);
+          const answers = yield* Deferred.make<ProviderUserInputAnswers | undefined>();
+          pendingQuestions.set(requestId, { turn, answers });
+          yield* publish({
+            type: "node.updated",
+            node: {
+              id: nodeId,
+              threadId: turn.input.threadId,
+              runId: turn.input.runId,
+              parentNodeId: turn.input.rootNodeId,
+              rootNodeId: turn.input.rootNodeId,
+              kind: "user_input_request",
+              status: "waiting",
+              providerThreadId: turn.input.providerThread.id,
+              providerTurnId: turn.input.providerTurnId,
+              startedAt: now,
+              completedAt: null,
+            },
+          });
+          yield* publish({
+            type: "turn_item.updated",
+            turnItem: {
+              ...base,
+              status: "waiting",
+              type: "user_input_request",
+              requestId,
+              questions: params.questions.map((question, index) => ({
+                id: nonEmpty(question.id, `question-${index + 1}`),
+                header: nonEmpty(question.header, "Question"),
+                question: nonEmpty(question.question, "Choose an answer."),
+                options: (question.options ?? []).map((option, optionIndex) => ({
+                  label: nonEmpty(option.label, `Option ${optionIndex + 1}`),
+                  description: option.description,
+                })),
+              })),
+            },
+          });
+          yield* publish({
+            type: "runtime_request.updated",
+            runtimeRequest: {
+              id: requestId,
+              nodeId,
+              providerTurnId: turn.input.providerTurnId,
+              kind: "user_input",
+              status: "pending",
+              responseCapability: { type: "live", providerSessionId: open.providerSessionId },
+              createdAt: now,
+              resolvedAt: null,
+            },
+          });
+          const given = yield* Deferred.await(answers).pipe(
+            Effect.ensuring(Effect.sync(() => pendingQuestions.delete(requestId))),
+          );
+          // Released: no answer goes back, and Codex drops the request itself.
+          if (given === undefined) return yield* Effect.interrupt;
+          return {
+            answers: toCodexUserInputAnswers(
+              given,
+              new Set(params.questions.map((question) => question.id)),
+            ),
+          };
         }),
       );
 
@@ -538,6 +664,7 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (input: 
               Effect.andThen(Deferred.await(turn.ended)),
               Effect.timeoutOption(INTERRUPT_TERMINAL_TIMEOUT),
               Effect.mapError(adapterError("interrupt-turn")),
+              Effect.ensuring(releaseQuestions(turn)),
               Effect.ensuring(
                 // Codex never answered: the turn ends here, so the next can start.
                 Effect.suspend(() =>
@@ -552,6 +679,17 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (input: 
             if (stopped._tag === "None") {
               yield* Effect.logWarning("Codex did not end an interrupted turn in time.");
             }
+          }),
+        respondToRuntimeRequest: ({ requestId, answers }) =>
+          Effect.suspend(() => {
+            const pending = pendingQuestions.get(requestId);
+            return pending === undefined
+              ? Effect.fail(
+                  adapterError("respond-to-runtime-request")(
+                    `Codex is not waiting on runtime request ${requestId}.`,
+                  ),
+                )
+              : Deferred.succeed(pending.answers, answers).pipe(Effect.asVoid);
           }),
       };
       return runtime;
