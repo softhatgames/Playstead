@@ -2,6 +2,7 @@ import { assert, describe, it } from "@effect/vitest";
 import {
   CommandId,
   MessageId,
+  PlanId,
   ProjectId,
   RunId,
   ThreadId,
@@ -233,6 +234,73 @@ describe("buildSendCommands", () => {
         text: "Then add a second level",
         modelSelection: { instanceId: "codex", model: "gpt-5.6-terra" },
         dispatchMode: { type: "queue_after_active" },
+      },
+    ]);
+  });
+
+  it("creates a new thread in plan mode when the draft is in plan mode", () => {
+    const commands = buildSendCommands({
+      target: {
+        kind: "new",
+        threadId: ThreadId.make("thread:new"),
+        projectId: ProjectId.make("project:1"),
+        modelSelection: { instanceId: "codex", model: "gpt-5.6-terra" },
+      },
+      runtimeMode: "full-access",
+      interactionMode: "plan",
+      dispatchMode: "auto",
+      text: "Plan a tiny platformer",
+      ids,
+    });
+
+    assert.strictEqual(commands[0]?.type, "thread.create");
+    assert.strictEqual(
+      commands[0]?.type === "thread.create" ? commands[0].interactionMode : undefined,
+      "plan",
+    );
+  });
+
+  it("sends both modes chosen in the composer before the next message, then the plan it implements", () => {
+    const commands = buildSendCommands({
+      target: {
+        kind: "existing",
+        threadId: ThreadId.make("thread:1"),
+        hasMessages: true,
+        runtimeMode: "full-access",
+        interactionMode: "plan",
+        modelSelection: { instanceId: "codex", model: "gpt-5.6-terra" },
+      },
+      runtimeMode: "auto",
+      interactionMode: "default",
+      dispatchMode: "auto",
+      text: "PLEASE IMPLEMENT THIS PLAN:\n# Plan",
+      sourcePlanRef: { threadId: ThreadId.make("thread:1"), planId: PlanId.make("plan:1") },
+      ids: { ...ids, interactionModeCommandId: CommandId.make("command:interaction") },
+    });
+
+    assert.deepStrictEqual<unknown>(commands, [
+      {
+        type: "thread.runtime-mode.set",
+        commandId: "command:mode",
+        threadId: "thread:1",
+        runtimeMode: "auto",
+      },
+      {
+        type: "thread.interaction-mode.set",
+        commandId: "command:interaction",
+        threadId: "thread:1",
+        interactionMode: "default",
+      },
+      {
+        type: "message.dispatch",
+        commandId: "command:message",
+        threadId: "thread:1",
+        messageId: "message:1",
+        text: "PLEASE IMPLEMENT THIS PLAN:\n# Plan",
+        modelSelection: { instanceId: "codex", model: "gpt-5.6-terra" },
+        sourcePlanRef: { threadId: "thread:1", planId: "plan:1" },
+        dispatchMode: { type: "start_immediately" },
+        deliveryIntent: "auto",
       },
     ]);
   });

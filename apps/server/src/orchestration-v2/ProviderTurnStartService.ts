@@ -29,8 +29,8 @@ import * as ProviderSessionManager from "./ProviderSessionManager.ts";
 import * as RunExecutionService from "./RunExecutionService.ts";
 
 /**
- * A turn runs in its thread's runtime mode, with the default interaction
- * mode, in its project's folder (T3 Code's `RuntimePolicyV2.resolve` at
+ * A turn runs in its thread's runtime and interaction modes, in its
+ * project's folder (T3 Code's `RuntimePolicyV2.resolve` at
  * 2577baf, without project or instance overrides).
  */
 const resolveRuntimePolicy = (

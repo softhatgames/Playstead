@@ -1,6 +1,7 @@
 import { assert, describe, it } from "@effect/vitest";
 import {
   MessageId,
+  PlanId,
   RuntimeRequestId,
   ThreadId,
   TurnItemId,
@@ -242,6 +243,56 @@ describe("deriveTimelineRows", () => {
         label: "Approval requested",
         detail: "file-change",
         icon: "approval",
+        tone: "tool",
+        running: false,
+      },
+    ]);
+  });
+
+  it('shows a proposed plan as its card and a todo list as "Plan updated" with its steps', () => {
+    const rows = deriveTimelineRows(
+      [
+        {
+          ...base("item:plan", 1, "completed"),
+          type: "proposed_plan",
+          planId: PlanId.make("plan:1"),
+          markdown: "# Write hello\n\n1. Write it.",
+          streaming: false,
+        },
+        {
+          ...base("item:exit-plan", 2, "failed"),
+          type: "dynamic_tool",
+          toolName: "ExitPlanMode",
+          input: { plan: "# Write hello" },
+        },
+        {
+          ...base("item:todo", 3, "completed"),
+          type: "todo_list",
+          planId: PlanId.make("plan:2"),
+          steps: [
+            { id: "1", text: "Create first.txt", status: "completed" },
+            { id: "2", text: "Reply done", status: "running" },
+          ],
+          explanation: "Two files",
+        },
+      ],
+      undefined,
+    );
+
+    assert.deepStrictEqual(rows, [
+      {
+        kind: "proposed-plan",
+        id: "item:plan",
+        planId: "plan:1",
+        markdown: "# Write hello\n\n1. Write it.",
+        streaming: false,
+      },
+      {
+        kind: "work",
+        id: "item:todo",
+        label: "Plan updated",
+        detail: "Two files\n\ncompleted: Create first.txt\nrunning: Reply done",
+        icon: "tool",
         tone: "tool",
         running: false,
       },

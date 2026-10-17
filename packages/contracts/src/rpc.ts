@@ -17,7 +17,15 @@ import {
   OrchestrationV2SubscribeThreadInput,
   OrchestrationV2ThreadStreamItem,
 } from "./orchestrationV2.ts";
-import { Project, ProjectConflictError, ProjectMutation, ProjectMutationError } from "./project.ts";
+import {
+  Project,
+  ProjectConflictError,
+  ProjectMutation,
+  ProjectMutationError,
+  ProjectWriteFileError,
+  ProjectWriteFileInput,
+  ProjectWriteFileResult,
+} from "./project.ts";
 import { ProviderInstanceId, ProviderInstanceMutation } from "./providerInstance.ts";
 import {
   ServerConfig,
@@ -33,6 +41,7 @@ export const WS_METHODS = {
   serverUpdateSettings: "server.updateSettings",
   subscribeServerConfig: "subscribeServerConfig",
   subscribeServerLifecycle: "subscribeServerLifecycle",
+  projectsWriteFile: "projects.writeFile",
   projectsMutate: "projects.mutate",
   filesystemBrowse: "filesystem.browse",
 } as const;
@@ -81,6 +90,13 @@ const WsProjectsMutateRpc = Rpc.make(WS_METHODS.projectsMutate, {
   error: Schema.Union([ProjectMutationError, ProjectConflictError]),
 });
 
+/** Writes a file inside a project's folder, as **Save to workspace** does with a plan. */
+const WsProjectsWriteFileRpc = Rpc.make(WS_METHODS.projectsWriteFile, {
+  payload: ProjectWriteFileInput,
+  success: ProjectWriteFileResult,
+  error: ProjectWriteFileError,
+});
+
 /** The folders under a partly typed path, for Add project's autocompletion. */
 const WsFilesystemBrowseRpc = Rpc.make(WS_METHODS.filesystemBrowse, {
   payload: FilesystemBrowseInput,
@@ -122,6 +138,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsSubscribeServerConfigRpc,
   WsSubscribeServerLifecycleRpc,
   WsProjectsMutateRpc,
+  WsProjectsWriteFileRpc,
   WsFilesystemBrowseRpc,
   WsOrchestrationSubscribeShellRpc,
   WsOrchestrationDispatchCommandRpc,

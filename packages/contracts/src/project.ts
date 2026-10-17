@@ -61,3 +61,23 @@ export class ProjectConflictError extends Schema.TaggedError<ProjectConflictErro
     return `Workspace ${this.workspaceRoot} already belongs to project ${this.conflictingProjectId}.`;
   }
 }
+
+/**
+ * A file written into a project's folder (T3 Code's `projects.writeFile`),
+ * such as a proposed plan saved to the workspace. The path is relative to the
+ * folder and must stay inside it.
+ */
+export const ProjectWriteFileInput = Schema.Struct({
+  cwd: TrimmedNonEmptyString,
+  relativePath: TrimmedNonEmptyString.check(Schema.isMaxLength(512)),
+  contents: Schema.String,
+});
+export type ProjectWriteFileInput = typeof ProjectWriteFileInput.Type;
+
+export const ProjectWriteFileResult = Schema.Struct({ relativePath: TrimmedNonEmptyString });
+export type ProjectWriteFileResult = typeof ProjectWriteFileResult.Type;
+
+export class ProjectWriteFileError extends Schema.TaggedError<ProjectWriteFileError>()(
+  "ProjectWriteFileError",
+  { relativePath: Schema.String, message: Schema.String },
+) {}

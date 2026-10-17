@@ -36,6 +36,14 @@ export type TimelineRow =
       readonly state: "waiting" | "answered" | "unanswered";
       readonly answer?: string;
     }
+  /** A plan the provider proposed, shown as T3 Code's plan card. */
+  | {
+      readonly kind: "proposed-plan";
+      readonly id: string;
+      readonly planId: string;
+      readonly markdown: string;
+      readonly streaming: boolean;
+    }
   /** The person pressed **Interrupt** (T3 Code's `V2LifecycleRow`). */
   | { readonly kind: "interrupt-request"; readonly id: string; readonly label: string }
   /** The run has stopped. */
@@ -100,9 +108,12 @@ export function deriveTimelineRows(
   items: ReadonlyArray<OrchestrationV2TurnItem>,
   workspaceRoot: string | undefined,
 ): ReadonlyArray<TimelineRow> {
-  // Claude's `AskUserQuestion` tool shows as its question, not as a tool too.
+  // Claude's `AskUserQuestion` tool shows as its question, and `ExitPlanMode`
+  // as its plan card, not as tools too.
   const shown = items.filter(
-    (item) => item.type !== "dynamic_tool" || item.toolName !== "AskUserQuestion",
+    (item) =>
+      item.type !== "dynamic_tool" ||
+      (item.toolName !== "AskUserQuestion" && item.toolName !== "ExitPlanMode"),
   );
   return shown.map((item): TimelineRow => {
     switch (item.type) {
@@ -127,6 +138,23 @@ export function deriveTimelineRows(
         return workRow(item, "Approval requested", item.prompt ?? item.requestKind);
       case "user_input_request":
         return questionRow(item);
+      case "proposed_plan":
+        return {
+          kind: "proposed-plan",
+          id: item.id,
+          planId: item.planId,
+          markdown: item.markdown,
+          streaming: item.streaming,
+        };
+      case "todo_list":
+        // T3 Code's "Plan updated" row, its steps under it.
+        return workRow(
+          item,
+          "Plan updated",
+          [item.explanation, item.steps.map((step) => `${step.status}: ${step.text}`).join("\n")]
+            .filter((part) => part !== undefined && part.length > 0)
+            .join("\n\n"),
+        );
       case "run_interrupt_request":
         return { kind: "interrupt-request", id: item.id, label: "Interrupt requested" };
       case "run_interrupt_result":

@@ -12,6 +12,7 @@ import {
   type OrchestrationV2Run,
   type OrchestrationV2TurnItem,
   type ProviderApprovalDecision,
+  type ProviderInteractionMode,
   type ProviderUserInputAnswers,
   type RuntimeMode,
 } from "@playstead/contracts/orchestrationV2";
@@ -24,7 +25,9 @@ import {
   useState,
 } from "react";
 
-import { ArrowUpIcon, CheckIcon, ListPlusIcon, PlayIcon } from "../icons.tsx";
+import { ArrowUpIcon, CheckIcon, ChevronDownIcon, ListPlusIcon, PlayIcon } from "../icons.tsx";
+import { ComposerPlanFollowUpBanner, ComposerTasksBadge } from "./ComposerPlanBanners.tsx";
+import { InteractionModeToggle } from "./InteractionModeToggle.tsx";
 import {
   canChooseModel,
   type ComposerAction,
@@ -40,6 +43,11 @@ import { ComposerPendingApprovalPanel } from "./ComposerPendingApprovalPanel.tsx
 import { ComposerPendingUserInputPanel } from "./ComposerPendingUserInputPanel.tsx";
 import type { PendingApproval } from "./pendingApproval.logic.ts";
 import type { PendingUserInput } from "./pendingUserInput.logic.ts";
+import {
+  type ActiveTasks,
+  matchSlashCommands,
+  parseStandaloneComposerSlashCommand,
+} from "./plan.logic.ts";
 import { ProviderModelPicker } from "./ProviderModelPicker.tsx";
 import { RuntimeModePicker } from "./RuntimeModePicker.tsx";
 import { TraitsPicker } from "./TraitsPicker.tsx";
@@ -80,7 +88,7 @@ interface QueuedEdit {
 /**
  * The plain-text composer, after T3 Code's `ChatComposer.tsx` and
  * `ComposerPrimaryActions.tsx` at 2577baf without rich text, attachments,
- * chips, commands or steering. Enter sends and Shift+Enter starts a new
+ * chips, provider commands or steering. Enter sends and Shift+Enter starts a new
  * line. While a run is active, an empty composer offers **Interrupt** (which
  * holds the queue, as T3 Code's Stop does), and once pressed says the run is
  * stopping; a message typed then is queued, by the thread's follow-up
@@ -96,6 +104,13 @@ interface QueuedEdit {
  * selected model, which can rewrite the prompt for Ultrathink, and the mode
  * picker, which `mod+shift+a` opens; a mode chosen there goes with the next
  * message, even while a run is active.
+ *
+ * With **Plan mode (legacy)** on, the Plan/Build toggle sits after the mode
+ * picker; Shift+Tab, `/plan` and `/default` (typed alone, or picked from
+ * the slash menu) switch it too. A plan ready after a settled plan turn
+ * shows the "Plan ready" banner: an empty composer offers **Implement**
+ * and, in its menu, **Implement in a new thread**; text makes the button
+ * **Refine**. The running turn's todo list shows as the task progress badge.
  */
 export function ChatComposer(props: {
   readonly entries: ReadonlyArray<ModelPickerEntry>;
@@ -131,6 +146,20 @@ export function ChatComposer(props: {
     requestId: RuntimeRequestId,
     answers: ProviderUserInputAnswers,
   ) => Promise<void>;
+  /** Plan or build, as the composer will send it. */
+  readonly interactionMode: ProviderInteractionMode;
+  /** Whether **Plan mode (legacy)** is on: the toggle, `/plan`, `/default` and Shift+Tab. */
+  readonly interactionModeEnabled: boolean;
+  readonly onInteractionModeChange: (mode: ProviderInteractionMode) => void;
+  /**
+   * A plan is ready: the banner shows, and an empty composer offers
+   * **Implement** (sending nothing typed) and **Implement in a new thread**;
+   * with text, the send button is **Refine**.
+   */
+  readonly planFollowUp: { readonly title: string | null } | undefined;
+  readonly onImplementInNewThread: () => Promise<void>;
+  /** The running turn's todo list, for the task progress badge. */
+  readonly tasks: ActiveTasks | undefined;
 }) {
   const [text, setText] = useState("");
   const [editing, setEditing] = useState<QueuedEdit | null>(null);
@@ -231,8 +260,56 @@ export function ChatComposer(props: {
     }
   };
 
+  // T3 Code's slash commands: the menu while a slash and part of a name are
+  // typed, and a message that is only `/plan` or `/default`.
+  const [slashIndex, setSlashIndex] = useState(0);
+  const [slashDismissed, setSlashDismissed] = useState<string | undefined>(undefined);
+  const slashCommands =
+    editing === null && slashDismissed !== text
+      ? matchSlashCommands(text, props.interactionModeEnabled)
+      : [];
+  const chooseInteractionMode = (mode: ProviderInteractionMode) => {
+    setText("");
+    setSlashIndex(0);
+    props.onInteractionModeChange(mode);
+    textareaRef.current?.focus();
+  };
+  const toggleInteractionMode = () =>
+    props.onInteractionModeChange(props.interactionMode === "plan" ? "default" : "plan");
+
+  const [implementMenuOpen, setImplementMenuOpen] = useState(false);
+
+  /** **Implement** sends nothing typed: the plan goes as the message. */
+  const implement = async () => {
+    setSending(true);
+    setError(undefined);
+    try {
+      await props.onSend("", "auto");
+    } catch (cause) {
+      setError(errorMessage(cause, "Failed to send plan follow-up."));
+    } finally {
+      setSending(false);
+    }
+  };
+
+  const implementInNewThread = async () => {
+    setImplementMenuOpen(false);
+    setSending(true);
+    setError(undefined);
+    try {
+      await props.onImplementInNewThread();
+    } catch (cause) {
+      setError(errorMessage(cause, "Could not start implementation thread."));
+    } finally {
+      setSending(false);
+    }
+  };
   const send = async (alternateModifier: boolean) => {
     if (!canSend) return;
+    if (editing === null && props.interactionModeEnabled) {
+      const mode = parseStandaloneComposerSlashCommand(text);
+      if (mode !== null) return chooseInteractionMode(mode);
+    }
     setSending(true);
     setError(undefined);
     setNotice(undefined);
@@ -282,6 +359,33 @@ export function ChatComposer(props: {
 
   const onKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
     if (event.nativeEvent.isComposing) return;
+    // The slash menu takes the arrows, Enter, Tab and Escape while it shows.
+    if (slashCommands.length > 0) {
+      if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+        event.preventDefault();
+        const step = event.key === "ArrowDown" ? 1 : -1;
+        setSlashIndex((at) => (at + step + slashCommands.length) % slashCommands.length);
+        return;
+      }
+      if ((event.key === "Enter" && !event.shiftKey) || event.key === "Tab") {
+        event.preventDefault();
+        const picked = slashCommands[Math.min(slashIndex, slashCommands.length - 1)];
+        if (picked !== undefined) chooseInteractionMode(picked.mode);
+        return;
+      }
+      if (event.key === "Escape") {
+        event.preventDefault();
+        setSlashDismissed(text);
+        return;
+      }
+    }
+    // T3 Code's hard-wired Shift+Tab: plan or build, with plan mode on.
+    if (event.key === "Tab" && event.shiftKey && !event.metaKey && !event.ctrlKey) {
+      if (!props.interactionModeEnabled) return;
+      event.preventDefault();
+      toggleInteractionMode();
+      return;
+    }
     // T3 Code's `thread.editQueuedMessage`, only with the caret at the start.
     if (isEditQueuedMessageShortcut(event)) {
       const atStart =
@@ -330,6 +434,10 @@ export function ChatComposer(props: {
         onReorder={props.onReorderQueuedRun}
         onRemove={props.onRemoveQueuedRun}
       />
+      {props.tasks === undefined ? null : <ComposerTasksBadge tasks={props.tasks} />}
+      {props.planFollowUp === undefined ? null : (
+        <ComposerPlanFollowUpBanner planTitle={props.planFollowUp.title} />
+      )}
       {notice === undefined ? null : (
         <p role="status" className="mb-2 text-xs text-neutral-600 dark:text-neutral-300">
           {notice}
@@ -340,7 +448,31 @@ export function ChatComposer(props: {
           {error}
         </p>
       )}
-      <div className="rounded-2xl border border-neutral-200 bg-white p-2 shadow-sm dark:border-neutral-800 dark:bg-neutral-900">
+      <div className="relative rounded-2xl border border-neutral-200 bg-white p-2 shadow-sm dark:border-neutral-800 dark:bg-neutral-900">
+        {slashCommands.length === 0 ? null : (
+          <div
+            role="listbox"
+            aria-label="Commands"
+            className="absolute bottom-full left-0 z-10 mb-1 w-72 rounded-lg border border-neutral-200 bg-white py-1 text-sm shadow-lg dark:border-neutral-800 dark:bg-neutral-900"
+          >
+            {slashCommands.map((command, index) => (
+              <button
+                key={command.label}
+                type="button"
+                role="option"
+                aria-selected={index === Math.min(slashIndex, slashCommands.length - 1)}
+                onMouseDown={(event) => event.preventDefault()}
+                onClick={() => chooseInteractionMode(command.mode)}
+                className="flex w-full items-baseline gap-2 px-3 py-1.5 text-left aria-selected:bg-neutral-100 dark:aria-selected:bg-neutral-800"
+              >
+                <span className="font-medium">{command.label}</span>
+                <span className="truncate text-xs text-neutral-500 dark:text-neutral-400">
+                  {command.description}
+                </span>
+              </button>
+            ))}
+          </div>
+        )}
         <textarea
           ref={textareaRef}
           aria-label="Message"
@@ -381,6 +513,15 @@ export function ChatComposer(props: {
               onOpenChange={onModePickerOpenChange}
               onSelect={props.onSelectRuntimeMode}
             />
+            {props.interactionModeEnabled ? (
+              <InteractionModeToggle
+                mode={props.interactionMode}
+                onToggle={() => {
+                  toggleInteractionMode();
+                  textareaRef.current?.focus();
+                }}
+              />
+            ) : null}
           </div>
           {action.kind === "interrupt" ? (
             <InterruptButton disabled={interrupting} onClick={() => void interrupt(action.runId)} />
@@ -388,6 +529,52 @@ export function ChatComposer(props: {
             <span className="px-2 text-xs text-neutral-500 dark:text-neutral-400">
               Interrupting…
             </span>
+          ) : props.planFollowUp !== undefined && action.kind === "send" && !hasContent ? (
+            <div className="relative flex items-center">
+              <button
+                type="button"
+                disabled={sending || props.selection === undefined}
+                onClick={() => void implement()}
+                className="h-8 rounded-l-full bg-neutral-900 px-4 text-xs font-medium text-white disabled:opacity-30 dark:bg-neutral-100 dark:text-neutral-900"
+              >
+                {sending ? "Sending..." : "Implement"}
+              </button>
+              <button
+                type="button"
+                aria-label="Implementation actions"
+                aria-haspopup="menu"
+                aria-expanded={implementMenuOpen}
+                disabled={sending || props.selection === undefined}
+                onClick={() => setImplementMenuOpen((open) => !open)}
+                className="h-8 rounded-r-full border-l border-white/20 bg-neutral-900 px-2 text-white disabled:opacity-30 dark:border-neutral-900/20 dark:bg-neutral-100 dark:text-neutral-900"
+              >
+                <ChevronDownIcon className="size-3.5" />
+              </button>
+              {implementMenuOpen ? (
+                <div
+                  role="menu"
+                  className="absolute right-0 bottom-full z-10 mb-1 w-52 rounded-lg border border-neutral-200 bg-white py-1 text-sm shadow-lg dark:border-neutral-800 dark:bg-neutral-900"
+                >
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={() => void implementInNewThread()}
+                    className="block w-full px-3 py-1.5 text-left hover:bg-neutral-100 dark:hover:bg-neutral-800"
+                  >
+                    Implement in a new thread
+                  </button>
+                </div>
+              ) : null}
+            </div>
+          ) : props.planFollowUp !== undefined && action.kind === "send" ? (
+            <button
+              type="button"
+              disabled={!canSend}
+              onClick={() => void send(false)}
+              className="h-8 rounded-full bg-neutral-900 px-4 text-xs font-medium text-white disabled:opacity-30 dark:bg-neutral-100 dark:text-neutral-900"
+            >
+              {sending ? "Sending..." : "Refine"}
+            </button>
           ) : action.kind === "resume" ? (
             <button
               type="button"

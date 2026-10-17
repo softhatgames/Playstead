@@ -71,6 +71,8 @@ const ingestProviderEvent = (
       return itemEvents(event.turnItem, base, now);
     case "runtime_request.updated":
       return [{ ...base, type: "runtime-request.updated", payload: event.runtimeRequest }];
+    case "plan.updated":
+      return [{ ...base, type: "plan.updated", payload: event.plan }];
   }
 };
 
@@ -181,7 +183,9 @@ const interruptedRunSettlement = (
     if (isRequestItem(item)) return [];
     const ended = { ...item, status: "interrupted" as const, completedAt: now, updatedAt: now };
     return itemEvents(
-      ended.type === "assistant_message" ? { ...ended, streaming: false } : ended,
+      ended.type === "assistant_message" || ended.type === "proposed_plan"
+        ? { ...ended, streaming: false }
+        : ended,
       base,
       now,
     );

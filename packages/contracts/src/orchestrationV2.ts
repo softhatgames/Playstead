@@ -7,6 +7,7 @@ import {
   MessageId,
   NodeId,
   NonNegativeInt,
+  PlanId,
   PositiveInt,
   ProjectId,
   ProviderSessionId,
@@ -31,9 +32,9 @@ import { ProviderDriverKind, ProviderInstanceId } from "./providerInstance.ts";
  * produce, and the thread and shell streams. Times are ISO strings, as the
  * project contract keeps them, so one schema serves the database and the wire.
  *
- * A thread runs in its runtime mode. Runtime requests are the provider's
- * questions to the person and its requests for approval. Absent: subagents,
- * plans, checkpoints and context handoffs.
+ * A thread runs in its runtime and interaction modes. Runtime requests are
+ * the provider's questions to the person and its requests for approval.
+ * Absent: subagents, checkpoints and context handoffs.
  */
 
 export const ORCHESTRATION_V2_WS_METHODS = {
@@ -71,9 +72,15 @@ export const RuntimeMode = Schema.Literals([
 export type RuntimeMode = typeof RuntimeMode.Type;
 export const DEFAULT_RUNTIME_MODE: RuntimeMode = "full-access";
 
-/** Every thread uses the default interaction mode; plan mode is absent. */
-export const ProviderInteractionMode = Schema.Literal("default");
+/**
+ * Whether the agent builds or only plans (T3 Code's `ProviderInteractionMode`):
+ * in `plan` it makes no changes and proposes a plan the person can implement
+ * or refine. The interface offers it only behind the client setting
+ * **Plan mode (legacy)**, as T3 Code does.
+ */
+export const ProviderInteractionMode = Schema.Literals(["default", "plan"]);
 export type ProviderInteractionMode = typeof ProviderInteractionMode.Type;
+export const DEFAULT_PROVIDER_INTERACTION_MODE: ProviderInteractionMode = "default";
 
 /** A provider-side id, such as Claude's session id (T3 Code's `OrchestrationV2ProviderRef`). */
 const OrchestrationV2ProviderRef = Schema.Struct({
@@ -95,6 +102,10 @@ export const OrchestrationV2AppThread = Schema.Struct({
   updatedAt: IsoDateTime,
 });
 export type OrchestrationV2AppThread = typeof OrchestrationV2AppThread.Type;
+
+/** The proposed plan a message implements (T3 Code's `sourcePlanRef`). */
+export const OrchestrationV2SourcePlanRef = Schema.Struct({ threadId: ThreadId, planId: PlanId });
+export type OrchestrationV2SourcePlanRef = typeof OrchestrationV2SourcePlanRef.Type;
 
 /**
  * T3 Code's run statuses without the preparation and rollback ones. A
@@ -140,6 +151,8 @@ export const OrchestrationV2Run = Schema.Struct({
   requestedAt: IsoDateTime,
   startedAt: Schema.NullOr(IsoDateTime),
   completedAt: Schema.NullOr(IsoDateTime),
+  /** The proposed plan the run's message implements. */
+  sourcePlanRef: Schema.optionalKey(OrchestrationV2SourcePlanRef),
 });
 export type OrchestrationV2Run = typeof OrchestrationV2Run.Type;
 
@@ -172,6 +185,8 @@ export const OrchestrationV2ExecutionNode = Schema.Struct({
     "tool_call",
     "approval_request",
     "user_input_request",
+    "plan",
+    "todo_list",
   ]),
   status: Schema.Literals(["pending", "running", "waiting", ...TerminalWorkStatuses]),
   providerThreadId: Schema.NullOr(ProviderThreadId),
@@ -337,6 +352,43 @@ export const OrchestrationV2RuntimeRequest = Schema.Struct({
 });
 export type OrchestrationV2RuntimeRequest = typeof OrchestrationV2RuntimeRequest.Type;
 
+/** One step of a todo list (T3 Code's `OrchestrationV2PlanStep`, without durations). */
+export const OrchestrationV2PlanStep = Schema.Struct({
+  id: TrimmedNonEmptyString,
+  text: TrimmedNonEmptyString,
+  status: Schema.Literals(["pending", "running", "completed"]),
+});
+export type OrchestrationV2PlanStep = typeof OrchestrationV2PlanStep.Type;
+
+const PlanArtifactBaseFields = {
+  id: PlanId,
+  threadId: ThreadId,
+  runId: Schema.NullOr(RunId),
+  nodeId: NodeId,
+  status: Schema.Literals(["draft", "active", "completed", "superseded"]),
+} as const;
+
+/**
+ * A plan the provider made (T3 Code's `OrchestrationV2PlanArtifact`): a
+ * proposed plan, active until a message implements it (`completed`) or a
+ * newer one replaces it (`superseded`); or the agent's todo list, active
+ * until every step is done.
+ */
+export const OrchestrationV2PlanArtifact = Schema.Union([
+  Schema.Struct({
+    ...PlanArtifactBaseFields,
+    kind: Schema.Literal("proposed_plan"),
+    markdown: Schema.String,
+  }),
+  Schema.Struct({
+    ...PlanArtifactBaseFields,
+    kind: Schema.Literal("todo_list"),
+    steps: Schema.Array(OrchestrationV2PlanStep),
+    explanation: Schema.optionalKey(Schema.String),
+  }),
+]);
+export type OrchestrationV2PlanArtifact = typeof OrchestrationV2PlanArtifact.Type;
+
 const TurnItemBaseFields = {
   id: TurnItemId,
   threadId: ThreadId,
@@ -363,7 +415,8 @@ const TurnItemBaseFields = {
  * `parentItemId`. An `approval_request` shows what a runtime request asks
  * to be approved: its kind and the provider's prompt. A `user_input_request`
  * shows a runtime request's questions, and their answers once given (T3
- * Code's `questionAnswer`, trimmed).
+ * Code's `questionAnswer`, trimmed). A `proposed_plan` and a `todo_list`
+ * show a plan as it stood.
  */
 export const OrchestrationV2TurnItem = Schema.Union([
   Schema.Struct({
@@ -426,6 +479,20 @@ export const OrchestrationV2TurnItem = Schema.Union([
   }),
   Schema.Struct({
     ...TurnItemBaseFields,
+    type: Schema.Literal("proposed_plan"),
+    planId: PlanId,
+    markdown: Schema.String,
+    streaming: Schema.Boolean,
+  }),
+  Schema.Struct({
+    ...TurnItemBaseFields,
+    type: Schema.Literal("todo_list"),
+    planId: PlanId,
+    steps: Schema.Array(OrchestrationV2PlanStep),
+    explanation: Schema.optionalKey(Schema.String),
+  }),
+  Schema.Struct({
+    ...TurnItemBaseFields,
     type: Schema.Literal("run_interrupt_request"),
     message: Schema.String,
   }),
@@ -453,6 +520,7 @@ export const OrchestrationV2DomainEvent = Schema.Union([
   event("thread.metadata-updated", OrchestrationV2AppThread),
   event("thread.model-selection-updated", OrchestrationV2AppThread),
   event("thread.runtime-mode-updated", OrchestrationV2AppThread),
+  event("thread.interaction-mode-updated", OrchestrationV2AppThread),
   event("run.created", OrchestrationV2Run),
   event("run.updated", OrchestrationV2Run),
   event("run-attempt.created", OrchestrationV2RunAttempt),
@@ -464,6 +532,7 @@ export const OrchestrationV2DomainEvent = Schema.Union([
   event("message.updated", OrchestrationV2ConversationMessage),
   event("turn-item.updated", OrchestrationV2TurnItem),
   event("runtime-request.updated", OrchestrationV2RuntimeRequest),
+  event("plan.updated", OrchestrationV2PlanArtifact),
 ]);
 export type OrchestrationV2DomainEvent = typeof OrchestrationV2DomainEvent.Type;
 
@@ -489,6 +558,7 @@ export const OrchestrationV2ThreadProjection = Schema.Struct({
   /** In ordinal order. */
   turnItems: Schema.Array(OrchestrationV2TurnItem),
   runtimeRequests: Schema.Array(OrchestrationV2RuntimeRequest),
+  plans: Schema.Array(OrchestrationV2PlanArtifact),
   updatedAt: IsoDateTime,
 });
 export type OrchestrationV2ThreadProjection = typeof OrchestrationV2ThreadProjection.Type;
@@ -574,18 +644,20 @@ export type MessageDispatchMode = typeof MessageDispatchMode.Type;
 
 /**
  * The commands a client sends, trimmed from T3 Code's `OrchestrationV2Command`.
- * A thread is created with its project, provider instance, model and runtime
- * mode, in the default interaction mode. Its model can change to another of
- * the same provider instance's, and its runtime mode to any other, both for
- * its next run. A message is plain text; the first one's `titleSeed` titles
- * the thread, and its `modelSelection`, when given, becomes the thread's
- * before its run starts (the composer sends the model's options this way, as
- * T3 Code's does). A message sent while a run is active is queued behind
- * it; queued runs can be reordered, edited and cancelled, and once held
- * wait for `queue.resume`. `run.interrupt` stops a run that is still
- * active, and **Stop** holds the queue with it. `runtime-request.respond`
- * answers a provider's request: an approval with a `decision`, questions
- * with `answers`.
+ * A thread is created with its project, provider instance, model, runtime
+ * mode and interaction mode (default unless given). Its model can change to
+ * another of the same provider instance's, and its runtime and interaction
+ * modes to any other, all for its next run. A message is plain text; the
+ * first one's `titleSeed` titles the thread, and its `modelSelection`, when
+ * given, becomes the thread's before its run starts (the composer sends the
+ * model's options this way, as T3 Code's does). A message that implements a
+ * proposed plan names it in `sourcePlanRef`, which completes the plan. A
+ * message sent while a run is active is queued behind it; queued runs can
+ * be reordered, edited and cancelled, and once held wait for
+ * `queue.resume`. `run.interrupt` stops a run that is still active, and
+ * **Stop** holds the queue with it. `runtime-request.respond` answers a
+ * provider's request: an approval with a `decision`, questions with
+ * `answers`.
  */
 export const OrchestrationV2Command = Schema.Union([
   Schema.Struct({
@@ -596,12 +668,20 @@ export const OrchestrationV2Command = Schema.Union([
     title: TrimmedNonEmptyString,
     modelSelection: ModelSelection,
     runtimeMode: RuntimeMode,
+    /** T3 Code requires it; Playstead takes `default` when it is left out. */
+    interactionMode: Schema.optionalKey(ProviderInteractionMode),
   }),
   Schema.Struct({
     type: Schema.Literal("thread.runtime-mode.set"),
     commandId: CommandId,
     threadId: ThreadId,
     runtimeMode: RuntimeMode,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("thread.interaction-mode.set"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    interactionMode: ProviderInteractionMode,
   }),
   Schema.Struct({
     type: Schema.Literal("thread.model-selection.set"),
@@ -628,6 +708,8 @@ export const OrchestrationV2Command = Schema.Union([
     deliveryIntent: Schema.optionalKey(Schema.Literal("auto")),
     /** **Resume** after a stop: the interrupted run this message continues (T3 Code's `manualContinuationOfRunId`). */
     manualContinuationOfRunId: Schema.optionalKey(RunId),
+    /** The proposed plan this message implements; it must still be active. */
+    sourcePlanRef: Schema.optionalKey(OrchestrationV2SourcePlanRef),
   }),
   Schema.Struct({
     type: Schema.Literal("run.interrupt"),

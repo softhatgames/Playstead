@@ -16,16 +16,20 @@ import {
 import {
   MessageId,
   NodeId,
+  PlanId,
   RuntimeRequestId,
   type ThreadId,
   TurnItemId,
 } from "@playstead/contracts/baseSchemas";
 import type {
   OrchestrationV2ExecutionNode,
+  OrchestrationV2PlanArtifact,
+  OrchestrationV2PlanStep,
   OrchestrationV2ProviderFailure,
   OrchestrationV2TurnItem,
   OrchestrationV2UserInputQuestion,
   ProviderApprovalDecision,
+  ProviderInteractionMode,
   ProviderRequestKind,
   ProviderUserInputAnswers,
   RuntimeMode,
@@ -70,12 +74,14 @@ import { resolveClaudeSdkExecutablePath } from "../../provider/Drivers/ClaudeExe
  *   thread's next turn offers its message to the same query.
  * - The query opens in the session's runtime mode as the SDK's permission
  *   mode (Supervised `default`, Auto-accept edits `acceptEdits`, Auto
- *   `auto`, Full access `bypassPermissions`). It cannot change mode in
- *   session, so a turn in another mode reopens it, resuming the same Claude
- *   session, as T3 Code does. `setPermissionMode` only puts back, before
- *   the next prompt, the mode Claude Code left on its own: approving an
- *   edit for the session moves it to `acceptEdits` (its suggestion), so in
- *   Supervised that allowance lasts until the turn ends, as in T3 Code.
+ *   `auto`, Full access `bypassPermissions`), or `plan` in plan mode. It
+ *   cannot change mode in session, so a turn in another mode reopens it,
+ *   resuming the same Claude session, as T3 Code does. `setPermissionMode`
+ *   only puts back, before the next prompt, the mode Claude Code left on
+ *   its own: approving an edit for the session moves it to `acceptEdits`
+ *   (its suggestion), so in Supervised that allowance lasts until the turn
+ *   ends, as in T3 Code; EnterPlanMode and a refused ExitPlanMode are put
+ *   back the same way.
  * - Assistant text streams from the SDK's partial messages. T3 Code asks for
  *   them too but shows text only when each whole message arrives.
  * - A file write is a `file_change` item carrying the file's name and the
@@ -113,6 +119,12 @@ import { resolveClaudeSdkExecutablePath } from "../../provider/Drivers/ClaudeExe
  *   it, except that `acceptAlways` approves for the session, as Codex
  *   does, where T3 Code's falls through to deny. An interrupt cancels the
  *   approval, which T3 Code's adapter leaves waiting.
+ *
+ * - The plan `ExitPlanMode` proposes becomes the thread's proposed plan, and
+ *   the call is refused so Claude stops there, as T3 Code's `canUseTool`
+ *   does; `TodoWrite`, and the task tools Claude Code 2.1 uses instead,
+ *   become the thread's todo list. Each new plan of a kind replaces the
+ *   thread's previous one.
  *
  * Absent, as in the slice as a whole: showing thinking, MCP, subagents,
  * attachments and usage.
@@ -240,12 +252,15 @@ export const layerQueryRunner: Layer.Layer<ClaudeAgentSdkQueryRunner, never, Cry
  * Each runtime mode as the SDK's permission mode (T3 Code's
  * `permissionModeForClaudeRuntimePolicy` and
  * `claudeRuntimeQueryPolicyForRuntimePolicy`, without the project and
- * instance overrides Playstead does not have). Only Full access skips
- * Claude Code's permission checks.
+ * instance overrides Playstead does not have). Plan mode is the SDK's
+ * `plan`, whatever the runtime mode, and never skips permissions. Only Full
+ * access skips Claude Code's permission checks.
  */
-const permissionModeForRuntimeMode = (
+const permissionModeForRuntimePolicy = (
   runtimeMode: RuntimeMode,
+  interactionMode: ProviderInteractionMode,
 ): Pick<ClaudeQueryOptions, "permissionMode" | "allowDangerouslySkipPermissions"> => {
+  if (interactionMode === "plan") return { permissionMode: "plan" };
   switch (runtimeMode) {
     case "approval-required":
       return { permissionMode: "default" };
@@ -277,6 +292,7 @@ const requiresClaudeApproval = (runtimeMode: RuntimeMode) =>
 const makeClaudeQueryOptions = (input: {
   readonly selection: CompiledClaudeModelSelection;
   readonly runtimeMode: RuntimeMode;
+  readonly interactionMode: ProviderInteractionMode;
   readonly nativeSessionId: string;
   /** Continue the session Claude Code saved under that id, instead of starting it. */
   readonly resume: boolean;
@@ -287,7 +303,7 @@ const makeClaudeQueryOptions = (input: {
 }): ClaudeAgentSdkQueryOptions => ({
   model: input.selection.apiModelId,
   tools: { type: "preset", preset: "claude_code" },
-  ...permissionModeForRuntimeMode(input.runtimeMode),
+  ...permissionModeForRuntimePolicy(input.runtimeMode, input.interactionMode),
   includePartialMessages: true,
   ...(input.selection.effort === undefined
     ? {}
@@ -421,6 +437,112 @@ const claudeSdkUserInputAnswers = (answers: ProviderUserInputAnswers): Record<st
       typeof answer === "string" ? answer : answer.join(", "),
     ]),
   );
+
+/** A tool's input, whether the SDK gives it as is or as T3 Code's `{type: "record", value}`. */
+const toolInputValue = (input: unknown): unknown =>
+  typeof input === "object" && input !== null && Reflect.get(input, "type") === "record"
+    ? Reflect.get(input, "value")
+    : input;
+
+/** `TodoWrite`'s todos as steps (T3 Code's `claudeTodoSteps`). */
+const claudeTodoSteps = (input: unknown): ReadonlyArray<OrchestrationV2PlanStep> => {
+  const value = toolInputValue(input);
+  const todos: unknown =
+    typeof value === "object" && value !== null ? Reflect.get(value, "todos") : undefined;
+  if (!Array.isArray(todos)) return [];
+  return todos.flatMap((todo: unknown, index) => {
+    const text = stringField(todo, "content")?.trim();
+    if (text === undefined || text.length === 0) return [];
+    const status: unknown = Reflect.get(todo as object, "status");
+    return [
+      {
+        id: `todo-${index}`,
+        text,
+        status:
+          status === "completed" ? "completed" : status === "in_progress" ? "running" : "pending",
+      },
+    ];
+  });
+};
+
+/** A thread's task list as Claude Code's task tools leave it, by task id. */
+type ClaudeTaskList = ReadonlyMap<string, Omit<OrchestrationV2PlanStep, "id">>;
+
+const claudeTaskStatus = (value: unknown): OrchestrationV2PlanStep["status"] | undefined =>
+  value === "pending"
+    ? "pending"
+    : value === "in_progress"
+      ? "running"
+      : value === "completed"
+        ? "completed"
+        : undefined;
+
+const fieldOf = (value: unknown, key: string): unknown =>
+  typeof value === "object" && value !== null ? Reflect.get(value, key) : undefined;
+
+/**
+ * The task list after one of Claude Code's task tools ran, or `undefined`
+ * when the call changed nothing (T3 Code's `applyClaudeTaskTool`): Claude
+ * Code 2.1 keeps its todo list with `TaskCreate`, `TaskUpdate` and
+ * `TaskList` rather than `TodoWrite`.
+ */
+const applyClaudeTaskTool = (
+  tasks: ClaudeTaskList,
+  toolName: string,
+  input: unknown,
+  result: unknown,
+): ClaudeTaskList | undefined => {
+  if (toolName === "TaskList") {
+    const listed = fieldOf(result, "tasks");
+    if (!Array.isArray(listed)) return undefined;
+    const next = new Map<string, Omit<OrchestrationV2PlanStep, "id">>();
+    for (const task of listed) {
+      const id = stringField(task, "id")?.trim();
+      const text = stringField(task, "subject")?.trim();
+      const status = claudeTaskStatus(fieldOf(task, "status"));
+      if (id !== undefined && text !== undefined && status !== undefined) {
+        next.set(id, { text, status });
+      }
+    }
+    return next.size === 0 && tasks.size === 0 ? undefined : next;
+  }
+  if (toolName === "TaskCreate") {
+    const created = fieldOf(result, "task");
+    const id = stringField(created, "id")?.trim();
+    const text = (stringField(created, "subject") ?? stringField(input, "subject"))?.trim();
+    if (id === undefined || text === undefined) return undefined;
+    return new Map(tasks).set(id, { text, status: "pending" });
+  }
+  if (toolName !== "TaskUpdate" || fieldOf(result, "success") === false) return undefined;
+  const id = (stringField(input, "taskId") ?? stringField(result, "taskId"))?.trim();
+  const task = id === undefined ? undefined : tasks.get(id);
+  if (id === undefined || task === undefined) return undefined;
+  const nativeStatus = fieldOf(input, "status");
+  if (nativeStatus === "deleted") {
+    const next = new Map(tasks);
+    next.delete(id);
+    return next;
+  }
+  const text = stringField(input, "subject")?.trim() ?? task.text;
+  const status = claudeTaskStatus(nativeStatus) ?? task.status;
+  if (text === task.text && status === task.status) return undefined;
+  return new Map(tasks).set(id, { text, status });
+};
+
+/** The task list as steps (T3 Code's `claudeTaskSteps`). */
+const claudeTaskSteps = (tasks: ClaudeTaskList): ReadonlyArray<OrchestrationV2PlanStep> =>
+  [...tasks].map(([id, task]) => ({ id: `task-${id}`, ...task }));
+
+/** The plan `ExitPlanMode` proposes (T3 Code's `claudeProposedPlan`). */
+const claudeProposedPlan = (input: unknown): string | undefined =>
+  stringField(toolInputValue(input), "plan")?.trim();
+
+/**
+ * What Claude Code is told when it proposes a plan: the interface holds it
+ * now, so the call is refused and the turn ends there (T3 Code's message).
+ */
+const PROPOSED_PLAN_CAPTURED_MESSAGE =
+  "The client captured your proposed plan. Stop here and wait for the user's feedback or implementation request in a later turn.";
 
 /**
  * A request Claude waits on: a question, whose `undefined` releases it
@@ -602,6 +724,10 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (input
   readonly platform: NodeJS.Platform;
 }): Effect.fn.Return<ProviderAdapterV2, never, ClaudeAgentSdkQueryRunner | FileSystem.FileSystem> {
   const runner = yield* ClaudeAgentSdkQueryRunner;
+  // Each thread's latest plan of each kind, across its sessions, so a new one replaces it.
+  const latestPlans = new Map<string, OrchestrationV2PlanArtifact>();
+  // Each thread's task list as Claude Code's task tools keep it (T3 Code keys it by session).
+  const taskLists = new Map<ThreadId, ClaudeTaskList>();
   const executablePath = yield* resolveClaudeSdkExecutablePath(input.binaryPath, {
     platform: input.platform,
     env: input.environment,
@@ -638,6 +764,97 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (input
               : Deferred.succeed(pending.decision, "cancel"),
           { discard: true },
         );
+
+      /**
+       * A proposed plan or a todo list as its node, plan and item (T3 Code's
+       * `emitClaudePlanProjection`): each tool call is a plan of its own, and
+       * replaces the thread's previous plan of that kind unless that one is
+       * done. A proposed plan stays active until a message implements it; a
+       * todo list until every step is done.
+       */
+      const emitPlan = (
+        turn: ActiveTurn,
+        toolUseId: string,
+        content:
+          | { readonly kind: "proposed_plan"; readonly markdown: string }
+          | { readonly kind: "todo_list"; readonly steps: ReadonlyArray<OrchestrationV2PlanStep> },
+      ) =>
+        Effect.gen(function* () {
+          const now = yield* nowIso;
+          const key = `${content.kind}:${toolUseId}`;
+          const nodeId = NodeId.make(`node:claude:${key}`);
+          const base = {
+            id: PlanId.make(`plan:claude:${key}`),
+            threadId: turn.input.threadId,
+            runId: turn.input.runId,
+            nodeId,
+          };
+          const plan: OrchestrationV2PlanArtifact =
+            content.kind === "proposed_plan"
+              ? { ...base, status: "active", kind: "proposed_plan", markdown: content.markdown }
+              : {
+                  ...base,
+                  status: content.steps.every((step) => step.status === "completed")
+                    ? "completed"
+                    : "active",
+                  kind: "todo_list",
+                  steps: content.steps,
+                };
+          const latestKey = `${turn.input.threadId}:${content.kind}`;
+          const previous = latestPlans.get(latestKey);
+          if (
+            previous !== undefined &&
+            previous.id !== plan.id &&
+            previous.status !== "completed"
+          ) {
+            yield* publish({ type: "plan.updated", plan: { ...previous, status: "superseded" } });
+          }
+          latestPlans.set(latestKey, plan);
+          yield* publish({
+            type: "node.updated",
+            node: {
+              id: nodeId,
+              threadId: turn.input.threadId,
+              runId: turn.input.runId,
+              parentNodeId: turn.input.rootNodeId,
+              rootNodeId: turn.input.rootNodeId,
+              kind: content.kind === "proposed_plan" ? "plan" : "todo_list",
+              status: "completed",
+              providerThreadId: turn.input.providerThread.id,
+              providerTurnId: turn.input.providerTurnId,
+              startedAt: now,
+              completedAt: now,
+            },
+          });
+          yield* publish({ type: "plan.updated", plan });
+          const itemBase = {
+            id: TurnItemId.make(`item:claude:${key}`),
+            threadId: turn.input.threadId,
+            runId: turn.input.runId,
+            nodeId,
+            providerThreadId: turn.input.providerThread.id,
+            providerTurnId: turn.input.providerTurnId,
+            ordinal: 0,
+            status: "completed" as const,
+            title: null,
+            startedAt: now,
+            completedAt: now,
+            updatedAt: now,
+          };
+          yield* publish({
+            type: "turn_item.updated",
+            turnItem:
+              content.kind === "proposed_plan"
+                ? {
+                    ...itemBase,
+                    type: "proposed_plan",
+                    planId: plan.id,
+                    markdown: content.markdown,
+                    streaming: false,
+                  }
+                : { ...itemBase, type: "todo_list", planId: plan.id, steps: content.steps },
+          });
+        });
 
       /**
        * An approval of a tool Claude Code asks about: its kind from the
@@ -757,6 +974,19 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (input
             if (callbackOptions.signal.aborted) abort();
             return Effect.sync(() => callbackOptions.signal.removeEventListener("abort", abort));
           });
+        // The plan Claude proposes is the person's to implement or refine:
+        // it is captured, and the call refused so Claude stops there.
+        if (toolName === "ExitPlanMode") {
+          const markdown = claudeProposedPlan(toolInput);
+          if (markdown !== undefined && markdown.length > 0) {
+            yield* emitPlan(turn, callbackOptions.toolUseID, { kind: "proposed_plan", markdown });
+          }
+          return {
+            behavior: "deny",
+            message: PROPOSED_PLAN_CAPTURED_MESSAGE,
+            toolUseID: callbackOptions.toolUseID,
+          } satisfies PermissionResult;
+        }
         if (toolName !== "AskUserQuestion") {
           if (!requiresClaudeApproval(open.runtimePolicy.runtimeMode)) {
             return {
@@ -850,6 +1080,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (input
       const options = makeClaudeQueryOptions({
         selection: openedSelection,
         runtimeMode: open.runtimePolicy.runtimeMode,
+        interactionMode: open.runtimePolicy.interactionMode,
         nativeSessionId,
         resume,
         cwd: open.runtimePolicy.cwd,
@@ -864,7 +1095,8 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (input
        * `permissionMode` beside `openedPermissionMode`), from its `init` and
        * `status` messages. Claude Code changes it itself when the person
        * approves an edit for the session (its suggestion is `setMode
-       * acceptEdits`).
+       * acceptEdits`), and in plan mode it may leave or re-enter plan mode itself
+       * (EnterPlanMode, a refused ExitPlanMode).
        */
       const openedPermissionMode: PermissionMode = options.permissionMode ?? "default";
       let permissionMode = openedPermissionMode;
@@ -1004,6 +1236,13 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (input
       ) =>
         Effect.gen(function* () {
           if (turn.items.has(block.id)) return;
+          // A todo list the agent keeps is shown as one, as T3 Code shows `TodoWrite`.
+          if (block.name === "TodoWrite") {
+            yield* emitPlan(turn, block.id, {
+              kind: "todo_list",
+              steps: claudeTodoSteps(block.input),
+            });
+          }
           const now = yield* nowIso;
           const base = {
             ...itemBase(
@@ -1070,6 +1309,10 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (input
         Effect.gen(function* () {
           const content = message.message.content;
           if (typeof content === "string") return;
+          // A lone result also comes structured, as T3 Code reads task tools' results.
+          const results = content.filter((block) => block.type === "tool_result");
+          const structured: unknown =
+            results.length === 1 ? Reflect.get(message, "tool_use_result") : undefined;
           for (const block of content) {
             if (block.type !== "tool_result") continue;
             const item = turn.items.get(block.tool_use_id);
@@ -1091,6 +1334,21 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (input
                   ? { ...ended, output: block.content }
                   : ended;
             yield* putItem(turn, block.tool_use_id, withOutput, "tool_call");
+            if (ended.type === "dynamic_tool" && status === "completed") {
+              const tasks = applyClaudeTaskTool(
+                taskLists.get(turn.input.threadId) ?? new Map(),
+                ended.toolName,
+                toolInputValue(ended.input),
+                structured ?? block.content,
+              );
+              if (tasks !== undefined) {
+                taskLists.set(turn.input.threadId, tasks);
+                yield* emitPlan(turn, `claude-tasks:${turn.input.providerTurnId}`, {
+                  kind: "todo_list",
+                  steps: claudeTaskSteps(tasks),
+                });
+              }
+            }
           }
         });
 

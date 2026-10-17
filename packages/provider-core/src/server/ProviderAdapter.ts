@@ -11,6 +11,7 @@ import type {
 import type {
   ModelSelection,
   OrchestrationV2ExecutionNode,
+  OrchestrationV2PlanArtifact,
   OrchestrationV2ProviderFailure,
   OrchestrationV2ProviderSession,
   OrchestrationV2ProviderThread,
@@ -37,7 +38,7 @@ import type * as Stream from "effect/Stream";
  * approvals and questions. Steering, rollback and fork are absent.
  */
 
-/** A turn runs in its thread's runtime mode, with the default interaction mode, in its project's folder. */
+/** A turn runs in its thread's runtime and interaction modes, in its project's folder. */
 export interface ProviderAdapterV2RuntimePolicy {
   readonly runtimeMode: RuntimeMode;
   readonly interactionMode: ProviderInteractionMode;
@@ -83,6 +84,8 @@ export type ProviderAdapterV2Event =
       readonly type: "runtime_request.updated";
       readonly runtimeRequest: OrchestrationV2RuntimeRequest;
     }
+  /** A plan the provider proposed or its todo list, with the node and item that show it. */
+  | { readonly type: "plan.updated"; readonly plan: OrchestrationV2PlanArtifact }
   | {
       readonly type: "turn.terminal";
       readonly providerTurnId: ProviderTurnId;
@@ -175,8 +178,9 @@ export const INTERRUPT_TERMINAL_TIMEOUT = "10 seconds";
  * What an adapter's sessions can do (T3 Code's
  * `OrchestrationV2ProviderCapabilities`, trimmed). A session that cannot
  * switch runtime mode in session is closed and opened again, continuing the
- * provider's conversation, when a turn starts in another mode than the
- * session opened with. An adapter that supports queued messages lets the
+ * provider's conversation, when a turn starts in another runtime or
+ * interaction mode than the session opened with: Claude's plan mode is a
+ * permission mode too. An adapter that supports queued messages lets the
  * orchestrator queue a message sent while a run is active, and start it as
  * a turn of its own once that run ends.
  */

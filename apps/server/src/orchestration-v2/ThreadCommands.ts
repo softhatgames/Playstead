@@ -9,8 +9,10 @@ import {
 } from "@playstead/contracts/baseSchemas";
 import {
   ACTIVE_RUN_STATUSES,
+  DEFAULT_PROVIDER_INTERACTION_MODE,
   type OrchestrationV2AppThread,
   type OrchestrationV2Command,
+  type OrchestrationV2PlanArtifact,
   type OrchestrationV2ProviderThread,
   type OrchestrationV2Run,
   type OrchestrationV2RuntimeRequest,
@@ -44,6 +46,11 @@ export interface ThreadCommandState {
   readonly projectExists: boolean;
   /** For `thread.create`: whether the provider instance can run a thread. */
   readonly instanceHasAdapter: boolean;
+  /**
+   * For a `message.dispatch` that implements a plan: the projection of the
+   * thread its `sourcePlanRef` names, which may be another thread.
+   */
+  readonly sourcePlanThread?: OrchestrationV2ThreadProjection | undefined;
   /** For `message.dispatch`: whether the thread's adapter can queue a message behind an active run. */
   readonly supportsQueuedMessages: boolean;
 }
@@ -107,20 +114,23 @@ const reject = (command: OrchestrationV2Command, reason: string) =>
  * (`apps/server/src/orchestration-v2/Orchestrator.ts`); Playstead keeps the
  * same events in the same order as a pure function.
  *
- * - `thread.create` makes a thread in its runtime mode and the default
- *   interaction mode, for an existing project and an instance that can run it.
+ * - `thread.create` makes a thread in its runtime and interaction modes, for
+ *   an existing project and an instance that can run it.
  * - `thread.model-selection.set` changes the model the thread's next run
  *   copies. Naming another instance is T3 Code's provider switch, which
  *   Playstead refuses.
- * - `thread.runtime-mode.set` changes the mode the thread's next turn
- *   starts in; as in T3 Code, an active run does not prevent it.
+ * - `thread.runtime-mode.set` and `thread.interaction-mode.set` change the
+ *   modes the thread's next turn starts in; as in T3 Code, an active run
+ *   prevents neither.
  * - `message.dispatch` starts a run when no run is active, and otherwise
  *   queues one behind it, whatever its dispatch mode (T3 Code's
  *   `CommandPolicy.decideMessageDispatch`). A model selection the message
  *   carries (the composer's traits) must name the thread's own instance; a
  *   started run makes it the thread's first, and a queued run keeps it
  *   until it starts. **Resume** continues an interrupted run that is the
- *   thread's latest.
+ *   thread's latest. A message that implements a proposed plan
+ *   (`sourcePlanRef`, perhaps another thread's in the same project) needs
+ *   the plan still active, and completes it.
  * - `queue.resume`, `queued-run.reorder`, `queued-run.cancel` and
  *   `queued-run.edit` release, reorder, remove and rewrite queued runs, as
  *   T3 Code's do; the orchestrator starts the next queued run after a
@@ -162,7 +172,7 @@ export function decideThreadCommand(input: {
         providerInstanceId: command.modelSelection.instanceId,
         modelSelection: command.modelSelection,
         runtimeMode: command.runtimeMode,
-        interactionMode: "default",
+        interactionMode: command.interactionMode ?? DEFAULT_PROVIDER_INTERACTION_MODE,
         activeProviderThreadId: null,
         createdAt: now,
         updatedAt: now,
@@ -214,6 +224,24 @@ export function decideThreadCommand(input: {
         effects: [],
       });
     }
+    case "thread.interaction-mode.set": {
+      const projection = state.projection;
+      if (projection === undefined) {
+        return reject(command, `Thread ${command.threadId} does not exist.`);
+      }
+      const { thread } = projection;
+      return Result.succeed({
+        events: [
+          {
+            type: "thread.interaction-mode-updated",
+            threadId: thread.id,
+            occurredAt: now,
+            payload: { ...thread, interactionMode: command.interactionMode, updatedAt: now },
+          },
+        ],
+        effects: [],
+      });
+    }
     case "message.dispatch": {
       const projection = state.projection;
       if (projection === undefined) {
@@ -227,6 +255,22 @@ export function decideThreadCommand(input: {
           command,
           `Thread ${projection.thread.id} runs on ${projection.thread.providerInstanceId}. Choose one of its models; switching provider is not available yet.`,
         );
+      }
+      let sourcePlan: SourcePlan | undefined;
+      if (command.sourcePlanRef !== undefined) {
+        const { threadId, planId } = command.sourcePlanRef;
+        const source = state.sourcePlanThread;
+        const plan = source?.plans.find((candidate) => candidate.id === planId);
+        if (source === undefined || plan?.kind !== "proposed_plan") {
+          return reject(command, `Proposed plan ${planId} does not exist on thread ${threadId}.`);
+        }
+        if (source.thread.projectId !== projection.thread.projectId) {
+          return reject(command, `Proposed plan ${planId} belongs to a different project.`);
+        }
+        if (plan.status !== "active") {
+          return reject(command, `Proposed plan ${planId} is not active.`);
+        }
+        sourcePlan = plan;
       }
       if (command.manualContinuationOfRunId !== undefined) {
         const source = projection.runs.find((run) => run.id === command.manualContinuationOfRunId);
@@ -243,7 +287,7 @@ export function decideThreadCommand(input: {
       // behind it, as T3 Code's `decideMessageDispatch` decides.
       const active = projection.runs.find((run) => ACTIVE_RUN_STATUSES.has(run.status));
       if (active === undefined) {
-        return Result.succeed(dispatchMessage(command, projection, ids, now));
+        return Result.succeed(dispatchMessage(command, projection, sourcePlan, ids, now));
       }
       if (!state.supportsQueuedMessages) {
         return reject(
@@ -251,7 +295,7 @@ export function decideThreadCommand(input: {
           `${projection.thread.providerInstanceId} cannot queue a message while run ${active.id} is active.`,
         );
       }
-      return Result.succeed(queueMessage(command, projection, ids, now));
+      return Result.succeed(queueMessage(command, projection, sourcePlan, ids, now));
     }
     case "queue.resume": {
       const projection = state.projection;
@@ -595,9 +639,29 @@ function dispatchRunInterrupt(
   };
 }
 
+type SourcePlan = Extract<OrchestrationV2PlanArtifact, { kind: "proposed_plan" }>;
+
+/** The plan a message implements is done, as T3 Code's `completeSourcePlan` marks it. */
+const completedSourcePlan = (
+  sourcePlan: SourcePlan | undefined,
+  now: string,
+): ReadonlyArray<NewDomainEvent> =>
+  sourcePlan === undefined
+    ? []
+    : [
+        {
+          type: "plan.updated",
+          threadId: sourcePlan.threadId,
+          ...(sourcePlan.runId === null ? {} : { runId: sourcePlan.runId }),
+          occurredAt: now,
+          payload: { ...sourcePlan, status: "completed" },
+        },
+      ];
+
 function dispatchMessage(
   command: Extract<OrchestrationV2Command, { type: "message.dispatch" }>,
   projection: OrchestrationV2ThreadProjection,
+  sourcePlan: SourcePlan | undefined,
   ids: ThreadCommandIds,
   now: string,
 ): ThreadCommandDecision {
@@ -681,6 +745,7 @@ function dispatchMessage(
     requestedAt: now,
     startedAt: null,
     completedAt: null,
+    ...(command.sourcePlanRef === undefined ? {} : { sourcePlanRef: command.sourcePlanRef }),
   };
   events.push(
     { type: "run.created", threadId, runId, occurredAt: now, payload: run },
@@ -765,6 +830,8 @@ function dispatchMessage(
     },
   );
 
+  events.push(...completedSourcePlan(sourcePlan, now));
+
   return {
     events,
     effects: [{ id: ids.effectId, request: { type: "provider-turn.start", runId } }],
@@ -848,6 +915,7 @@ const cancelQueuedRun = (
 function queueMessage(
   command: Extract<OrchestrationV2Command, { type: "message.dispatch" }>,
   projection: OrchestrationV2ThreadProjection,
+  sourcePlan: SourcePlan | undefined,
   ids: ThreadCommandIds,
   now: string,
 ): ThreadCommandDecision {
@@ -886,6 +954,7 @@ function queueMessage(
     requestedAt: now,
     startedAt: null,
     completedAt: null,
+    ...(command.sourcePlanRef === undefined ? {} : { sourcePlanRef: command.sourcePlanRef }),
   };
   const base = { threadId, runId, occurredAt: now };
   events.push(
@@ -940,6 +1009,7 @@ function queueMessage(
       },
     },
   );
+  events.push(...completedSourcePlan(sourcePlan, now));
   return { events, effects: [] };
 }
 

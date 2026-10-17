@@ -14,6 +14,7 @@ import * as WorkspacePaths from "../../workspace/WorkspacePaths.ts";
 import { ClaudeAgentSdkQueryRunner, makeClaudeAdapter } from "../Adapters/ClaudeAdapterV2.ts";
 import { CodexAppServerClientFactory, makeCodexAdapter } from "../Adapters/CodexAdapterV2.ts";
 import * as EffectWorker from "../EffectWorker.ts";
+import * as EventSink from "../EventSink.ts";
 import * as EventStore from "../EventStore.ts";
 import * as Orchestrator from "../Orchestrator.ts";
 import * as ProviderAdapterRegistry from "../ProviderAdapterRegistry.ts";
@@ -97,6 +98,7 @@ export const makeOrchestrationHarness = Effect.fn("makeOrchestrationHarness")(fu
     worker: EffectWorker.OrchestrationEffectWorkerV2,
     projects: ProjectService.ProjectService,
     eventStore: EventStore.EventStoreV2,
+    eventSink: EventSink.EventSinkV2,
     recovery: ProviderRuntimeRecoveryService.ProviderRuntimeRecoveryService,
   }).pipe(Effect.provideContext(context));
   if (input.recoverOnStartup === true) yield* services.recovery.recover;

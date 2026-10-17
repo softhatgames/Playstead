@@ -44,6 +44,8 @@ export type FollowUpBehavior = typeof FollowUpBehavior.Type;
  */
 export const ClientSettings = Schema.Struct({
   followUpBehavior: FollowUpBehavior.pipe(Schema.withDecodingDefault(Effect.succeed("queue"))),
+  /** **Plan mode (legacy)**: the Plan/Build toggle, `/plan`, `/default` and Shift+Tab. */
+  planModeEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
 });
 export type ClientSettings = typeof ClientSettings.Type;
 
