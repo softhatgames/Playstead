@@ -135,9 +135,10 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
             }),
         ),
       );
-      // Not scoped: titles run from the effect worker, whatever scope it has.
+      // Scoped to this request alone (closed at the end of the runner), so
+      // the effect worker's own scope never holds or reaps it.
       const directory = yield* fs
-        .makeTempDirectory({ prefix: "playstead-codex-" })
+        .makeTempDirectoryScoped({ prefix: "playstead-codex-" })
         .pipe(
           Effect.mapError(
             (cause) =>
@@ -254,9 +255,8 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
             ),
           ),
         ),
-        Effect.ensuring(fs.remove(directory, { recursive: true }).pipe(Effect.ignore)),
       );
-    });
+    }).pipe(Effect.scoped);
 
   return TextGenerationOperations.fromRunner("CodexTextGeneration", runCodexJson);
 });
