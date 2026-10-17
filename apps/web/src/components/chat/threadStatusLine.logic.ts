@@ -25,7 +25,7 @@ export type ThreadStatusLine =
 const SECOND_MS = 1_000;
 
 /** Time left until `iso`: "Soon", "45s left", "12m left", "2h left", "3d left" (T3 Code's `formatRelativeTimeUntilLabel`). */
-export function formatRelativeTimeUntilLabel(iso: string, now: number): string {
+function formatRelativeTimeUntilLabel(iso: string, now: number): string {
   const at = Date.parse(iso);
   if (Number.isNaN(at)) return "";
   const diff = at - now;
