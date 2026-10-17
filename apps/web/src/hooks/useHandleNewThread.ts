@@ -5,7 +5,7 @@ import { useCallback, useMemo } from "react";
 import { useClientSettings } from "../clientSettings.ts";
 import { readPrimaryServerSettings, usePrimaryConnectionState } from "../connection/runtime.ts";
 import { createDraft, useDraft } from "../drafts.ts";
-import { buildSidebarProjectGroups } from "../components/Sidebar.inbox.logic.ts";
+import { buildSidebarProjectGroups } from "../sidebarProjectGrouping.ts";
 import { resolveNewThreadProjectId } from "../components/threadNavigation.logic.ts";
 import { openProject, useActiveProjectId } from "../uiState.ts";
 import { useIsScratchProject } from "./useScratchProject.ts";
@@ -17,7 +17,9 @@ import { useIsScratchProject } from "./useScratchProject.ts";
  * in (`resolveNewThreadProjectId`; the inbox passes its scope), and the
  * draft it opens. `startInProject` opens a draft in any project.
  */
-export function useNewThread(options?: { readonly scopedProjectIds?: ReadonlySet<string> | null }) {
+export function useHandleNewThread(options?: {
+  readonly scopedProjectIds?: ReadonlySet<string> | null;
+}) {
   const state = usePrimaryConnectionState();
   const projects = useMemo(() => state?.shell?.projects ?? [], [state?.shell?.projects]);
   const threads = useMemo(() => state?.shell?.threads ?? [], [state?.shell?.threads]);

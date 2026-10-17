@@ -3,11 +3,59 @@ import type { OrchestrationThreadSearchMatch } from "@playstead/contracts/thread
 import type { KeyboardEvent as ReactKeyboardEvent, RefObject } from "react";
 
 import { SearchIcon, XIcon } from "../icons.tsx";
-import { compactTimeLabel } from "../Sidebar.inbox.logic.ts";
+import { compactTimeLabel } from "../Sidebar.logic.ts";
 import { ThreadSearchMatchExcerpt } from "../ThreadSearchMatch.tsx";
+import type { SidebarThreadSearchState } from "../../hooks/useSidebarThreadSearch.ts";
 import { ThreadStatusIndicator } from "./SidebarThreadParts.tsx";
 
-export const SEARCH_RESULTS_ID = "sidebar-thread-search-results";
+/**
+ * What the nav shows while searching: the results as a listbox the field
+ * controls, or that the server is still searching messages, or that
+ * nothing matched.
+ */
+export function SidebarSearchResults(props: {
+  readonly search: SidebarThreadSearchState;
+  readonly routeThreadId: string | undefined;
+  readonly projectNameOf: (thread: OrchestrationV2ThreadShell) => string | null;
+}) {
+  const { search } = props;
+  if (search.results.length === 0) {
+    return (
+      <p
+        role="status"
+        className="px-2 py-6 text-center text-xs text-neutral-500 dark:text-neutral-400"
+      >
+        {search.isPending ? "Searching thread messages…" : "No threads found"}
+      </p>
+    );
+  }
+  return (
+    <ul
+      id={SEARCH_RESULTS_ID}
+      role="listbox"
+      aria-label="Thread search results"
+      className="flex flex-col gap-px"
+    >
+      {search.results.map((thread, index) => (
+        <SidebarSearchResultRow
+          key={thread.id}
+          thread={thread}
+          index={index}
+          isSettled={thread.settledOverride === "settled"}
+          isHighlighted={index === search.activeIndex}
+          isCurrent={thread.id === props.routeThreadId}
+          projectName={props.projectNameOf(thread)}
+          match={search.matchById.get(thread.id) ?? null}
+          query={search.query}
+          onHighlight={() => search.setActiveIndex(index)}
+          onSelect={() => search.select(thread)}
+        />
+      ))}
+    </ul>
+  );
+}
+
+const SEARCH_RESULTS_ID = "sidebar-thread-search-results";
 export const searchResultId = (index: number) => `sidebar-thread-search-result-${index}`;
 
 /**
@@ -70,7 +118,7 @@ export function SidebarSearchField(props: {
  * the matching message when it matched by one. The pointer highlights it;
  * a click opens the thread.
  */
-export function SidebarSearchResultRow(props: {
+function SidebarSearchResultRow(props: {
   readonly thread: OrchestrationV2ThreadShell;
   readonly index: number;
   readonly isSettled: boolean;

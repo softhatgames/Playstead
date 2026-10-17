@@ -1,6 +1,7 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import { CommandId, ProjectId, ThreadId } from "@playstead/contracts/baseSchemas";
+import { removeTempDirectory } from "@playstead/shared/tempDirectory";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
@@ -93,12 +94,12 @@ describe("ManagedProjectFolders", () => {
         const harness = yield* makeOrchestrationHarness({});
         const { projectId } = yield* harness.projects.ensureScratchProject;
         const root = yield* requireRoot(harness);
-        yield* fs.remove(root, { recursive: true });
+        yield* removeTempDirectory(root);
 
         assert.strictEqual((yield* harness.projects.ensureScratchProject).projectId, projectId);
         assert.isTrue(yield* fs.exists(root));
 
-        yield* fs.remove(root, { recursive: true });
+        yield* removeTempDirectory(root);
         const folder = yield* harness.folders.folderForThread({
           projectId,
           threadId: ThreadId.make("thread-after-delete"),

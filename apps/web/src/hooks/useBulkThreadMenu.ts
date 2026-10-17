@@ -5,15 +5,15 @@ import { useCallback } from "react";
 
 import { readClientSettings } from "../clientSettings.ts";
 import { requestCustomSnooze } from "../components/CustomSnoozeDialog.tsx";
-import { buildMultiSelectThreadContextMenuItems } from "../components/Sidebar.inbox.logic.ts";
+import { buildMultiSelectThreadContextMenuItems } from "../components/Sidebar.logic.ts";
 import { threadRuntimeCanArchive } from "../components/threadActionMenu.logic.ts";
 import { readLocalApi } from "../localApi.ts";
 import {
   clearThreadSelection,
   readThreadSelection,
   removeFromThreadSelection,
-} from "../threadSelection.ts";
-import { failureToast } from "../toast.ts";
+} from "../threadSelectionStore.ts";
+import { failureToast } from "../components/ui/toast.tsx";
 import {
   markThreadUnread,
   regenerateThreadTitle,

@@ -11,8 +11,8 @@ import * as Fiber from "effect/Fiber";
 import * as Option from "effect/Option";
 import * as TestClock from "effect/testing/TestClock";
 
-import { makeOrchestrationHarness } from "./testkit/OrchestratorHarness.ts";
 import { replayClaude, replayCodex } from "./testkit/ProviderReplay.ts";
+import { projectionOf } from "./testkit/ThreadCommands.ts";
 import {
   FILE_CREATE_IDS,
   FILE_CREATE_SCENARIO,
@@ -59,12 +59,6 @@ const codexTerminatedProcesses = (recording: ProviderReplayTranscript) =>
       ? [frame.params.processId]
       : [];
   });
-
-const threadProjection = (harness: Effect.Success<ReturnType<typeof makeOrchestrationHarness>>) =>
-  Effect.map(
-    harness.orchestrator.getThreadProjection(TURN_INTERRUPT_IDS.threadId),
-    Option.getOrThrow,
-  );
 
 /** What T3 Code's `turn_interrupt` fixture asserts, for the interrupted run. */
 const assertInterrupted = (projection: OrchestrationV2ThreadProjection, runId: RunId) => {
@@ -193,7 +187,7 @@ describe("Interrupt a turn", () => {
             yield* replay.assertComplete;
             assert.strictEqual(first.status, "interrupted");
             assert.strictEqual(next.status, "completed");
-            const projection = yield* threadProjection(harness);
+            const projection = yield* projectionOf(harness, TURN_INTERRUPT_IDS.threadId);
             assertInterrupted(projection, first.id);
             assert.deepStrictEqual(
               projection.runs.map((run) => run.status),
@@ -270,7 +264,7 @@ describe("Interrupt a turn", () => {
 
           yield* replay.assertComplete;
           assert.strictEqual(run.status, "interrupted");
-          assertInterrupted(yield* threadProjection(harness), run.id);
+          assertInterrupted(yield* projectionOf(harness, TURN_INTERRUPT_IDS.threadId), run.id);
           const accepted = yield* harness.orchestrator.dispatch({
             type: "message.dispatch",
             dispatchMode: { type: "start_immediately" },

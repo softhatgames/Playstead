@@ -12,7 +12,7 @@ import {
   waitForPrimaryState,
 } from "../connection/runtime.ts";
 import { createDraft } from "../drafts.ts";
-import { failureToast } from "../toast.ts";
+import { failureToast } from "../components/ui/toast.tsx";
 import { openProject } from "../uiState.ts";
 
 /** How long the shell may take to show the "No project" project (T3 Code's). */

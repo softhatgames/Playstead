@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 
 import { renameProject, type ProjectActionTarget } from "../../hooks/useProjectActions.ts";
-import { failureToast, warningToast } from "../../toast.ts";
+import { failureToast, warningToast } from "../ui/toast.tsx";
 import { resolveProjectRenameCommit } from "../projectActions.logic.ts";
 
 /**

@@ -3,11 +3,11 @@ import { type ReactNode, useEffect, useRef } from "react";
 import { APP_DISPLAY_NAME } from "../branding.ts";
 import { useClientSettings } from "../clientSettings.ts";
 import { isCommandPaletteOpen, openCommandPalette } from "../commandPaletteBus.ts";
-import { useNewThread } from "../hooks/useNewThread.ts";
+import { useHandleNewThread } from "../hooks/useHandleNewThread.ts";
 import { useScratchProject } from "../hooks/useScratchProject.ts";
 import { undoLatestThreadAction } from "../hooks/showThreadUndoNotice.ts";
 import { isEditableTarget, keybindings, resolveShortcutCommand } from "../keybindings.ts";
-import { clearThreadSelection, readThreadSelection } from "../threadSelection.ts";
+import { clearThreadSelection, readThreadSelection } from "../threadSelectionStore.ts";
 import { toggleSidebarOpen, useSidebarOpen } from "../uiState.ts";
 import { CommandPalette } from "./CommandPalette.tsx";
 import { LegacySidebar } from "./LegacySidebar.tsx";
@@ -26,7 +26,7 @@ import { SidebarThreadUndoNotice } from "./sidebar/SidebarThreadUndoNotice.tsx";
  * palette is open.
  */
 function useGlobalShortcuts(legacySidebarEnabled: boolean) {
-  const { groups, startFromContext } = useNewThread();
+  const { groups, startFromContext } = useHandleNewThread();
   const { scratchWorkspaceRoot, startScratchThread } = useScratchProject();
   const latest = useRef({
     legacySidebarEnabled,

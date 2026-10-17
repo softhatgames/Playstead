@@ -1,6 +1,6 @@
 import { useSyncExternalStore } from "react";
 
-import { failureToast } from "../toast.ts";
+import { failureToast } from "../components/ui/toast.tsx";
 import * as ThreadUndo from "./threadUndo.ts";
 
 /**

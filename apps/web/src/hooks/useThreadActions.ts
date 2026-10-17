@@ -1,4 +1,4 @@
-import { pinOrderKeyBetween } from "@playstead/client-runtime/state/threadOrder";
+import { pinOrderKeyBetween } from "@playstead/client-runtime/state/threadSort";
 import { canSnooze } from "@playstead/client-runtime/state/threadSettled";
 import { CommandId, type ThreadId } from "@playstead/contracts/baseSchemas";
 import type { OrchestrationV2ThreadShell } from "@playstead/contracts/orchestrationV2";

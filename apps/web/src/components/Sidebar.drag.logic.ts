@@ -1,9 +1,13 @@
 import {
   type OrderKeyAssignment,
   planThreadReorder,
-} from "@playstead/client-runtime/state/threadOrder";
+} from "@playstead/client-runtime/state/threadSort";
 
-import type { SidebarSection } from "./Sidebar.inbox.logic.ts";
+import type { OrchestrationV2ThreadShell } from "@playstead/contracts/orchestrationV2";
+
+import type { SidebarSection } from "./Sidebar.logic.ts";
+
+type SidebarThread = OrchestrationV2ThreadShell;
 
 /**
  * Dragging threads in the inbox sidebar (T3 Code's drag functions in
@@ -277,4 +281,92 @@ export function sidebarThreadKeyAtY(list: HTMLElement, y: number): string | null
     key = row.dataset.threadItem ?? null;
   }
   return key;
+}
+
+/**
+ * A drop on its way to the server: the dropped thread and every thread
+ * that takes a new key show as they will be, until the server's threads
+ * catch up or a command fails (T3 Code's `optimisticDrop`).
+ */
+export interface OptimisticDrop {
+  readonly key: string;
+  readonly section: "pinned" | "active" | "settled";
+  readonly occurredAt: string;
+  readonly assignedKeys: ReadonlyMap<string, string>;
+  readonly done: boolean;
+}
+
+/**
+ * The thread as the drop leaves it (T3 Code's `applySidebarThreadDrop`):
+ * settled drops its pin and keys; into Pinned or Active it is un-settled,
+ * pinned or unpinned, and takes its new key; any drop wakes it.
+ */
+export function applySidebarThreadDrop(
+  thread: SidebarThread,
+  section: OptimisticDrop["section"],
+  now: string,
+  orderKey?: string,
+): SidebarThread {
+  const wasSettled = thread.settledOverride === "settled";
+  // Every drop leaves the thread awake: pin, settle and wake each clear a snooze.
+  const awake = { ...thread, snoozedAt: null, snoozedUntil: null };
+  if (section === "settled") {
+    return {
+      ...awake,
+      pinnedAt: null,
+      pinOrderKey: null,
+      activeOrderKey: null,
+      settledOverride: "settled",
+      settledAt: wasSettled ? (thread.settledAt ?? now) : now,
+      unsettledAt: null,
+    };
+  }
+  const resumed = wasSettled
+    ? { ...awake, settledOverride: "active" as const, settledAt: null, unsettledAt: now }
+    : awake;
+  return {
+    ...resumed,
+    pinnedAt: section === "pinned" ? (thread.pinnedAt ?? now) : null,
+    pinOrderKey: section === "pinned" ? (orderKey ?? thread.pinOrderKey) : null,
+    ...(section === "active" && orderKey !== undefined ? { activeOrderKey: orderKey } : {}),
+  };
+}
+
+/** The threads with a drop applied: the dropped one moved, the others with their new keys. */
+export function applyOptimisticDrop(
+  threads: ReadonlyArray<SidebarThread>,
+  drop: OptimisticDrop | null,
+): ReadonlyArray<SidebarThread> {
+  if (drop === null) return threads;
+  return threads.map((thread) => {
+    const orderKey = drop.assignedKeys.get(thread.id);
+    if (thread.id === drop.key) {
+      return applySidebarThreadDrop(thread, drop.section, drop.occurredAt, orderKey);
+    }
+    if (orderKey === undefined) return thread;
+    return drop.section === "pinned"
+      ? { ...thread, pinOrderKey: orderKey }
+      : { ...thread, activeOrderKey: orderKey };
+  });
+}
+
+/** Whether the server's threads now show the drop, so its projection can go. */
+export function dropLanded(
+  threads: ReadonlyArray<SidebarThread>,
+  projected: ReadonlyArray<SidebarThread>,
+  drop: OptimisticDrop,
+): boolean {
+  const byId = new Map(threads.map((thread) => [thread.id as string, thread]));
+  return projected.every((thread) => {
+    if (thread.id !== drop.key && !drop.assignedKeys.has(thread.id)) return true;
+    const canonical = byId.get(thread.id);
+    return (
+      canonical === undefined ||
+      ((canonical.pinnedAt === null) === (thread.pinnedAt === null) &&
+        canonical.settledOverride === thread.settledOverride &&
+        canonical.pinOrderKey === thread.pinOrderKey &&
+        canonical.activeOrderKey === thread.activeOrderKey &&
+        canonical.snoozedUntil === thread.snoozedUntil)
+    );
+  });
 }

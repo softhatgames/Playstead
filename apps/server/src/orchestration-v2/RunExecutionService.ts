@@ -215,12 +215,19 @@ const interruptedRunSettlement = (
  * `waiting` until its checkpoint is captured; Playstead takes no
  * checkpoints, so the run is written `completed` here directly. The run comes
  * last, so a client that sees it end sees everything under it ended too.
+ *
+ * Its session goes back to `ready` only while it is still live. T3 Code's
+ * run end writes no session at all (its session manager owns the session's
+ * status); Playstead's adapters report none, so the run end does, but a
+ * session the thread already stopped, such as one an archive or delete
+ * detached while the turn waited on an approval, stays `stopped`.
  */
 const finalRunEvents = (
   records: RootRunRecords,
   status: TerminalStatus,
   failure: OrchestrationV2ProviderFailure | null,
   now: string,
+  sessionEnded: boolean,
 ): ReadonlyArray<EventSink.NewDomainEvent> => {
   const base = { threadId: records.run.threadId, runId: records.run.id, occurredAt: now };
   const failed: ReadonlyArray<EventSink.NewDomainEvent> =
@@ -266,11 +273,15 @@ const finalRunEvents = (
       type: "provider-thread.updated",
       payload: { ...records.providerThread, status: "idle", updatedAt: now },
     },
-    {
-      ...base,
-      type: "provider-session.updated",
-      payload: { ...records.providerSession, status: "ready", updatedAt: now },
-    },
+    ...(sessionEnded
+      ? []
+      : [
+          {
+            ...base,
+            type: "provider-session.updated" as const,
+            payload: { ...records.providerSession, status: "ready" as const, updatedAt: now },
+          },
+        ]),
     { ...base, type: "run.updated", payload: { ...records.run, status, completedAt: now } },
   ];
 };
@@ -455,16 +466,21 @@ const make = Effect.gen(function* () {
   ) =>
     Effect.gen(function* () {
       const now = yield* nowIso;
-      const settlement = Option.match(yield* projections.getThread(records.run.threadId), {
+      const projection = yield* projections.getThread(records.run.threadId);
+      const settlement = Option.match(projection, {
         onNone: () => [],
-        onSome: (projection) =>
+        onSome: (current) =>
           status === "interrupted"
-            ? interruptedRunSettlement(projection, records.run, records.providerTurn.id, now)
-            : unansweredRequestSettlement(projection, records.run, records.providerTurn.id, now),
+            ? interruptedRunSettlement(current, records.run, records.providerTurn.id, now)
+            : unansweredRequestSettlement(current, records.run, records.providerTurn.id, now),
       });
+      const session = Option.getOrUndefined(projection)?.providerSessions.find(
+        (candidate) => candidate.id === records.providerSession.id,
+      );
+      const sessionEnded = session?.status === "stopped" || session?.status === "error";
       yield* whileActive(records.run.id, [
         ...settlement,
-        ...finalRunEvents(records, status, failure, now),
+        ...finalRunEvents(records, status, failure, now, sessionEnded),
       ]);
     });
 

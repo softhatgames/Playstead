@@ -1,24 +1,13 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import { CommandId, MessageId, type ThreadId } from "@playstead/contracts/baseSchemas";
-import {
-  OrchestrationDispatchCommandError,
-  type OrchestrationV2Command,
-} from "@playstead/contracts/orchestrationV2";
-import {
-  decodeProviderReplayNdjson,
-  materializeReplayWorkspace,
-} from "@playstead/provider-testing/replayTranscript";
+import type { OrchestrationV2Command } from "@playstead/contracts/orchestrationV2";
 import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
-import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
-import * as Path from "effect/Path";
 import * as TestClock from "effect/testing/TestClock";
 
-import { makeTestServerConfig } from "../testUtils/testServer.ts";
-import { makeClaudeReplay } from "./Adapters/ClaudeAdapterV2.testkit.ts";
 import { makeOrchestrationHarness } from "./testkit/OrchestratorHarness.ts";
 import { FILE_CREATE_IDS, runFileCreateScenario } from "./testkit/fixtures/fileCreate.ts";
 import {
@@ -28,6 +17,8 @@ import {
   sendQuestionMessage,
 } from "./testkit/fixtures/questionAnswer.ts";
 import { isSnoozed, snoozeStateOf } from "./ThreadSettlementService.ts";
+import { refusal, threadOf } from "./testkit/ThreadCommands.ts";
+import { replayClaude } from "./testkit/ProviderReplay.ts";
 
 /**
  * Seam 1 for snoozing a thread (T3 Code's `Orchestrator.ts`
@@ -38,37 +29,7 @@ import { isSnoozed, snoozeStateOf } from "./ThreadSettlementService.ts";
  * replaying recordings.
  */
 
-const readRecording = (name: string) =>
-  Effect.gen(function* () {
-    const fs = yield* FileSystem.FileSystem;
-    const path = yield* Path.Path;
-    const file = path.join(
-      path.dirname(yield* path.fromFileUrl(new URL(import.meta.url))),
-      "testkit",
-      "fixtures",
-      name,
-    );
-    return yield* decodeProviderReplayNdjson(yield* fs.readFileString(file));
-  });
-
-const makeHarness = (recording: string, folder: string) =>
-  Effect.gen(function* () {
-    const path = yield* Path.Path;
-    const config = yield* makeTestServerConfig();
-    const recorded = yield* readRecording(recording);
-    const replay = yield* makeClaudeReplay(
-      yield* materializeReplayWorkspace(recorded, path.join(config.baseDir, folder)),
-    );
-    return yield* makeOrchestrationHarness({ claudeRunner: replay.runner, config });
-  });
-
 type Harness = Effect.Success<ReturnType<typeof makeOrchestrationHarness>>;
-
-const threadOf = (harness: Harness, threadId: ThreadId) =>
-  Effect.map(
-    harness.orchestrator.getThreadProjection(threadId),
-    (projection) => Option.getOrThrow(projection).thread,
-  );
 
 const shellOf = (harness: Harness, threadId: ThreadId) =>
   Effect.map(harness.projections.getThreadShell(threadId), Option.getOrThrow);
@@ -113,19 +74,13 @@ const send = (
       : { type, commandId: CommandId.make(id), threadId }) as OrchestrationV2Command,
   );
 
-const refusal = <A, E>(effect: Effect.Effect<A, E>) =>
-  Effect.map(Effect.flip(effect), (error) => {
-    assert.instanceOf(error, OrchestrationDispatchCommandError);
-    return (error as OrchestrationDispatchCommandError).message;
-  });
-
 describe("Snooze a thread", () => {
   it.layer(NodeServices.layer)((it) => {
     it.effect(
       "a snooze needs a future time, keeps its start when repeated, and waking clears it",
       () =>
         Effect.gen(function* () {
-          const harness = yield* makeHarness("file_create.claude.ndjson", "empty-game");
+          const { harness } = yield* replayClaude("file_create.claude.ndjson");
           const threadId = FILE_CREATE_IDS.threadId;
           yield* runFileCreateScenario(harness);
 
@@ -178,7 +133,7 @@ describe("Snooze a thread", () => {
       "a snoozed thread wakes early when a run completes after the snooze, and a message wakes it",
       () =>
         Effect.gen(function* () {
-          const harness = yield* makeHarness("file_create.claude.ndjson", "empty-game");
+          const { harness } = yield* replayClaude("file_create.claude.ndjson");
           const threadId = FILE_CREATE_IDS.threadId;
           let wakeAt = "";
           // Snoozed while the run is starting; the run completes a minute later.
@@ -230,7 +185,7 @@ describe("Snooze a thread", () => {
       "snoozing is refused while the provider waits on a question, which the sidebar sees",
       () =>
         Effect.gen(function* () {
-          const harness = yield* makeHarness("question_answer.claude.ndjson", "empty-game");
+          const { harness } = yield* replayClaude("question_answer.claude.ndjson");
           const threadId = QUESTION_IDS.threadId;
           const { sent } = yield* sendQuestionMessage(harness, CLAUDE_QUESTION_SCENARIO);
           yield* awaitPendingQuestion(harness, sent.sequence);
@@ -245,7 +200,7 @@ describe("Snooze a thread", () => {
 
     it.effect("an archived thread refuses snooze and wake, and a deleted one refuses both", () =>
       Effect.gen(function* () {
-        const harness = yield* makeHarness("file_create.claude.ndjson", "empty-game");
+        const { harness } = yield* replayClaude("file_create.claude.ndjson");
         const threadId = FILE_CREATE_IDS.threadId;
         yield* runFileCreateScenario(harness);
         const wakeAt = yield* fromNow(HOUR);

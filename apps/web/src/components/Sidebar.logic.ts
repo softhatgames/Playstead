@@ -1,4 +1,212 @@
+import {
+  isThreadWorking,
+  sortInboxThreadsByReturn,
+  sortWorkingThreadsBySend,
+} from "@playstead/client-runtime/state/threadInbox";
+import { effectiveSnoozed, type SnoozePreset } from "@playstead/client-runtime/state/threadSettled";
+import {
+  sortActiveThreadsByOrderKey,
+  sortPinnedThreadsByOrderKey,
+  sortSettledThreads,
+} from "@playstead/client-runtime/state/threadSort";
+import type { ContextMenuItem } from "@playstead/contracts/ipc";
 import type { OrchestrationV2ThreadShell } from "@playstead/contracts/orchestrationV2";
+
+import { type SnoozeMenuId, snoozeMenuChildren } from "./Sidebar.snooze.ts";
+
+type SidebarThread = OrchestrationV2ThreadShell;
+
+const timeOf = (iso: string | null): number => {
+  if (iso === null) return 0;
+  const ms = Date.parse(iso);
+  return Number.isFinite(ms) ? ms : 0;
+};
+
+/**
+ * Where a thread shows in the inbox sidebar (T3 Code's
+ * `resolveSidebarThreadSection` in `apps/web/src/components/Sidebar.logic.ts`
+ * at 2577baf): a snoozed thread is in **Snoozed** until it wakes, even a
+ * settled one; then **Settled**, **Pinned** and **Active**. **Working** is
+ * the optional shelf for threads at work, which a pinned thread never
+ * leaves Pinned for.
+ */
+export type SidebarSection = "pinned" | "active" | "working" | "snoozed" | "settled";
+
+function resolveSidebarThreadSection(
+  thread: SidebarThread,
+  now: string,
+): Exclude<SidebarSection, "working"> {
+  if (effectiveSnoozed(thread, { now })) return "snoozed";
+  if (thread.settledOverride === "settled") return "settled";
+  if (thread.pinnedAt !== null) return "pinned";
+  return "active";
+}
+
+export interface SidebarSections {
+  readonly pinned: ReadonlyArray<SidebarThread>;
+  readonly active: ReadonlyArray<SidebarThread>;
+  readonly working: ReadonlyArray<SidebarThread>;
+  readonly snoozed: ReadonlyArray<SidebarThread>;
+  readonly settled: ReadonlyArray<SidebarThread>;
+}
+
+/**
+ * Splits the shell's threads into the inbox sidebar's sections, each in its
+ * order (T3 Code's section memo in `Sidebar.tsx`, with the sorts of
+ * `packages/client-runtime/src/state/threadSort.ts` and `threadInbox.ts`).
+ * Only the scoped projects' threads show, or every project's with null.
+ * Snoozed threads are as they are at `now` (the present by default), the
+ * earliest wake first.
+ */
+export function buildSidebarSections(input: {
+  readonly threads: ReadonlyArray<SidebarThread>;
+  readonly scopedProjectIds: ReadonlySet<string> | null;
+  readonly workingShelfEnabled: boolean;
+  readonly returnedAt?: (thread: SidebarThread) => number | undefined;
+  readonly now?: string;
+}): SidebarSections {
+  const now = input.now ?? new Date().toISOString();
+  const pinned: SidebarThread[] = [];
+  const active: SidebarThread[] = [];
+  const working: SidebarThread[] = [];
+  const snoozed: SidebarThread[] = [];
+  const settled: SidebarThread[] = [];
+  for (const thread of input.threads) {
+    if (thread.archivedAt !== null || thread.deletedAt !== null) continue;
+    if (input.scopedProjectIds !== null && !input.scopedProjectIds.has(thread.projectId)) continue;
+    const section = resolveSidebarThreadSection(thread, now);
+    if (section === "pinned") pinned.push(thread);
+    else if (section === "snoozed") snoozed.push(thread);
+    else if (section === "settled") settled.push(thread);
+    else if (input.workingShelfEnabled && isThreadWorking(thread)) working.push(thread);
+    else active.push(thread);
+  }
+  return {
+    pinned: sortPinnedThreadsByOrderKey(pinned),
+    active: input.workingShelfEnabled
+      ? sortInboxThreadsByReturn(active, input.returnedAt)
+      : sortActiveThreadsByOrderKey(active),
+    working: sortWorkingThreadsBySend(working),
+    snoozed: snoozed.sort(
+      (left, right) =>
+        timeOf(left.snoozedUntil) - timeOf(right.snoozedUntil) || left.id.localeCompare(right.id),
+    ),
+    settled: sortSettledThreads(settled),
+  };
+}
+
+export type MultiSelectThreadMenuId =
+  | "unpin"
+  | "settle"
+  | "snooze"
+  | SnoozeMenuId
+  | "regenerate-title"
+  | "mark-unread"
+  | "archive"
+  | "delete";
+
+/**
+ * The menu for several selected threads. The inbox sidebar's (T3 Code's
+ * `handleMultiSelectContextMenu`) offers Unpin when some are pinned, Settle,
+ * **Snooze** with its presets when every one can be snoozed, Regenerate
+ * titles, Mark unread and Delete. The project tree's (T3 Code's
+ * `buildMultiSelectThreadContextMenuItems`) offers Mark unread, Archive
+ * unless one is working, and Delete.
+ */
+export function buildMultiSelectThreadContextMenuItems(input: {
+  readonly variant: "inbox" | "tree";
+  readonly count: number;
+  readonly pinnedCount: number;
+  /** The selected threads not settled yet. */
+  readonly settleableCount: number;
+  readonly hasRunningThread: boolean;
+  /** Null until threads can regenerate their titles. */
+  readonly titleRegeneration: {
+    readonly supportedCount: number;
+    readonly actionableCount: number;
+  } | null;
+  /** The presets, or null when some selected thread cannot be snoozed now. */
+  readonly snooze?: { readonly presets: ReadonlyArray<SnoozePreset> } | null;
+}): ReadonlyArray<ContextMenuItem<MultiSelectThreadMenuId>> {
+  const { count } = input;
+  if (input.variant === "tree") {
+    return [
+      { id: "mark-unread", label: `Mark unread (${count})` },
+      { id: "archive", label: `Archive (${count})`, disabled: input.hasRunningThread },
+      { id: "delete", label: `Delete (${count})`, destructive: true },
+    ];
+  }
+  const regeneration = input.titleRegeneration;
+  const regenerateItems: ReadonlyArray<ContextMenuItem<MultiSelectThreadMenuId>> =
+    regeneration === null || regeneration.supportedCount === 0
+      ? []
+      : [
+          regeneration.actionableCount === 0
+            ? {
+                id: "regenerate-title",
+                label: `Regenerating… (${regeneration.supportedCount})`,
+                disabled: true,
+              }
+            : {
+                id: "regenerate-title",
+                label: `Regenerate titles (${regeneration.actionableCount})`,
+              },
+        ];
+  return [
+    ...(input.pinnedCount > 0
+      ? [{ id: "unpin" as const, label: `Unpin (${input.pinnedCount})` }]
+      : []),
+    { id: "settle", label: `Settle (${count})`, disabled: input.settleableCount === 0 },
+    ...(input.snooze == null
+      ? []
+      : [
+          {
+            id: "snooze" as const,
+            label: `Snooze (${count})`,
+            children: snoozeMenuChildren(input.snooze.presets),
+          },
+        ]),
+    ...regenerateItems,
+    { id: "mark-unread", label: `Mark unread (${count})` },
+    { id: "delete", label: `Delete (${count})`, destructive: true },
+  ];
+}
+
+/**
+ * Where the view goes when the thread in it is settled or snoozed (T3 Code's
+ * `planForwardNavigation` in `Sidebar.tsx`): the next thread in the
+ * sidebar's order, wrapping round, that is not parked (settled or snoozed)
+ * or being parked with it; null when there is none, for
+ * the caller to open a new draft in the thread's project.
+ */
+export function threadAfterPark(input: {
+  readonly orderedIds: ReadonlyArray<string>;
+  readonly parkedIds: ReadonlySet<string>;
+  readonly threadId: string;
+  readonly coParkingIds?: ReadonlySet<string>;
+}): string | null {
+  const index = input.orderedIds.indexOf(input.threadId);
+  if (index === -1) return null;
+  const rest = [...input.orderedIds.slice(index + 1), ...input.orderedIds.slice(0, index)];
+  return (
+    rest.find((id) => !input.parkedIds.has(id) && input.coParkingIds?.has(id) !== true) ?? null
+  );
+}
+
+/**
+ * A row's time since `iso` (T3 Code's `formatRelativeTime` with
+ * `compactSidebarTimeLabel`): "now" under a minute, then minutes, hours and
+ * days.
+ */
+export function compactTimeLabel(iso: string, now: number): string {
+  const seconds = Math.floor((now - timeOf(iso)) / 1000);
+  if (seconds < 60) return "now";
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}m`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h`;
+  return `${Math.floor(hours / 24)}d`;
+}
 
 /**
  * Whether the thread shows the unseen-completion dot (T3 Code's
@@ -27,8 +235,6 @@ export function hasUnseenCompletion(
 export function isTrailingDoubleClick(detail: number): boolean {
   return detail > 1;
 }
-
-const timeOf = (iso: string | null): number => (iso === null ? 0 : Date.parse(iso) || 0);
 
 /**
  * The project tree's projects in the chosen order (T3 Code's

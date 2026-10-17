@@ -21,6 +21,7 @@ import * as Stream from "effect/Stream";
 
 import type * as Orchestrator from "../../Orchestrator.ts";
 import type { makeOrchestrationHarness } from "../OrchestratorHarness.ts";
+import { projectionOf } from "../ThreadCommands.ts";
 
 /**
  * Steering, through a provider (T3 Code's `message_steering` fixture at
@@ -85,16 +86,10 @@ export const MESSAGE_STEERING_IDS = {
 
 type Harness = Effect.Success<ReturnType<typeof makeOrchestrationHarness>>;
 
-const threadOf = (harness: Harness) =>
-  Effect.map(
-    harness.orchestrator.getThreadProjection(MESSAGE_STEERING_IDS.threadId),
-    Option.getOrThrow,
-  );
-
 /** The run message `n` started. */
 const runOf = (harness: Harness, n: number) =>
   Effect.gen(function* () {
-    const run = (yield* threadOf(harness)).runs.find(
+    const run = (yield* projectionOf(harness, MESSAGE_STEERING_IDS.threadId)).runs.find(
       (candidate) => candidate.userMessageId === MESSAGE_STEERING_IDS.messageId(n),
     );
     return run === undefined ? yield* Effect.die(`Message ${n} has no run.`) : run;

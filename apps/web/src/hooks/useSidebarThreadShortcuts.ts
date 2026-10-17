@@ -17,7 +17,7 @@ import {
   threadJumpIndexFromCommand,
   threadTraversalDirectionFromCommand,
 } from "../keybindings.ts";
-import { clearThreadSelection, readThreadSelection } from "../threadSelection.ts";
+import { clearThreadSelection, readThreadSelection } from "../threadSelectionStore.ts";
 import { openProject } from "../uiState.ts";
 
 interface ShortcutThread {

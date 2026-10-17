@@ -4,7 +4,7 @@ import { copyTextToClipboard } from "../clipboard.ts";
 import { isCommandPaletteOpen } from "../commandPaletteBus.ts";
 import { keybindings, resolveShortcutCommand } from "../keybindings.ts";
 import { settleAndAdvance } from "../settleAndAdvance.ts";
-import { failureToast, successToast } from "../toast.ts";
+import { failureToast, successToast } from "../components/ui/toast.tsx";
 import {
   pinThread,
   settleThread,

@@ -1,18 +1,10 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import { CommandId, MessageId, ThreadId } from "@playstead/contracts/baseSchemas";
-import {
-  decodeProviderReplayNdjson,
-  materializeReplayWorkspace,
-} from "@playstead/provider-testing/replayTranscript";
 import * as Effect from "effect/Effect";
-import * as FileSystem from "effect/FileSystem";
-import * as Path from "effect/Path";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 
-import { makeTestServerConfig } from "../testUtils/testServer.ts";
-import { makeClaudeReplay } from "./Adapters/ClaudeAdapterV2.testkit.ts";
 import { makeOrchestrationHarness } from "./testkit/OrchestratorHarness.ts";
 import {
   FILE_CREATE_IDS,
@@ -20,6 +12,7 @@ import {
   runFileCreateScenario,
   sendFileCreateMessage,
 } from "./testkit/fixtures/fileCreate.ts";
+import { replayClaude } from "./testkit/ProviderReplay.ts";
 
 /**
  * Seam 1 for searching threads' messages (T3 Code's
@@ -29,33 +22,7 @@ import {
  * person's messages, which are finished as soon as they are sent.
  */
 
-const readRecording = (name: string) =>
-  Effect.gen(function* () {
-    const fs = yield* FileSystem.FileSystem;
-    const path = yield* Path.Path;
-    const file = path.join(
-      path.dirname(yield* path.fromFileUrl(new URL(import.meta.url))),
-      "testkit",
-      "fixtures",
-      name,
-    );
-    return yield* decodeProviderReplayNdjson(yield* fs.readFileString(file));
-  });
-
-const makeHarness = (options?: Parameters<typeof makeClaudeReplay>[1]) =>
-  Effect.gen(function* () {
-    const path = yield* Path.Path;
-    const config = yield* makeTestServerConfig();
-    const recorded = yield* readRecording("file_create.claude.ndjson");
-    const replay = yield* makeClaudeReplay(
-      yield* materializeReplayWorkspace(recorded, path.join(config.baseDir, "empty-game")),
-      options,
-    );
-    const harness = yield* makeOrchestrationHarness({ claudeRunner: replay.runner, config });
-    return { harness, replay };
-  });
-
-type Harness = Effect.Success<ReturnType<typeof makeHarness>>["harness"];
+type Harness = Effect.Success<ReturnType<typeof makeOrchestrationHarness>>;
 
 const REPLY =
   'Created `hello-claude.txt` in the working directory with the line "Hello from Claude in Playstead!"';
@@ -70,7 +37,7 @@ describe("Search threads", () => {
   it.layer(NodeServices.layer)((it) => {
     it.effect("a finished reply is found, with the reply as its snippet", () =>
       Effect.gen(function* () {
-        const { harness } = yield* makeHarness();
+        const { harness } = yield* replayClaude("file_create.claude.ndjson");
         yield* runFileCreateScenario(harness);
         assert.deepStrictEqual(yield* search(harness, "CREATED `hello"), [
           [FILE_CREATE_IDS.threadId, "assistant", REPLY],
@@ -80,8 +47,10 @@ describe("Search threads", () => {
 
     it.effect("a reply still being written is not searched", () =>
       Effect.gen(function* () {
-        const { harness, replay } = yield* makeHarness({
-          holdBefore: (frame) => JSON.stringify(frame).includes('"text":" Playstead!\\""'),
+        const { harness, replay } = yield* replayClaude("file_create.claude.ndjson", {
+          claude: {
+            holdBefore: (frame) => JSON.stringify(frame).includes('"text":" Playstead!\\""'),
+          },
         });
         const { sent } = yield* sendFileCreateMessage(harness);
         yield* harness.worker.drain;
@@ -106,7 +75,7 @@ describe("Search threads", () => {
       "each thread gives one match, the person's words before the agent's, and threads where the person said it come first",
       () =>
         Effect.gen(function* () {
-          const { harness } = yield* makeHarness();
+          const { harness } = yield* replayClaude("file_create.claude.ndjson");
           yield* runFileCreateScenario(harness);
           // Said by both: the person's message is the thread's match.
           assert.deepStrictEqual(yield* search(harness, "write tool"), [
@@ -151,7 +120,7 @@ describe("Search threads", () => {
 
     it.effect("archived and deleted threads are not searched, and unarchived ones are again", () =>
       Effect.gen(function* () {
-        const { harness } = yield* makeHarness();
+        const { harness } = yield* replayClaude("file_create.claude.ndjson");
         yield* runFileCreateScenario(harness);
         const archived = yield* sendUserMessages(harness, "archived", ["A comet tail"]);
         const deleted = yield* sendUserMessages(harness, "deleted", ["A comet shower"]);
@@ -175,7 +144,7 @@ describe("Search threads", () => {
 
     it.effect("threads of a removed project are not searched", () =>
       Effect.gen(function* () {
-        const { harness } = yield* makeHarness();
+        const { harness } = yield* replayClaude("file_create.claude.ndjson");
         yield* runFileCreateScenario(harness);
         yield* sendUserMessages(harness, "doomed", ["A comet tail"]);
         assert.lengthOf(yield* search(harness, "comet"), 1);
@@ -193,7 +162,7 @@ describe("Search threads", () => {
 
     it.effect("the query matches as typed, with no wildcards", () =>
       Effect.gen(function* () {
-        const { harness } = yield* makeHarness();
+        const { harness } = yield* replayClaude("file_create.claude.ndjson");
         yield* runFileCreateScenario(harness);
         const threadId = yield* sendUserMessages(harness, "wildcards", [
           "Speed up by 100% on level_2!",
@@ -214,7 +183,7 @@ describe("Search threads", () => {
 
     it.effect("a long message is cut to a snippet around the match, on one line", () =>
       Effect.gen(function* () {
-        const { harness } = yield* makeHarness();
+        const { harness } = yield* replayClaude("file_create.claude.ndjson");
         yield* runFileCreateScenario(harness);
         const before = "Lorem ipsum dolor sit amet.\n\n".repeat(10);
         const after = " Consectetur adipiscing elit.".repeat(20);

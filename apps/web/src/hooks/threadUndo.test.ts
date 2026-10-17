@@ -1,6 +1,6 @@
 import { afterEach, assert, beforeEach, describe, it, vi } from "@effect/vitest";
 
-import { readToasts } from "../toast.ts";
+import { readToasts } from "../components/ui/toast.tsx";
 import {
   readThreadUndoNotice,
   showThreadUndoNotice,

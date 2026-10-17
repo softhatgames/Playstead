@@ -10,7 +10,7 @@ import {
 import { desktopBridge } from "../../env.ts";
 import { useThreadActionMenu } from "../../hooks/useThreadActionMenu.ts";
 import { renameThread, type ThreadLifecycleTarget } from "../../hooks/useThreadActions.ts";
-import { failureToast, warningToast } from "../../toast.ts";
+import { failureToast, warningToast } from "../ui/toast.tsx";
 import { ChevronDownIcon } from "../icons.tsx";
 import { isTrailingDoubleClick } from "../Sidebar.logic.ts";
 import { resolveRenameCommit } from "./ChatHeader.logic.ts";

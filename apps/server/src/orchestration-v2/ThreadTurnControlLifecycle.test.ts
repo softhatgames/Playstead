@@ -3,7 +3,6 @@ import { assert, describe, it } from "@effect/vitest";
 import { CommandId, MessageId, ProjectId, ThreadId } from "@playstead/contracts/baseSchemas";
 import {
   type MessageDispatchMode,
-  OrchestrationDispatchCommandError,
   type OrchestrationV2Command,
   type OrchestrationV2Run,
 } from "@playstead/contracts/orchestrationV2";
@@ -29,6 +28,7 @@ import {
   sendSupervisedMessage,
   SUPERVISED_IDS,
 } from "./testkit/fixtures/supervisedApproval.ts";
+import { projectionOf, refusal } from "./testkit/ThreadCommands.ts";
 
 /**
  * Seam 1 for slice 2's settle, snooze, archive and delete rules meeting
@@ -98,20 +98,11 @@ const send = (harness: Harness, n: number, dispatchMode: MessageDispatchMode) =>
     dispatchMode,
   });
 
-const projectionOf = (harness: Harness, threadId: ThreadId = THREAD_ID) =>
-  Effect.map(harness.orchestrator.getThreadProjection(threadId), Option.getOrThrow);
-
 const runOf = (runs: ReadonlyArray<OrchestrationV2Run>, n: number) => {
   const run = runs.find((candidate) => candidate.userMessageId === `message:turn-control:${n}`);
   assert.isDefined(run);
   return run!;
 };
-
-const refusal = <A, E>(effect: Effect.Effect<A, E>) =>
-  Effect.map(Effect.flip(effect), (error) => {
-    assert.instanceOf(error, OrchestrationDispatchCommandError);
-    return (error as OrchestrationDispatchCommandError).message;
-  });
 
 /** Message 1 starts, message 2 waits behind it, and Stop holds the queue: nothing runs, one message waits. */
 const holdOneQueuedMessage = (harness: Harness) =>
@@ -120,10 +111,10 @@ const holdOneQueuedMessage = (harness: Harness) =>
     yield* send(harness, 2, { type: "queue_after_active" });
     yield* dispatch(harness, THREAD_ID, {
       type: "run.interrupt",
-      runId: runOf((yield* projectionOf(harness)).runs, 1).id,
+      runId: runOf((yield* projectionOf(harness, THREAD_ID)).runs, 1).id,
       holdQueue: true,
     });
-    const { runs } = yield* projectionOf(harness);
+    const { runs } = yield* projectionOf(harness, THREAD_ID);
     assert.deepStrictEqual(
       [runOf(runs, 1).status, runOf(runs, 2).status, runOf(runs, 2).queueHeld],
       ["interrupted", "queued", true],
@@ -202,7 +193,10 @@ describe("Settle, snooze, archive and delete with approvals and queued messages"
 
           yield* dispatch(harness, THREAD_ID, { type: "queued-run.cancel", runId: queued.id });
           yield* dispatch(harness, THREAD_ID, { type: "thread.settle" });
-          assert.strictEqual((yield* projectionOf(harness)).thread.settledOverride, "settled");
+          assert.strictEqual(
+            (yield* projectionOf(harness, THREAD_ID)).thread.settledOverride,
+            "settled",
+          );
         }).pipe(Effect.scoped),
     );
 
@@ -234,7 +228,7 @@ describe("Settle, snooze, archive and delete with approvals and queued messages"
           yield* send(harness, 3, { type: "queue_after_active" });
 
           yield* dispatch(harness, THREAD_ID, { type: "thread.archive" });
-          const archived = yield* projectionOf(harness);
+          const archived = yield* projectionOf(harness, THREAD_ID);
           assert.isNotNull(archived.thread.archivedAt);
           assert.deepStrictEqual(
             [1, 2, 3].map((n) => {
@@ -296,6 +290,27 @@ describe("Settle, snooze, archive and delete with approvals and queued messages"
         }).pipe(Effect.scoped),
     );
 
+    it.effect(
+      "the provider session of a thread archived while waiting on an approval stays stopped after its run ends",
+      () =>
+        Effect.gen(function* () {
+          const { harness } = yield* threadWaitingOnApproval;
+          const threadId = SUPERVISED_IDS.threadId;
+
+          yield* dispatch(harness, threadId, { type: "thread.archive" });
+          yield* harness.worker.drain;
+          const archived = yield* projectionOf(harness, threadId);
+          assert.deepStrictEqual(
+            archived.runs.map((run) => run.status),
+            ["failed"],
+          );
+          assert.deepStrictEqual(
+            archived.providerSessions.map((session) => session.status),
+            ["stopped"],
+          );
+        }).pipe(Effect.scoped),
+    );
+
     it.effect("deleting a thread cancels its active run and its queued messages", () =>
       Effect.gen(function* () {
         const harness = yield* harnessWithThread;
@@ -303,7 +318,7 @@ describe("Settle, snooze, archive and delete with approvals and queued messages"
         yield* send(harness, 2, { type: "queue_after_active" });
 
         yield* dispatch(harness, THREAD_ID, { type: "thread.delete" });
-        const deleted = yield* projectionOf(harness);
+        const deleted = yield* projectionOf(harness, THREAD_ID);
         assert.deepStrictEqual(
           [1, 2].map((n) => {
             const run = runOf(deleted.runs, n);
@@ -363,7 +378,7 @@ describe("Settle, snooze, archive and delete with approvals and queued messages"
           });
 
           yield* send(harness, 2, { type: "queue_after_active" });
-          const { thread, runs } = yield* projectionOf(harness);
+          const { thread, runs } = yield* projectionOf(harness, THREAD_ID);
           assert.deepStrictEqual(
             [thread.settledOverride, thread.snoozedUntil, runOf(runs, 2).status],
             [null, null, "queued"],
@@ -439,7 +454,7 @@ describe("Settle, snooze, archive and delete with approvals and queued messages"
 
         yield* elapseFourDays(harness);
         assert.deepStrictEqual(yield* harness.projections.getSettlementCandidates(), []);
-        assert.isNull((yield* projectionOf(harness)).thread.settledOverride);
+        assert.isNull((yield* projectionOf(harness, THREAD_ID)).thread.settledOverride);
       }).pipe(Effect.scoped),
     );
   });

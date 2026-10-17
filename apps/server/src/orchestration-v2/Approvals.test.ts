@@ -21,18 +21,16 @@ import {
   SESSION_APPROVAL_SCENARIOS,
   type SessionApprovalScenarioName,
 } from "./testkit/fixtures/sessionApprovals.ts";
+import { projectionOf } from "./testkit/ThreadCommands.ts";
 
 type Harness = Effect.Success<ReturnType<typeof makeOrchestrationHarness>>;
-
-const projectionOf = (harness: Harness) =>
-  Effect.map(harness.orchestrator.getThreadProjection(SUPERVISED_IDS.threadId), Option.getOrThrow);
 
 /**
  * The content the provider wrote to the file, as its completed file change
  * says: a replay writes nothing, and the recorder checked the disk.
  */
 const writtenContent = (harness: Harness, name: string) =>
-  Effect.map(projectionOf(harness), (projection) => {
+  Effect.map(projectionOf(harness, SUPERVISED_IDS.threadId), (projection) => {
     const change = projection.turnItems.find(
       (item) =>
         item.type === "file_change" && item.fileName.endsWith(name) && item.status === "completed",
@@ -67,7 +65,7 @@ describe("Approvals in Supervised", () => {
             assert.strictEqual(run.status, "completed");
             assert.isAtLeast(approvals.length, 1);
             assert.strictEqual(approvals[0]?.kind, "file-change");
-            const projection = yield* projectionOf(harness);
+            const projection = yield* projectionOf(harness, SUPERVISED_IDS.threadId);
             for (const approval of approvals) {
               const request = projection.runtimeRequests.find(
                 (candidate) => candidate.id === approval.id,
@@ -107,7 +105,7 @@ describe("Approvals in Supervised", () => {
             yield* assertComplete;
             assert.strictEqual(run.status, "completed");
             assert.isAtLeast(approvals.length, 1);
-            const projection = yield* projectionOf(harness);
+            const projection = yield* projectionOf(harness, SUPERVISED_IDS.threadId);
             for (const approval of approvals) {
               const request = projection.runtimeRequests.find(
                 (candidate) => candidate.id === approval.id,
@@ -144,7 +142,7 @@ describe("Approvals in Supervised", () => {
           yield* assertComplete;
           assert.strictEqual(run.status, "interrupted");
           assert.strictEqual(approvals.length, 1);
-          const projection = yield* projectionOf(harness);
+          const projection = yield* projectionOf(harness, SUPERVISED_IDS.threadId);
           assert.strictEqual(projection.runtimeRequests[0]?.decision, "cancel");
           assert.isUndefined(yield* writtenContent(harness, provider.scenario.fileName));
         }).pipe(Effect.scoped),
@@ -167,7 +165,7 @@ describe("Approvals in Supervised", () => {
 
             yield* assertComplete;
             assert.strictEqual(run.status, "interrupted");
-            const projection = yield* projectionOf(harness);
+            const projection = yield* projectionOf(harness, SUPERVISED_IDS.threadId);
             assert.deepStrictEqual(
               projection.runtimeRequests.map((request) => [request.id, request.status]),
               approvals.map((approval) => [approval.id, "cancelled"]),
@@ -213,7 +211,7 @@ describe("Approvals in Supervised", () => {
           noDecision.message,
           `Runtime request ${approval.id} needs an approval decision.`,
         );
-        const projection = yield* projectionOf(harness);
+        const projection = yield* projectionOf(harness, SUPERVISED_IDS.threadId);
         assert.strictEqual(projection.runtimeRequests[0]?.status, "pending");
       }).pipe(Effect.scoped),
     );
@@ -233,7 +231,7 @@ describe("Approvals in Supervised", () => {
           const { harness } = yield* replayClaude("approval_accept.claude.ndjson", {
             harness: { config, recoverOnStartup: true },
           });
-          const projection = yield* projectionOf(harness);
+          const projection = yield* projectionOf(harness, SUPERVISED_IDS.threadId);
           const request = projection.runtimeRequests.find(
             (candidate) => candidate.id === approval.id,
           );

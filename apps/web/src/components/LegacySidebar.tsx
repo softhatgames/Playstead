@@ -20,9 +20,8 @@ import {
 } from "@playstead/contracts/ipc";
 import type { OrchestrationProjectShell } from "@playstead/contracts/orchestrationProject";
 import type { OrchestrationV2ThreadShell } from "@playstead/contracts/orchestrationV2";
-import { isMacPlatform } from "@playstead/shared/keybindings";
 import { Link, useNavigate, useParams } from "@tanstack/react-router";
-import { type MouseEvent, type ReactNode, useEffect, useMemo, useRef, useState } from "react";
+import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 
 import { updateClientSettings, useClientSettings } from "../clientSettings.ts";
 import { copyTextToClipboard } from "../clipboard.ts";
@@ -30,20 +29,14 @@ import { openCommandPalette } from "../commandPaletteBus.ts";
 import { readPrimaryServerSettings, usePrimaryConnectionState } from "../connection/runtime.ts";
 import { createDraft } from "../drafts.ts";
 import { useBulkThreadMenu } from "../hooks/useBulkThreadMenu.ts";
+import { useDismissOnOutsidePointer } from "../hooks/useDismissOnOutsidePointer.ts";
 import { type ProjectActionTarget, removeProjectFromTree } from "../hooks/useProjectActions.ts";
 import { useSidebarThreadShortcuts } from "../hooks/useSidebarThreadShortcuts.ts";
 import { useThreadActionMenu } from "../hooks/useThreadActionMenu.ts";
 import { useThreadActions } from "../hooks/useThreadActions.ts";
 import { keybindings, shortcutLabelForCommand } from "../keybindings.ts";
-import {
-  clearThreadSelection,
-  rangeSelectThreadsTo,
-  readThreadSelection,
-  setThreadSelectionAnchor,
-  toggleThreadSelection,
-  useThreadSelection,
-} from "../threadSelection.ts";
-import { sortThreads } from "../threadSort.ts";
+import { useThreadSelection } from "../threadSelectionStore.ts";
+import { sortThreads } from "@playstead/client-runtime/state/threadSort";
 import { openProject, setProjectOrder, useActiveProjectId, useProjectOrder } from "../uiState.ts";
 import {
   ArchiveIcon,
@@ -54,13 +47,15 @@ import {
   SearchIcon,
   SquarePenIcon,
 } from "./icons.tsx";
-import { isTrailingDoubleClick, reorderProjects, sortTreeProjects } from "./Sidebar.logic.ts";
+import { reorderProjects, sortTreeProjects } from "./Sidebar.logic.ts";
 import { readLocalApi } from "../localApi.ts";
-import { failureToast, successToast } from "../toast.ts";
+import { failureToast, successToast } from "./ui/toast.tsx";
 import { projectMenuItems } from "./projectActions.logic.ts";
 import { ProjectRenameDialog } from "./sidebar/ProjectRenameDialog.tsx";
 import {
   JumpHintBadge,
+  sidebarThreadLinkHandlers,
+  SidebarThreadTitle,
   ThreadStatusIndicator,
   useThreadRename,
 } from "./sidebar/SidebarThreadParts.tsx";
@@ -454,22 +449,7 @@ function ProjectSortMenu(props: {
   readonly threadPreviewCount: number;
 }) {
   const [open, setOpen] = useState(false);
-  const rootRef = useRef<HTMLDivElement | null>(null);
-  useEffect(() => {
-    if (!open) return;
-    const onPointerDown = (event: PointerEvent) => {
-      if (!rootRef.current?.contains(event.target as Node)) setOpen(false);
-    };
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setOpen(false);
-    };
-    window.addEventListener("pointerdown", onPointerDown);
-    window.addEventListener("keydown", onKeyDown);
-    return () => {
-      window.removeEventListener("pointerdown", onPointerDown);
-      window.removeEventListener("keydown", onKeyDown);
-    };
-  }, [open]);
+  const rootRef = useDismissOnOutsidePointer(open, () => setOpen(false), { closeOnEscape: true });
   const setPreviewCount = (count: number) => {
     const clamped = Math.min(
       MAX_SIDEBAR_THREAD_PREVIEW_COUNT,
@@ -584,10 +564,6 @@ function ProjectSortMenu(props: {
   );
 }
 
-/** Mod-click on a Mac is Command, elsewhere Control (T3 Code's `isModClick`). */
-export const isModClick = (event: Pick<MouseEvent, "metaKey" | "ctrlKey">) =>
-  isMacPlatform(navigator.platform) ? event.metaKey : event.ctrlKey;
-
 /** A thread in the tree (T3 Code's `SidebarThreadRow` in `LegacySidebar.tsx`). */
 function TreeThreadRow(props: {
   readonly thread: SidebarThread;
@@ -639,51 +615,19 @@ function TreeThreadRow(props: {
         to="/threads/$threadId"
         params={{ threadId: thread.id }}
         data-thread-item={thread.id}
-        onClick={(event) => {
-          if (isModClick(event)) {
-            event.preventDefault();
-            toggleThreadSelection(thread.id);
-            return;
-          }
-          if (event.shiftKey) {
-            event.preventDefault();
-            rangeSelectThreadsTo(thread.id, props.orderedIds);
-            return;
-          }
-          if (isTrailingDoubleClick(event.detail)) {
-            event.preventDefault();
-            return;
-          }
-          clearThreadSelection();
-          setThreadSelectionAnchor(thread.id);
-          openProject(thread.projectId);
-        }}
-        onDoubleClick={(event) => {
-          event.preventDefault();
-          rename.start();
-        }}
-        onContextMenu={(event) => {
-          event.preventDefault();
-          const position = { x: event.clientX, y: event.clientY };
-          if (readThreadSelection().selectedThreadIds.has(thread.id)) {
-            props.onBulkMenu(position);
-            return;
-          }
-          clearThreadSelection();
-          openMenu(position);
-        }}
+        {...sidebarThreadLinkHandlers({
+          thread,
+          orderedIds: () => props.orderedIds,
+          startRename: rename.start,
+          openMenu,
+          onBulkMenu: props.onBulkMenu,
+        })}
         aria-current={current ? "page" : undefined}
         aria-selected={selected || undefined}
         className={`${rowClass} pr-8`}
       >
         <ThreadStatusIndicator thread={thread} />
-        {/* Dimmed while a provider writes the title (T3 Code's `opacity-55`). */}
-        <span
-          className={`truncate${thread.titleRegeneration === null ? "" : " opacity-55"}`}
-          title={thread.title}
-        >
-          {thread.title}
-        </span>
+        <SidebarThreadTitle thread={thread} />
         {props.jumpLabel === null ? null : <JumpHintBadge label={props.jumpLabel} />}
       </Link>
       {confirmingArchive ? (

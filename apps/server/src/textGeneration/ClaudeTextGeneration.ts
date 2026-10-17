@@ -9,7 +9,6 @@ import {
   getModelSelectionStringOptionValue,
 } from "@playstead/shared/model";
 import { type ProcessEnvironment, resolveSpawnCommand } from "@playstead/shared/shell";
-import { makeTempDirectoryScoped } from "@playstead/shared/tempDirectory";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
@@ -114,11 +113,18 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
       const stdout = yield* Effect.gen(function* () {
         const workingDirectory =
           operation === "generateThreadTitle"
-            ? yield* makeTempDirectoryScoped("playstead-claude-title-").pipe(
-                Effect.mapError((cause) =>
-                  normalizeCliError("claude", operation, cause, "Failed to create title directory"),
-                ),
-              )
+            ? yield* fs
+                .makeTempDirectoryScoped({ prefix: "playstead-claude-title-" })
+                .pipe(
+                  Effect.mapError((cause) =>
+                    normalizeCliError(
+                      "claude",
+                      operation,
+                      cause,
+                      "Failed to create title directory",
+                    ),
+                  ),
+                )
             : cwd;
         const managedMcpConfig = yield* fs
           .exists(managedMcpConfigPath(input.platform))
