@@ -10,6 +10,7 @@ import {
 import { followThread, type ThreadState } from "@playstead/client-runtime/state/thread";
 import type { ThreadId } from "@playstead/contracts/baseSchemas";
 import { PRIMARY_LOCAL_ENVIRONMENT_ID } from "@playstead/contracts/ipc";
+import { DEFAULT_SERVER_SETTINGS, type ServerSettings } from "@playstead/contracts/settings";
 import type { OrchestrationThreadNotFoundError } from "@playstead/contracts/orchestrationV2";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -158,6 +159,66 @@ export function followPrimaryThread(
   return () => {
     fiber.interruptUnsafe();
   };
+}
+
+/**
+ * Runs a stream over the page's connection and hands each item to `onItem`
+ * until the returned function stops it. It ends, without retrying, when the
+ * connection drops; callers open it again once the connection is back.
+ */
+export function runPrimaryStream<A, E>(
+  call: (client: WsRpcClient) => Stream.Stream<A, E>,
+  onItem: (item: A) => void,
+  onEnd: (error: E | ConnectionTransientError | undefined) => void,
+): () => void {
+  if (connection === undefined) {
+    onEnd(new ConnectionTransientError({ detail: "Not connected to the server." }));
+    return () => {};
+  }
+  const fiber = runtime.runFork(
+    connection.stream(call).pipe(
+      Stream.runForEach((item) => Effect.sync(() => onItem(item))),
+      Effect.match({ onFailure: (error) => onEnd(error), onSuccess: () => onEnd(undefined) }),
+    ),
+  );
+  return () => {
+    fiber.interruptUnsafe();
+  };
+}
+
+/** The sidebar shell's threads as the page last heard them, outside React. */
+export const readPrimaryShellThreads = () => current?.shell?.threads ?? [];
+/** The page's connection state now, for an action that needs the latest shell. */
+export const readPrimaryConnectionState = (): ConnectionState | undefined => current;
+/**
+ * The server's settings as the page last heard them, or the defaults before
+ * the config arrives: what a new thread's draft starts from.
+ */
+export const readPrimaryServerSettings = (): ServerSettings =>
+  current?.config?.settings ?? DEFAULT_SERVER_SETTINGS;
+
+/**
+ * Resolves true once the page's connection state matches, or false after
+ * `timeoutMs`, as T3 Code's `waitForProjectRemoval` waits for the shell to
+ * drop a removed project.
+ */
+export function waitForPrimaryState(
+  matches: (state: ConnectionState | undefined) => boolean,
+  timeoutMs = 5_000,
+): Promise<boolean> {
+  if (matches(current)) return Promise.resolve(true);
+  return new Promise((resolve) => {
+    const finish = (matched: boolean) => {
+      clearTimeout(timer);
+      listeners.delete(listener);
+      resolve(matched);
+    };
+    const listener = () => {
+      if (matches(current)) finish(true);
+    };
+    const timer = setTimeout(() => finish(false), timeoutMs);
+    listeners.add(listener);
+  });
 }
 
 export function usePrimaryConnectionState(): ConnectionState | undefined {

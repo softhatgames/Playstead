@@ -83,12 +83,17 @@ export type ServerProviders = typeof ServerProviders.Type;
 export const ServerProviderUpdatedPayload = Schema.Struct({ providers: ServerProviders });
 export type ServerProviderUpdatedPayload = typeof ServerProviderUpdatedPayload.Type;
 
-/** The server's status as a client sees it on connecting. */
+/**
+ * The server's status as a client sees it on connecting.
+ * `scratchWorkspaceRoot` is the folder of the "No project" project, there
+ * only while threads without a project are offered (T3 Code's).
+ */
 export const ServerConfig = Schema.Struct({
   environment: ExecutionEnvironmentDescriptor,
   auth: ServerAuthDescriptor,
   providers: ServerProviders,
   settings: ServerSettings,
+  scratchWorkspaceRoot: Schema.optionalKey(TrimmedNonEmptyString),
 });
 export type ServerConfig = typeof ServerConfig.Type;
 

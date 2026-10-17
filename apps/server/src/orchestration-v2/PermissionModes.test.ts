@@ -16,6 +16,7 @@ import {
   CODEX_AUTO_MODE_SCENARIO,
   runAutoModeScenario,
 } from "./testkit/fixtures/autoMode.ts";
+import { projectionOf } from "./testkit/ThreadCommands.ts";
 
 /**
  * Runs the Auto scenario over a replay and checks what the person sees: the
@@ -90,11 +91,6 @@ const harnessWithThread = (runtimeMode: "auto" | "full-access") =>
 
 type Harness = Effect.Success<ReturnType<typeof harnessWithThread>>;
 
-const threadOf = (harness: Harness) =>
-  Effect.map(harness.orchestrator.getThreadProjection(THREAD_ID), (projection) =>
-    Option.getOrThrow(projection),
-  );
-
 const setRuntimeMode = (harness: Harness, runtimeMode: "auto" | "full-access", n: number) =>
   harness.orchestrator.dispatch({
     type: "thread.runtime-mode.set",
@@ -109,7 +105,7 @@ describe("Permission modes", () => {
       Effect.gen(function* () {
         const harness = yield* harnessWithThread("auto");
 
-        const projection = yield* threadOf(harness);
+        const projection = yield* projectionOf(harness, THREAD_ID);
 
         assert.strictEqual(projection.thread.runtimeMode, "auto");
       }),
@@ -121,7 +117,7 @@ describe("Permission modes", () => {
 
         yield* setRuntimeMode(harness, "auto", 1);
 
-        const projection = yield* threadOf(harness);
+        const projection = yield* projectionOf(harness, THREAD_ID);
         assert.strictEqual(projection.thread.runtimeMode, "auto");
       }),
     );
@@ -140,7 +136,7 @@ describe("Permission modes", () => {
 
         yield* setRuntimeMode(harness, "auto", 1);
 
-        const projection = yield* threadOf(harness);
+        const projection = yield* projectionOf(harness, THREAD_ID);
         assert.strictEqual(projection.runs[0]?.status, "starting");
         assert.strictEqual(projection.thread.runtimeMode, "auto");
       }),

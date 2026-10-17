@@ -14,6 +14,7 @@ import * as Result from "effect/Result";
 
 import { decideMessageDispatch, resolveMessageDispatchIntent } from "./CommandPolicy.ts";
 import type { NewDomainEvent } from "./EventSink.ts";
+import type { PendingEffect } from "./EffectOutbox.ts";
 import { cancelQueuedRun } from "./QueueCommands.ts";
 import {
   reject,
@@ -25,6 +26,7 @@ import {
   type ThreadCommandResult,
   type ThreadCommandState,
 } from "./ThreadCommandDecision.ts";
+import { threadTitleGenerationEffect } from "./ThreadLifecycle.ts";
 
 type MessageDispatchCommand = Extract<OrchestrationV2Command, { type: "message.dispatch" }>;
 
@@ -41,6 +43,10 @@ type MessageDispatchCommand = Extract<OrchestrationV2Command, { type: "message.d
  * latest. A message that implements a proposed plan (`sourcePlanRef`,
  * perhaps another thread's in the same project) needs the plan still
  * active, and completes it.
+ *
+ * Whichever way it goes, a message brings the thread back to active work
+ * and wakes it, and the first one titles it and asks a provider for a
+ * better title (`messageArrival`).
  */
 export const decideMessageDispatchCommand = (
   input: ThreadCommandInput<MessageDispatchCommand>,
@@ -87,31 +93,89 @@ export const decideMessageDispatchCommand = (
         return yield* reject(command, "This thread can no longer be resumed from that run.");
       }
     }
+    const arrival = messageArrival(command, projection, now);
+    const arrived = { ...projection, thread: arrival.thread };
     const dispatchMode = lateSteerFallback(
-      projection,
-      resolveMessageDispatchIntent(projection, command, state),
+      arrived,
+      resolveMessageDispatchIntent(arrived, command, state),
     );
-    const decision = yield* decideMessageDispatch(command, projection, dispatchMode, state);
-    switch (decision.type) {
-      case "steer_active":
-        return yield* steerIntoRun({
-          command,
-          state,
-          projection,
-          targetRunId: decision.targetRunId,
-          message: { id: command.messageId, text: command.text },
-          modelSelection: command.modelSelection ?? projection.thread.modelSelection,
-          inputIntent: "steer",
-          precedingEvents: [],
-          ids,
-          now,
-        });
-      case "start_run":
-        return startRun(command, projection, sourcePlan, ids, now);
-      case "queue_after_active":
-        return queueMessage(command, projection, sourcePlan, ids, now);
-    }
+    const decision = yield* decideMessageDispatch(command, arrived, dispatchMode, state);
+    const decided: ThreadCommandDecision =
+      decision.type === "steer_active"
+        ? yield* steerIntoRun({
+            command,
+            state,
+            projection: arrived,
+            targetRunId: decision.targetRunId,
+            message: { id: command.messageId, text: command.text },
+            modelSelection: command.modelSelection ?? arrived.thread.modelSelection,
+            inputIntent: "steer",
+            precedingEvents: [],
+            ids,
+            now,
+          })
+        : decision.type === "start_run"
+          ? startRun(command, arrived, sourcePlan, ids, now, state.worktreePath)
+          : queueMessage(command, arrived, sourcePlan, ids, now);
+    return {
+      ...decided,
+      events: [...arrival.events, ...decided.events],
+      effects: [...arrival.effects, ...decided.effects],
+    };
   });
+
+/**
+ * What a message does to its thread before it starts, steers or queues
+ * anything (T3 Code's `dispatchMessage`, in its order): it clears a settle
+ * or un-settle the person set, so automatic settlement follows its usual
+ * rules again; it wakes a snoozed thread, without stamping
+ * `lastSnoozeWakeAt`; and the first message titles the thread with its seed
+ * and asks a provider for a better title beside the turn.
+ */
+function messageArrival(
+  command: MessageDispatchCommand,
+  projection: OrchestrationV2ThreadProjection,
+  now: string,
+): {
+  readonly thread: OrchestrationV2AppThread;
+  readonly events: ReadonlyArray<NewDomainEvent>;
+  readonly effects: ReadonlyArray<PendingEffect>;
+} {
+  const threadId = projection.thread.id;
+  const events: Array<NewDomainEvent> = [];
+  const effects: Array<PendingEffect> = [];
+  let thread = projection.thread;
+  if (thread.settledOverride !== null) {
+    thread = {
+      ...thread,
+      settledOverride: null,
+      settledAt: null,
+      unsettledAt: thread.settledOverride === "active" ? thread.unsettledAt : now,
+      updatedAt: now,
+    };
+    events.push({ type: "thread.unsettled", threadId, occurredAt: now, payload: thread });
+  }
+  if (thread.snoozedUntil !== null) {
+    thread = { ...thread, snoozedUntil: null, snoozedAt: null, updatedAt: now };
+    events.push({ type: "thread.unsnoozed", threadId, occurredAt: now, payload: thread });
+  }
+  if (command.titleSeed !== undefined && projection.messages.length === 0) {
+    thread = {
+      ...thread,
+      title: command.titleSeed,
+      titleRegeneration: { requestId: command.commandId, startedAt: now },
+      updatedAt: now,
+    };
+    events.push({ type: "thread.metadata-updated", threadId, occurredAt: now, payload: thread });
+    effects.push(
+      threadTitleGenerationEffect(command.commandId, {
+        type: "initial",
+        messageId: command.messageId,
+      }),
+    );
+  }
+  return { thread, events, effects };
+}
 
 /**
  * `queued-message.promote-to-steer` removes a queued run and steers the
@@ -317,6 +381,7 @@ function startRun(
   sourcePlan: SourcePlan | undefined,
   ids: ThreadCommandIds,
   now: string,
+  claimedWorktreePath: string | undefined,
 ): ThreadCommandDecision {
   const threadId = projection.thread.id;
   const runId = ids.runId;
@@ -338,12 +403,6 @@ function startRun(
     });
   }
 
-  // The first message titles the thread, as T3 Code's title seed does.
-  const titled =
-    command.titleSeed !== undefined && projection.messages.length === 0
-      ? command.titleSeed
-      : thread.title;
-
   const existingProviderThread = projection.providerThreads.find(
     (providerThread) => providerThread.id === thread.activeProviderThreadId,
   );
@@ -361,14 +420,17 @@ function startRun(
     updatedAt: now,
   };
 
-  if (titled !== thread.title || existingProviderThread === undefined) {
+  // A thread without a project runs in the folder claimed for it (T3 Code's
+  // `ThreadLaunchService` turning a root launch into `existing_worktree`).
+  const worktreePath = thread.worktreePath ?? claimedWorktreePath ?? null;
+  if (existingProviderThread === undefined || worktreePath !== thread.worktreePath) {
     events.push({
       type: "thread.metadata-updated",
       threadId,
       occurredAt: now,
       payload: {
         ...thread,
-        title: titled,
+        worktreePath,
         activeProviderThreadId: providerThread.id,
         updatedAt: now,
       },
@@ -515,14 +577,6 @@ function queueMessage(
   const runId = ids.runId;
   const ordinal = projection.runs.reduce((highest, run) => Math.max(highest, run.ordinal), 0) + 1;
   const events: Array<NewDomainEvent> = [];
-  if (command.titleSeed !== undefined && projection.messages.length === 0) {
-    events.push({
-      type: "thread.metadata-updated",
-      threadId,
-      occurredAt: now,
-      payload: { ...thread, title: command.titleSeed, updatedAt: now },
-    });
-  }
   const providerThreadId =
     thread.activeProviderThreadId ??
     projection.runs.find((run) => ACTIVE_RUN_STATUSES.has(run.status))?.providerThreadId ??

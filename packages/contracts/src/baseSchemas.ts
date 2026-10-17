@@ -2,7 +2,7 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as SchemaTransformation from "effect/SchemaTransformation";
 
-const TrimmedString = Schema.String.pipe(
+export const TrimmedString = Schema.String.pipe(
   Schema.decodeTo(
     Schema.String,
     SchemaTransformation.transformEffect({

@@ -11,15 +11,20 @@ import * as ProjectStore from "./ProjectStore.ts";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
 import * as ProviderTurnStartService from "./ProviderTurnStartService.ts";
 import * as RunExecutionService from "./RunExecutionService.ts";
+import * as ThreadSettlementService from "./ThreadSettlementService.ts";
+import * as ManagedProjectFolders from "../project/ManagedProjectFolders.ts";
+import * as ThreadSearch from "./ThreadSearch.ts";
+import * as ThreadTitleRegenerationService from "./ThreadTitleRegenerationService.ts";
 
 /**
- * Orchestration's stores and event sink over the server's SQLite, assembled
+ * Orchestration's stores, event sink and thread search over the server's SQLite, assembled
  * once for the server and its tests (T3 Code's
  * `apps/server/src/orchestration-v2/runtimeLayer.ts` at 2577baf). The sink
  * and the stream readers must share one event store, whose publishing is in
- * memory.
+ * memory. The managed project folders (threads without a project) sit
+ * beside them: the orchestrator and the project service both read them.
  */
-export const layer = EventSink.layer.pipe(
+export const layer = Layer.mergeAll(EventSink.layer, ManagedProjectFolders.layer).pipe(
   Layer.provideMerge(
     Layer.mergeAll(
       CommandReceiptStore.layer,
@@ -27,16 +32,20 @@ export const layer = EventSink.layer.pipe(
       ProjectStore.layer,
       ProjectionStore.layer,
       EffectOutbox.layer,
+      ThreadSearch.layer,
     ),
   ),
 );
 
 /**
- * The orchestrator and the effect worker, with what starts and runs provider
- * turns. They need the stores above and a `ProviderAdapterRegistryV2`: the
- * server's reads the provider registry, and tests give replaying adapters.
+ * The orchestrator, the effect worker and automatic settlement, with what
+ * starts and runs provider turns and generates titles. They need the stores above, a
+ * `ProviderAdapterRegistryV2`, the server's settings and `TextGeneration`:
+ * the server's read the provider registry, and tests give replaying
+ * adapters and their own text generation.
  */
-export const layerCore = EffectWorker.layer.pipe(
+export const layerCore = Layer.mergeAll(EffectWorker.layer, ThreadSettlementService.layer).pipe(
+  Layer.provide(ThreadTitleRegenerationService.layer),
   // A steer that comes too late dispatches its message again.
   Layer.provideMerge(Orchestrator.layer),
   Layer.provide(ProviderTurnStartService.layer),

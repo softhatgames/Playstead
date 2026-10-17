@@ -11,6 +11,7 @@ import {
   layerQueryRunner,
   makeClaudeAdapter,
 } from "../../orchestration-v2/Adapters/ClaudeAdapterV2.ts";
+import { makeClaudeTextGeneration } from "../../textGeneration/ClaudeTextGeneration.ts";
 import { checkClaudeProviderStatus } from "../ClaudeProvider.ts";
 
 const DISPLAY_NAME = "Claude";
@@ -20,8 +21,9 @@ const DISPLAY_NAME = "Claude";
  * (`apps/server/src/provider/Drivers/ClaudeDriver.ts` at 2577baf) without a
  * home path, launch arguments or usage readers. Claude runs with the server's
  * environment, as `makeClaudeEnvironment` gives it when no home path is set.
- * Its orchestration adapter runs threads through the Agent SDK with the
- * same `claude`.
+ * Its orchestration adapter runs threads through the Agent SDK, and its
+ * text generation writes titles with `claude -p`, both with the same
+ * `claude`.
  */
 export const ClaudeDriver: ProviderDriver<
   ChildProcessSpawner.ChildProcessSpawner | FileSystem.FileSystem | Crypto.Crypto
@@ -62,12 +64,18 @@ export const ClaudeDriver: ProviderDriver<
         environment: input.environment,
         platform: input.platform,
       }).pipe(Effect.provide(layerQueryRunner));
+      const textGeneration = yield* makeClaudeTextGeneration({
+        binaryPath,
+        environment: input.environment,
+        platform: input.platform,
+      });
       return {
         instanceId: input.instanceId,
         driverKind: "claudeAgent",
         displayName: DISPLAY_NAME,
         snapshot,
         orchestrationAdapter,
+        textGeneration,
       };
     }),
 };

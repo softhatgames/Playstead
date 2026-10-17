@@ -8,12 +8,17 @@ import type { ModelPickerEntry } from "./composer.logic.ts";
  * T3 Code's model picker (`apps/web/src/components/chat/ProviderModelPicker.tsx`
  * and `ModelPickerContent.tsx` at 2577baf), trimmed: a popover listing each
  * provider's models. Once a thread has started it lists only its provider's.
- * While the composer cannot send it is disabled and its list hidden.
+ * While the composer cannot send it is disabled and its list hidden. The
+ * list opens above the composer, or below where `placement` says so, as in
+ * **Settings → General → Text generation**.
  */
 export function ProviderModelPicker(props: {
   readonly entries: ReadonlyArray<ModelPickerEntry>;
   readonly selection: ModelSelection | undefined;
   readonly disabled: boolean;
+  readonly placement?: "above" | "below";
+  /** The list's name, "Model" by default. */
+  readonly ariaLabel?: string;
   readonly onSelect: (selection: ModelSelection) => void;
 }) {
   const [open, setOpen] = useState(false);
@@ -60,8 +65,8 @@ export function ProviderModelPicker(props: {
       {open && usable ? (
         <div
           role="listbox"
-          aria-label="Model"
-          className="absolute bottom-full left-0 z-20 mb-1 w-64 rounded-lg border border-neutral-200 bg-white p-1 shadow-lg dark:border-neutral-800 dark:bg-neutral-900"
+          aria-label={props.ariaLabel ?? "Model"}
+          className={`absolute z-20 w-64 ${props.placement === "below" ? "top-full right-0 mt-1" : "bottom-full left-0 mb-1"} rounded-lg border border-neutral-200 bg-white p-1 shadow-lg dark:border-neutral-800 dark:bg-neutral-900`}
         >
           {props.entries.map((entry) => (
             <div key={entry.instanceId} className="py-1">

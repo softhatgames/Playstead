@@ -5,6 +5,7 @@ import {
   type LocalConnection,
   makeLocalConnection,
 } from "@playstead/client-runtime/connection";
+import { DEFAULT_TEXT_GENERATION_MODEL_SELECTION } from "@playstead/contracts/settings";
 import { writeFakeCodex } from "@playstead/provider-testing/fakeProviders";
 import { makeTempDirectoryScoped } from "@playstead/shared/tempDirectory";
 import { assert, describe, it } from "@effect/vitest";
@@ -102,7 +103,9 @@ describe("provider RPC methods", () => {
         );
         assert.deepStrictEqual(settings, {
           providerInstances: { codex: { driver: "codex", config: { binaryPath: ownCodex } } },
+          textGenerationModelSelection: DEFAULT_TEXT_GENERATION_MODEL_SELECTION,
           defaultRuntimeMode: "full-access",
+          sidebarAutoSettleAfterDays: 3,
         });
 
         const updated = yield* awaitConnectionState(

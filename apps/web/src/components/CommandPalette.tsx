@@ -1,325 +1,385 @@
 import {
-  appendBrowsePathSegment,
-  filterFilesystemBrowseEntries,
-  getBrowseUpPath,
-  getFilesystemBrowsePath,
-  resolveAddProjectPath,
-} from "@playstead/client-runtime/state/filesystem";
-import { CommandId, ProjectId } from "@playstead/contracts/baseSchemas";
-import type { FilesystemBrowseResult } from "@playstead/contracts/filesystem";
-import { useEffect, useRef, useState, type KeyboardEvent } from "react";
+  type KeyboardEvent,
+  useCallback,
+  useDeferredValue,
+  useEffect,
+  useLayoutEffect,
+  useReducer,
+  useRef,
+  useState,
+} from "react";
 
 import { onOpenCommandPalette } from "../commandPaletteBus.ts";
-import { requestPrimary, usePrimaryConnectionState } from "../connection/runtime.ts";
-import { newId } from "../ids.ts";
-import { desktopBridge } from "../env.ts";
-import { openProject } from "../uiState.ts";
-import { planAddProject } from "./addProject.logic.ts";
-import { FolderIcon, FolderUpIcon } from "./icons.tsx";
+import { usePrimaryConnectionState } from "../connection/runtime.ts";
+import { useAddProjectBrowse } from "../hooks/useAddProjectBrowse.ts";
+import { useCommandPaletteItems } from "../hooks/useCommandPaletteItems.ts";
+import { copyThreadReference } from "../hooks/useThreadShortcuts.ts";
+import { keybindings, resolveShortcutCommand, threadJumpIndexFromCommand } from "../keybindings.ts";
+import {
+  buildCommandPaletteRows,
+  buildRootGroups,
+  type CommandPaletteEntry,
+  type CommandPaletteView,
+  filterCommandPaletteGroups,
+  findHighlightedCommandPaletteItem,
+  getCommandPaletteInputPlaceholder,
+  getCommandPaletteMode,
+  reduceCommandPaletteUiState,
+} from "./CommandPalette.logic.ts";
+import { CommandPaletteContent } from "./CommandPaletteContent.tsx";
+import {
+  COMMAND_PALETTE_ICON_CLASS,
+  COMMAND_PALETTE_LISTBOX_ID,
+  CommandPaletteResults,
+  commandPaletteOptionId,
+} from "./CommandPaletteResults.tsx";
+import { ArrowLeftIcon, FolderPlusIcon } from "./icons.tsx";
+import { failureToast } from "./ui/toast.tsx";
 
 /** Where Add project starts browsing (T3 Code's default without a base folder setting). */
-const INITIAL_QUERY = "~/";
+const ADD_PROJECT_INITIAL_QUERY = "~/";
 
 const fileManagerName = (platform: string) =>
   /mac/i.test(platform) ? "Finder" : /win/i.test(platform) ? "File Explorer" : "Files";
 
 const isPrimaryModifierPressed = (event: KeyboardEvent) =>
-  /mac/i.test(navigator.platform) ? event.metaKey : event.ctrlKey;
-
-const errorMessage = (error: unknown) =>
-  error instanceof Error && error.message.length > 0 ? error.message : "An error occurred.";
-
-interface BrowseState {
-  readonly directoryPath: string;
-  readonly result?: FilesystemBrowseResult;
-  readonly error?: string;
-}
-
-type Row =
-  | { readonly kind: "up"; readonly path: string }
-  | { readonly kind: "folder"; readonly name: string; readonly fullPath: string };
+  /mac/i.test(navigator.platform)
+    ? event.metaKey && !event.ctrlKey
+    : event.ctrlKey && !event.metaKey;
 
 /**
- * T3 Code's command palette in its add-project mode only
- * (`apps/web/src/components/CommandPalette.tsx` at 2577baf), with the Local
- * folder source: a path field that autocompletes from the server's
- * `filesystem.browse`, and in the desktop app the native folder dialog.
- * Enter adds the typed folder; with a folder highlighted, Enter opens it and
- * Mod+Enter adds.
+ * T3 Code's command palette (`apps/web/src/components/CommandPalette.tsx`
+ * at 2577baf; its frame is `CommandPaletteContent.tsx` and its list
+ * `CommandPaletteResults.tsx`),
+ * in its command mode. `mod+k` opens and closes it; the bus opens it
+ * straight into **Add project** or **New thread in…**. T3 Code's file and
+ * project-content search modes wait for version control and project
+ * search.
  */
 export function CommandPalette() {
-  const [open, setOpen] = useState(false);
-  const [query, setQuery] = useState(INITIAL_QUERY);
-  const [highlighted, setHighlighted] = useState(-1);
-  const [browse, setBrowse] = useState<BrowseState | undefined>(undefined);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | undefined>(undefined);
-  const inputRef = useRef<HTMLInputElement | null>(null);
-  // State lags a render behind, so a repeated Enter could start a second create.
-  const submittingRef = useRef(false);
+  const [state, dispatch] = useReducer(reduceCommandPaletteUiState, {
+    open: false,
+    openIntent: null,
+  });
 
-  const state = usePrimaryConnectionState();
-  const platform = state?.config?.environment.platform.os ?? "";
-  const projects = state?.shell?.projects ?? [];
-  const connected = state?.phase === "connected";
+  useEffect(() => {
+    const onKeyDown = (event: globalThis.KeyboardEvent) => {
+      if (event.defaultPrevented) return;
+      if (resolveShortcutCommand(event, keybindings) !== "commandPalette.toggle") return;
+      event.preventDefault();
+      event.stopPropagation();
+      dispatch({ _tag: "Toggle" });
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, []);
 
   useEffect(
     () =>
-      onOpenCommandPalette(() => {
-        setQuery(INITIAL_QUERY);
-        setHighlighted(-1);
-        setError(undefined);
-        setOpen(true);
-      }),
+      onOpenCommandPalette((detail) =>
+        dispatch(
+          detail.open === "new-thread-in"
+            ? { _tag: "OpenNewThreadIn" }
+            : detail.open === "add-project"
+              ? { _tag: "OpenAddProject" }
+              : { _tag: "SetOpen", open: true },
+        ),
+      ),
     [],
   );
 
-  useEffect(() => {
-    if (open) inputRef.current?.focus();
-  }, [open]);
-
-  const browsePath = getFilesystemBrowsePath(query, platform);
-  const directoryPath = browsePath.directoryPath;
-
-  useEffect(() => {
-    if (!open || !connected || !browsePath.isBrowsing) return;
-    let current = true;
-    setBrowse((previous) =>
-      previous?.directoryPath === directoryPath ? previous : { directoryPath },
-    );
-    requestPrimary((client) => client["filesystem.browse"]({ partialPath: directoryPath })).then(
-      (result) => {
-        if (current) setBrowse({ directoryPath, result });
-      },
-      (cause: unknown) => {
-        if (current) setBrowse({ directoryPath, error: errorMessage(cause) });
-      },
-    );
-    return () => {
-      current = false;
-    };
-  }, [open, connected, browsePath.isBrowsing, directoryPath]);
-
-  const listed = browse?.directoryPath === directoryPath ? browse : undefined;
-  const { visibleEntries, exactEntry } = filterFilesystemBrowseEntries(
-    listed?.result?.entries ?? [],
-    browsePath.filterQuery,
+  const close = useCallback(() => dispatch({ _tag: "SetOpen", open: false }), []);
+  const clearOpenIntent = useCallback(() => dispatch({ _tag: "ClearOpenIntent" }), []);
+  if (!state.open) return null;
+  return (
+    <OpenCommandPalette
+      openIntent={state.openIntent}
+      close={close}
+      clearOpenIntent={clearOpenIntent}
+    />
   );
-  const upPath = browsePath.canBrowseUp ? getBrowseUpPath(directoryPath) : null;
-  const rows: ReadonlyArray<Row> = [
-    ...(upPath === null ? [] : [{ kind: "up" as const, path: upPath }]),
-    ...visibleEntries.map((entry) => ({ kind: "folder" as const, ...entry })),
-  ];
-  const willCreateFolder =
-    listed?.result !== undefined &&
-    browsePath.filterQuery.length > 0 &&
-    exactEntry === null &&
-    visibleEntries.length === 0;
+}
 
-  const close = () => {
-    setOpen(false);
-    setBusy(false);
-  };
+function OpenCommandPalette(props: {
+  readonly openIntent: "add-project" | "new-thread-in" | null;
+  readonly close: () => void;
+  readonly clearOpenIntent: () => void;
+}) {
+  const { openIntent, close, clearOpenIntent } = props;
+  const [query, setQuery] = useState("");
+  const deferredQuery = useDeferredValue(query);
+  const isActionsOnly = deferredQuery.startsWith(">");
+  const [viewStack, setViewStack] = useState<ReadonlyArray<CommandPaletteView>>([]);
+  const currentView = viewStack.at(-1) ?? null;
+  // Null follows the list's first row, as T3 Code's auto-highlight does.
+  const [highlighted, setHighlighted] = useState<string | null>(null);
+  const inputRef = useRef<HTMLInputElement | null>(null);
+  const state = usePrimaryConnectionState();
 
-  const browseTo = (nextQuery: string) => {
-    setQuery(nextQuery);
-    setHighlighted(-1);
+  useLayoutEffect(() => {
     inputRef.current?.focus();
+  }, [viewStack.length]);
+
+  const pushView = useCallback((view: CommandPaletteView) => {
+    setViewStack((views) => [...views, view]);
+    setHighlighted(null);
+    setQuery(view.initialQuery ?? "");
+  }, []);
+  const popView = () => {
+    setViewStack((views) => views.slice(0, -1));
+    setHighlighted(null);
+    setQuery("");
+  };
+  const openAddProjectFlow = useCallback(
+    () => pushView({ addon: "add-project", groups: [], initialQuery: ADD_PROJECT_INITIAL_QUERY }),
+    [pushView],
+  );
+
+  const items = useCommandPaletteItems({
+    query: deferredQuery,
+    atRoot: currentView === null,
+    openAddProjectFlow,
+  });
+  const { routeThread, newThreadInGroups, hasNewThreadProjects } = items;
+
+  useLayoutEffect(() => {
+    if (openIntent !== "add-project") return;
+    clearOpenIntent();
+    setViewStack([]);
+    openAddProjectFlow();
+  }, [openIntent, clearOpenIntent, openAddProjectFlow]);
+
+  useLayoutEffect(() => {
+    if (openIntent !== "new-thread-in" || !hasNewThreadProjects) return;
+    clearOpenIntent();
+    setViewStack([]);
+    pushView({ addon: "new-thread", groups: newThreadInGroups });
+  }, [openIntent, clearOpenIntent, hasNewThreadProjects, newThreadInGroups, pushView]);
+
+  const filteredGroups = filterCommandPaletteGroups({
+    activeGroups:
+      currentView?.groups ??
+      buildRootGroups({
+        actionItems: items.actionItems,
+        recentThreadItems: items.recentThreadItems,
+      }),
+    query: deferredQuery,
+    isInSubmenu: currentView !== null,
+    projectSearchItems: items.projectSearchItems,
+    settingsSearchItems: items.settingsSearchItems,
+    threadSearchItems: items.allThreadItems,
+  });
+
+  const browse = useAddProjectBrowse({
+    query,
+    connected: state?.phase === "connected",
+    platform: state?.config?.environment.platform.os ?? "",
+    projects: items.projects,
+    browseTo: (nextQuery) => {
+      setQuery(nextQuery);
+      setHighlighted(null);
+      inputRef.current?.focus();
+    },
+    close,
+  });
+  const { isBrowsing, busy, resolvedPath, addProject } = browse;
+
+  const displayedGroups = isBrowsing ? browse.browseGroups : filteredGroups;
+  const { rows, itemValues } = buildCommandPaletteRows(displayedGroups);
+  const autoHighlightsFirstRow = !isBrowsing;
+  const activeValue =
+    highlighted !== null && itemValues.includes(highlighted)
+      ? highlighted
+      : autoHighlightsFirstRow
+        ? (itemValues[0] ?? null)
+        : null;
+  const activeIndex = activeValue === null ? -1 : itemValues.indexOf(activeValue);
+  const hasHighlightedBrowseItem = isBrowsing && activeValue !== null;
+
+  useEffect(() => {
+    if (activeIndex >= 0) {
+      document
+        .getElementById(commandPaletteOptionId(activeIndex))
+        ?.scrollIntoView({ block: "nearest" });
+    }
+  }, [activeIndex]);
+
+  const mode = getCommandPaletteMode({ inView: currentView !== null, isBrowsing });
+  const isSubmenu = mode === "submenu" || mode === "submenu-browse";
+
+  const executeItem = (item: CommandPaletteEntry) => {
+    if (item.disabled) return;
+    if (item.kind === "submenu") {
+      pushView({ addon: "new-thread", groups: item.groups });
+      return;
+    }
+    if (!item.keepOpen) close();
+    item.run().catch((cause: unknown) => failureToast("Unable to run command", cause));
   };
 
-  const activateRow = (row: Row) =>
-    browseTo(row.kind === "up" ? row.path : appendBrowsePathSegment(query, row.name));
-
-  const addProject = async (rawPath: string) => {
-    if (submittingRef.current) return;
-    const plan = planAddProject({ rawPath, platform, projects });
-    switch (plan.kind) {
-      case "none":
-        return;
-      case "error":
-        setError(plan.message);
-        return;
-      case "open":
-        openProject(plan.projectId);
-        close();
-        return;
-      case "create":
-        break;
-    }
-    submittingRef.current = true;
-    setBusy(true);
-    setError(undefined);
-    try {
-      const project = await requestPrimary((client) =>
-        client["projects.mutate"]({
-          type: "project.create",
-          commandId: CommandId.make(`command:${newId()}`),
-          projectId: ProjectId.make(`project:${newId()}`),
-          title: plan.title,
-          workspaceRoot: plan.workspaceRoot,
-          createWorkspaceRootIfMissing: true,
-        }),
-      );
-      openProject(project.id);
-      close();
-    } catch (cause) {
-      // The folder already has a project under another spelling: open that one.
-      if (
-        typeof cause === "object" &&
-        cause !== null &&
-        "_tag" in cause &&
-        cause._tag === "ProjectConflictError" &&
-        "conflictingProjectId" in cause &&
-        typeof cause.conflictingProjectId === "string"
-      ) {
-        openProject(cause.conflictingProjectId);
-        close();
-        return;
-      }
-      setError(`Failed to add project: ${errorMessage(cause)}`);
-      setBusy(false);
-    } finally {
-      submittingRef.current = false;
-    }
-  };
-
-  const resolvedPath = resolveAddProjectPath(query, listed?.result?.parentPath, exactEntry);
-
-  const pickFolder = async () => {
-    if (desktopBridge === undefined || busy) return;
-    const picked = await desktopBridge.pickFolder().catch(() => null);
-    if (picked !== null) await addProject(picked);
+  const handleQueryChange = (next: string) => {
+    setQuery(next);
+    setHighlighted(null);
+    browse.clearError();
+    if (next === "" && currentView?.initialQuery !== undefined) popView();
   };
 
   const onKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
+    // Enter that confirms an IME composition is part of typing.
+    if (event.nativeEvent.isComposing) return;
+    const command = resolveShortcutCommand(event.nativeEvent, keybindings);
+    if (threadJumpIndexFromCommand(command) !== null) {
+      event.preventDefault();
+      event.stopPropagation();
+      const item = displayedGroups
+        .flatMap((group) => group.items)
+        .find((candidate) => candidate.shortcutCommand === command);
+      if (item !== undefined) executeItem(item);
+      return;
+    }
+    if (command === "thread.copyReference") {
+      event.preventDefault();
+      event.stopPropagation();
+      if (routeThread === undefined) return;
+      close();
+      void copyThreadReference(routeThread.id);
+      return;
+    }
     if (event.key === "Escape") {
       event.preventDefault();
+      // The layout's Escape would clear the thread selection too.
+      event.stopPropagation();
       close();
       return;
     }
+    if (
+      isBrowsing &&
+      event.key === "Enter" &&
+      (!hasHighlightedBrowseItem || isPrimaryModifierPressed(event))
+    ) {
+      event.preventDefault();
+      void addProject(resolvedPath);
+      return;
+    }
+    if (event.key === "Backspace" && query === "" && isSubmenu) {
+      event.preventDefault();
+      popView();
+      return;
+    }
+    if (event.ctrlKey || event.shiftKey || event.altKey || event.metaKey) return;
     if (event.key === "ArrowDown" || event.key === "ArrowUp") {
       event.preventDefault();
-      if (rows.length === 0) return;
-      setHighlighted((current) =>
-        event.key === "ArrowDown"
-          ? Math.min(current + 1, rows.length - 1)
-          : Math.max(current - 1, -1),
-      );
+      if (itemValues.length === 0) return;
+      const down = event.key === "ArrowDown";
+      const next =
+        highlighted === null || activeIndex === -1
+          ? down
+            ? 0
+            : itemValues.length - 1
+          : (activeIndex + (down ? 1 : -1) + itemValues.length) % itemValues.length;
+      setHighlighted(itemValues[next] ?? null);
       return;
     }
-    // Enter that confirms an IME composition is part of typing the path.
-    if (event.key !== "Enter" || event.nativeEvent.isComposing) return;
-    event.preventDefault();
-    const row = rows[highlighted];
-    if (row !== undefined && !isPrimaryModifierPressed(event)) {
-      activateRow(row);
-      return;
+    if (event.key === "Enter") {
+      const item = findHighlightedCommandPaletteItem(displayedGroups, activeValue);
+      if (item === null) return;
+      event.preventDefault();
+      event.stopPropagation();
+      executeItem(item);
     }
-    void addProject(resolvedPath);
   };
 
-  if (!open) return null;
-
-  const status = !connected
-    ? "Not connected to the server."
-    : !browsePath.isBrowsing
+  const { error } = browse;
+  const browseStatus = browse.status;
+  const threadById = items.threadById;
+  const pickFolder = browse.pickFolder;
+  const emptyMessage = browse.willCreateFolder
+    ? "Press Enter to create this folder and add it as a project."
+    : isBrowsing
       ? undefined
-      : listed?.error !== undefined
-        ? listed.error
-        : listed?.result === undefined
-          ? "Loading folders..."
-          : willCreateFolder
-            ? "Press Enter to create this folder and add it as a project."
-            : undefined;
+      : items.isSearchingMessages
+        ? "Searching thread messages…"
+        : isActionsOnly
+          ? "No matching actions."
+          : "No matching commands, projects, or threads.";
+  const footerActionLabel = !isBrowsing || hasHighlightedBrowseItem ? "Select" : undefined;
+  const modLabel = /mac/i.test(navigator.platform) ? "⌘" : "Ctrl";
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-start justify-center bg-black/30 pt-[15vh]"
-      onMouseDown={(event) => {
-        if (event.target === event.currentTarget) close();
+    <CommandPaletteContent
+      onClose={close}
+      inputRef={inputRef}
+      inputProps={{
+        value: query,
+        onChange: (event) => handleQueryChange(event.target.value),
+        onKeyDown,
+        placeholder: getCommandPaletteInputPlaceholder(mode),
+        "aria-label": isBrowsing ? "Project path" : "Search the command palette",
+        role: "combobox",
+        "aria-expanded": true,
+        "aria-controls": COMMAND_PALETTE_LISTBOX_ID,
+        "aria-activedescendant": activeIndex >= 0 ? commandPaletteOptionId(activeIndex) : undefined,
       }}
-    >
-      <div
-        role="dialog"
-        aria-modal="true"
-        aria-label="Add project"
-        className="flex w-full max-w-xl flex-col overflow-hidden rounded-xl border border-neutral-200 bg-white shadow-xl dark:border-neutral-800 dark:bg-neutral-950"
-      >
-        <input
-          ref={inputRef}
-          value={query}
-          onChange={(event) => {
-            setQuery(event.target.value);
-            setHighlighted(-1);
-            setError(undefined);
-          }}
-          onKeyDown={onKeyDown}
-          placeholder="Enter project path (e.g. ~/projects/my-app)"
-          aria-label="Project path"
-          spellCheck={false}
-          autoComplete="off"
-          className="border-b border-neutral-200 bg-transparent px-4 py-3 text-sm outline-none dark:border-neutral-800"
-        />
-        <ul role="listbox" aria-label="Folders" className="max-h-80 overflow-y-auto py-1">
-          {rows.map((row, index) => (
-            <li
-              key={row.kind === "up" ? "browse:up" : `browse:${row.fullPath}`}
-              role="option"
-              aria-selected={index === highlighted}
-              onMouseDown={(event) => event.preventDefault()}
-              onClick={() => activateRow(row)}
-              onMouseMove={() => setHighlighted(index)}
-              className={`mx-1 flex cursor-default items-center gap-2 rounded-md px-3 py-1.5 text-sm ${
-                index === highlighted ? "bg-neutral-100 dark:bg-neutral-800" : ""
-              }`}
-            >
-              {row.kind === "up" ? (
-                <FolderUpIcon className="size-4 text-neutral-500" />
-              ) : (
-                <FolderIcon className="size-4 text-neutral-500" />
-              )}
-              <span className="truncate">{row.kind === "up" ? ".." : row.name}</span>
-            </li>
-          ))}
-        </ul>
-        {status !== undefined || error !== undefined ? (
-          <div role="status" className="px-4 py-2 text-sm text-neutral-500 dark:text-neutral-400">
-            {error !== undefined ? (
-              <span className="text-red-600 dark:text-red-400">{error}</span>
-            ) : (
-              status
-            )}
-          </div>
-        ) : null}
-        <div className="flex items-center justify-between gap-2 border-t border-neutral-200 px-3 py-2 text-sm dark:border-neutral-800">
-          {desktopBridge !== undefined ? (
-            <button
-              type="button"
-              disabled={busy}
-              onClick={() => void pickFolder()}
-              className="rounded-md px-2 py-1 hover:bg-neutral-100 disabled:opacity-50 dark:hover:bg-neutral-900"
-            >
-              {`Open in ${fileManagerName(navigator.platform)}`}
-            </button>
-          ) : (
-            <span />
-          )}
+      inputLeading={
+        isSubmenu ? (
           <button
             type="button"
-            disabled={busy || !connected || resolvedPath.length === 0}
+            aria-label="Back"
+            onClick={popView}
+            className="text-neutral-500 hover:text-neutral-900 dark:text-neutral-400 dark:hover:text-neutral-100"
+          >
+            <ArrowLeftIcon className="size-4" />
+          </button>
+        ) : isBrowsing ? (
+          <FolderPlusIcon className={COMMAND_PALETTE_ICON_CLASS} />
+        ) : null
+      }
+      inputAccessory={
+        isBrowsing ? (
+          <button
+            type="button"
+            disabled={busy || resolvedPath.length === 0}
             onMouseDown={(event) => event.preventDefault()}
             onClick={() => void addProject(resolvedPath)}
-            className="flex items-center gap-2 rounded-md bg-neutral-900 px-3 py-1 text-white hover:bg-neutral-700 disabled:opacity-50 dark:bg-neutral-100 dark:text-neutral-900 dark:hover:bg-neutral-300"
+            className="flex shrink-0 items-center gap-2 rounded-md border border-neutral-300 px-2 py-0.5 text-xs hover:bg-neutral-100 disabled:opacity-50 dark:border-neutral-700 dark:hover:bg-neutral-900"
           >
             <span>{busy ? "Adding" : "Add"}</span>
-            <kbd className="text-xs opacity-70">
-              {highlighted >= 0
-                ? `${/mac/i.test(navigator.platform) ? "⌘" : "Ctrl"} Enter`
-                : "Enter"}
+            <kbd className="opacity-70">
+              {hasHighlightedBrowseItem ? `${modLabel} Enter` : "Enter"}
             </kbd>
           </button>
-        </div>
-      </div>
-    </div>
+        ) : null
+      }
+      status={
+        error !== undefined ? (
+          <span className="text-red-600 dark:text-red-400">{error}</span>
+        ) : (
+          browseStatus
+        )
+      }
+      {...(footerActionLabel === undefined ? {} : { footerActionLabel })}
+      showBackHint={isSubmenu}
+      footerTrailing={
+        isBrowsing && browse.canPickFolder ? (
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => void pickFolder()}
+            className="rounded-md px-2 py-1 hover:bg-neutral-100 disabled:opacity-50 dark:hover:bg-neutral-900"
+          >
+            {`Open in ${fileManagerName(navigator.platform)}`}
+          </button>
+        ) : null
+      }
+    >
+      <CommandPaletteResults
+        rows={rows}
+        activeValue={activeValue}
+        emptyMessage={emptyMessage}
+        threadById={threadById}
+        onHighlight={(item) => setHighlighted(item.value)}
+        onExecute={executeItem}
+      />
+    </CommandPaletteContent>
   );
 }

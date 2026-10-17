@@ -7,6 +7,8 @@ import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 
+import { DEFAULT_TEXT_GENERATION_MODEL_SELECTION } from "@playstead/contracts/settings";
+
 import { awaitConnectionState, connectSignedIn } from "./testUtils/testClient.ts";
 import { makeTestServerConfig, startTestServer } from "./testUtils/testServer.ts";
 
@@ -33,7 +35,12 @@ describe("server settings", () => {
         const settings = yield* connection.request((client) =>
           client["server.updateSettings"]({ patch: { defaultRuntimeMode: "auto" } }),
         );
-        assert.deepStrictEqual(settings, { providerInstances: {}, defaultRuntimeMode: "auto" });
+        assert.deepStrictEqual(settings, {
+          providerInstances: {},
+          textGenerationModelSelection: DEFAULT_TEXT_GENERATION_MODEL_SELECTION,
+          defaultRuntimeMode: "auto",
+          sidebarAutoSettleAfterDays: 3,
+        });
 
         const updated = yield* awaitConnectionState(
           connection,
@@ -66,7 +73,9 @@ describe("server settings", () => {
 
         assert.deepStrictEqual(settings, {
           providerInstances: { codex: { driver: "codex", config: { binaryPath: "my-codex" } } },
+          textGenerationModelSelection: DEFAULT_TEXT_GENERATION_MODEL_SELECTION,
           defaultRuntimeMode: "auto",
+          sidebarAutoSettleAfterDays: 3,
         });
       }).pipe(Effect.scoped),
     );
@@ -93,7 +102,9 @@ describe("server settings", () => {
 
         assert.deepStrictEqual(state.config?.settings, {
           providerInstances: { codex: { driver: "codex", config: { binaryPath: "my-codex" } } },
+          textGenerationModelSelection: DEFAULT_TEXT_GENERATION_MODEL_SELECTION,
           defaultRuntimeMode: "full-access",
+          sidebarAutoSettleAfterDays: 3,
         });
       }).pipe(Effect.scoped),
     );

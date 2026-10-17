@@ -8,9 +8,10 @@ import {
   TurnItemId,
 } from "@playstead/contracts/baseSchemas";
 import {
+  ACTIVE_RUN_STATUSES,
   OrchestrationDispatchCommandError,
-  type OrchestrationV2Command,
   type OrchestrationV2DispatchCommandResult,
+  type OrchestrationV2ServerCommand,
   type OrchestrationV2ThreadProjection,
   TERMINAL_RUN_STATUSES,
 } from "@playstead/contracts/orchestrationV2";
@@ -25,6 +26,7 @@ import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
+import * as ManagedProjectFolders from "../project/ManagedProjectFolders.ts";
 import * as CommandReceiptStore from "./CommandReceiptStore.ts";
 import * as EventSink from "./EventSink.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
@@ -62,8 +64,9 @@ export class OrchestratorDispatchError extends Schema.TaggedError<OrchestratorDi
 export class OrchestratorV2 extends Context.Service<
   OrchestratorV2,
   {
+    /** Clients' commands, and the server's own internal ones. */
     readonly dispatch: (
-      command: OrchestrationV2Command,
+      command: OrchestrationV2ServerCommand,
     ) => Effect.Effect<
       OrchestrationV2DispatchCommandResult,
       OrchestrationDispatchCommandError | OrchestratorDispatchError
@@ -85,6 +88,7 @@ const make = Effect.gen(function* () {
   const eventSink = yield* EventSink.EventSinkV2;
   const eventStore = yield* EventStore.EventStoreV2;
   const crypto = yield* Crypto.Crypto;
+  const folders = yield* ManagedProjectFolders.ManagedProjectFolders;
   const threadLocks = yield* KeyedLock.make<ThreadId>();
 
   const uuid = crypto.randomUUIDv4();
@@ -100,7 +104,7 @@ const make = Effect.gen(function* () {
   });
 
   const toOutcome = (
-    command: OrchestrationV2Command,
+    command: OrchestrationV2ServerCommand,
     receipt: CommandReceiptStore.CommandReceiptV2,
   ): Effect.Effect<OrchestrationV2DispatchCommandResult, OrchestrationDispatchCommandError> => {
     if (receipt.threadId !== command.threadId || receipt.commandType !== command.type) {
@@ -121,7 +125,36 @@ const make = Effect.gen(function* () {
         );
   };
 
-  const decideAndCommit = (command: OrchestrationV2Command) =>
+  /**
+   * A thread without a project gets its own folder, named from its first
+   * message, before that message is decided (T3 Code's
+   * `ThreadLaunchService.launch` asking `folderForThread` at 2577baf). A
+   * message sent again finds its receipt first, so it claims no second one.
+   */
+  const claimWorktreePath = (
+    command: OrchestrationV2ServerCommand,
+    projection: OrchestrationV2ThreadProjection | undefined,
+  ) =>
+    Effect.gen(function* () {
+      if (
+        command.type !== "message.dispatch" ||
+        projection === undefined ||
+        projection.thread.deletedAt !== null ||
+        projection.thread.worktreePath !== null ||
+        projection.messages.length > 0 ||
+        projection.runs.some((run) => ACTIVE_RUN_STATUSES.has(run.status))
+      ) {
+        return {};
+      }
+      const folder = yield* folders.folderForThread({
+        projectId: projection.thread.projectId,
+        threadId: projection.thread.id,
+        text: command.text,
+      });
+      return Option.isSome(folder) ? { worktreePath: folder.value } : {};
+    });
+
+  const decideAndCommit = (command: OrchestrationV2ServerCommand) =>
     Effect.gen(function* () {
       const previous = yield* receipts.getByCommandId(command.commandId);
       if (Option.isSome(previous)) return previous.value;
@@ -147,6 +180,7 @@ const make = Effect.gen(function* () {
               projection,
               projectExists: true,
               instanceHasAdapter: true,
+              ...(yield* claimWorktreePath(command, projection)),
               supportsQueuedMessages: turns?.supportsQueuedMessages ?? false,
               supportsActiveSteering: turns?.supportsActiveSteering ?? false,
               // A plan implemented in a new thread is the original thread's.
@@ -250,7 +284,7 @@ const make = Effect.gen(function* () {
     Effect.forkScoped,
   );
 
-  const dispatch = (command: OrchestrationV2Command) =>
+  const dispatch = (command: OrchestrationV2ServerCommand) =>
     threadLocks.withLock(command.threadId, decideAndCommit(command)).pipe(
       Effect.mapError(
         (cause) => new OrchestratorDispatchError({ commandId: command.commandId, cause }),

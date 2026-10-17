@@ -28,6 +28,7 @@ import {
   type QueuedTurnScenario,
   runQueuedTurnScenario,
 } from "./testkit/fixtures/queuedTurn.ts";
+import { projectionOf } from "./testkit/ThreadCommands.ts";
 
 const PROJECT_ID = ProjectId.make("project:queue");
 const THREAD_ID = ThreadId.make("thread:queue");
@@ -100,9 +101,6 @@ const send = (
     ...(options?.modelSelection === undefined ? {} : { modelSelection: options.modelSelection }),
   });
 
-const threadOf = (harness: Harness) =>
-  Effect.map(harness.orchestrator.getThreadProjection(THREAD_ID), Option.getOrThrow);
-
 /** The run whose message is message `n`. */
 const runOf = (runs: ReadonlyArray<OrchestrationV2Run>, n: number) => {
   const run = runs.find((candidate) => candidate.userMessageId === `message:queue:${n}`);
@@ -144,10 +142,10 @@ const queueBehindFirst = (harness: Harness, count: number) =>
   Effect.gen(function* () {
     yield* send(harness, 1, { dispatchMode: { type: "start_immediately" } });
     for (let n = 2; n <= count; n += 1) yield* send(harness, n);
-    return yield* threadOf(harness);
+    return yield* projectionOf(harness, THREAD_ID);
   });
 
-const queuedTexts = (projection: Effect.Success<ReturnType<typeof threadOf>>) =>
+const queuedTexts = (projection: Effect.Success<ReturnType<typeof projectionOf>>) =>
   projection.runs
     .filter((run) => run.status === "queued")
     .toSorted((left, right) => (left.queuePosition ?? 0) - (right.queuePosition ?? 0))
@@ -235,7 +233,7 @@ describe("The queue", () => {
         yield* send(harness, 2);
         yield* send(harness, 3, { dispatchMode: { type: "start_immediately" } });
 
-        const projection = yield* threadOf(harness);
+        const projection = yield* projectionOf(harness, THREAD_ID);
         const first = runOf(projection.runs, 1);
         const second = runOf(projection.runs, 2);
         const third = runOf(projection.runs, 3);
@@ -268,7 +266,7 @@ describe("The queue", () => {
           runId: runOf(before.runs, 4).id,
           beforeRunId: runOf(before.runs, 2).id,
         });
-        assert.deepStrictEqual(queuedTexts(yield* threadOf(harness)), [
+        assert.deepStrictEqual(queuedTexts(yield* projectionOf(harness, THREAD_ID)), [
           "Message 4",
           "Message 2",
           "Message 3",
@@ -281,7 +279,7 @@ describe("The queue", () => {
           beforeRunId: null,
         });
 
-        assert.deepStrictEqual(queuedTexts(yield* threadOf(harness)), [
+        assert.deepStrictEqual(queuedTexts(yield* projectionOf(harness, THREAD_ID)), [
           "Message 2",
           "Message 3",
           "Message 4",
@@ -315,7 +313,9 @@ describe("The queue", () => {
         yield* edit(1, "Message 2, edited");
         const refused = yield* Effect.flip(edit(2, "   "));
 
-        assert.deepStrictEqual(queuedTexts(yield* threadOf(harness)), ["Message 2, edited"]);
+        assert.deepStrictEqual(queuedTexts(yield* projectionOf(harness, THREAD_ID)), [
+          "Message 2, edited",
+        ]);
         assert.instanceOf(refused, OrchestrationDispatchCommandError);
         assert.strictEqual(
           refused.message,
@@ -337,7 +337,7 @@ describe("The queue", () => {
         });
         yield* interrupt(harness, runOf(before.runs, 1));
 
-        const projection = yield* threadOf(harness);
+        const projection = yield* projectionOf(harness, THREAD_ID);
         const removed = runOf(projection.runs, 2);
         assert.deepStrictEqual([removed.status, removed.queuePosition], ["cancelled", null]);
         assert.strictEqual(runOf(projection.runs, 1).status, "interrupted");
@@ -353,7 +353,7 @@ describe("The queue", () => {
         yield* interrupt(harness, runOf(before.runs, 1));
         yield* awaitRunStatus(harness, 2, "starting");
 
-        const projection = yield* threadOf(harness);
+        const projection = yield* projectionOf(harness, THREAD_ID);
         assert.deepStrictEqual(
           [runOf(projection.runs, 2).status, runOf(projection.runs, 2).queuePosition],
           ["starting", null],
@@ -373,7 +373,7 @@ describe("The queue", () => {
         const before = yield* queueBehindFirst(harness, 3);
 
         yield* interrupt(harness, runOf(before.runs, 1), true);
-        const held = yield* threadOf(harness);
+        const held = yield* projectionOf(harness, THREAD_ID);
         // A message sent while nothing runs starts at once, ahead of the held queue, as in T3 Code.
         yield* send(harness, 4, { dispatchMode: { type: "queue_after_active" } });
 
@@ -384,11 +384,14 @@ describe("The queue", () => {
             ["queued", true],
           ],
         );
-        assert.strictEqual(runOf((yield* threadOf(harness)).runs, 4).status, "starting");
+        assert.strictEqual(
+          runOf((yield* projectionOf(harness, THREAD_ID)).runs, 4).status,
+          "starting",
+        );
 
-        yield* interrupt(harness, runOf((yield* threadOf(harness)).runs, 4), true);
+        yield* interrupt(harness, runOf((yield* projectionOf(harness, THREAD_ID)).runs, 4), true);
         yield* resume(harness);
-        const resumed = yield* threadOf(harness);
+        const resumed = yield* projectionOf(harness, THREAD_ID);
         assert.strictEqual(runOf(resumed.runs, 2).status, "starting");
         assert.deepStrictEqual(
           [runOf(resumed.runs, 3).status, runOf(resumed.runs, 3).queueHeld],
@@ -430,7 +433,7 @@ describe("The queue", () => {
           ),
         );
 
-        const projection = yield* threadOf(harness);
+        const projection = yield* projectionOf(harness, THREAD_ID);
         assert.deepStrictEqual(
           [runOf(projection.runs, 2).status, runOf(projection.runs, 2).queueHeld],
           ["queued", true],
@@ -467,13 +470,16 @@ describe("The queue", () => {
           yield* send(harness, 1, { dispatchMode: { type: "start_immediately" } });
           yield* send(harness, 2, { modelSelection: low });
 
-          const queued = yield* threadOf(harness);
+          const queued = yield* projectionOf(harness, THREAD_ID);
           assert.deepStrictEqual(runOf(queued.runs, 2).modelSelection, low);
           assert.deepStrictEqual(queued.thread.modelSelection, HAIKU);
 
           yield* interrupt(harness, runOf(queued.runs, 1));
           yield* awaitRunStatus(harness, 2, "starting");
-          assert.deepStrictEqual((yield* threadOf(harness)).thread.modelSelection, low);
+          assert.deepStrictEqual(
+            (yield* projectionOf(harness, THREAD_ID)).thread.modelSelection,
+            low,
+          );
         }),
     );
 
@@ -499,7 +505,10 @@ describe("The queue", () => {
           manualContinuationOfRunId: runOf(before.runs, 1).id,
         });
 
-        assert.strictEqual((yield* threadOf(harness)).runs.at(-1)?.status, "starting");
+        assert.strictEqual(
+          (yield* projectionOf(harness, THREAD_ID)).runs.at(-1)?.status,
+          "starting",
+        );
       }),
     );
 
@@ -520,7 +529,7 @@ describe("The queue", () => {
           });
 
         yield* continueFrom(1, runOf(first.runs, 1).id);
-        const continued = (yield* threadOf(harness)).runs.at(-1)!;
+        const continued = (yield* projectionOf(harness, THREAD_ID)).runs.at(-1)!;
         yield* interrupt(harness, continued, true);
         const refused = yield* Effect.flip(continueFrom(2, runOf(first.runs, 1).id));
 

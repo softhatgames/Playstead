@@ -1,6 +1,6 @@
 import { assert, describe, it } from "@effect/vitest";
 
-import { findProjectByPath, inferProjectTitleFromPath } from "./projects.ts";
+import { findProjectByPath, inferProjectTitleFromPath, isScratchProject } from "./projects.ts";
 
 const projects = [
   { id: "mac", workspaceRoot: "/Users/me/games/space" },
@@ -27,5 +27,17 @@ describe("inferProjectTitleFromPath", () => {
     assert.strictEqual(inferProjectTitleFromPath("/Users/me/games/space/"), "space");
     assert.strictEqual(inferProjectTitleFromPath("C:\\Users\\me\\Мои игры"), "Мои игры");
     assert.strictEqual(inferProjectTitleFromPath("/"), "/");
+  });
+});
+
+describe("isScratchProject", () => {
+  it("is the project at the server's scratch folder, however its path is written", () => {
+    assert.isTrue(isScratchProject(projects[0]!, "/Users/me/games/space/"));
+    assert.isTrue(isScratchProject(projects[1]!, "c:/users/me/games/space"));
+    assert.isFalse(isScratchProject(projects[0]!, "/Users/me/.playstead/scratch"));
+  });
+
+  it("is no project while the server offers no scratch folder", () => {
+    assert.isFalse(isScratchProject(projects[0]!, undefined));
   });
 });

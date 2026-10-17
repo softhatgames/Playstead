@@ -11,6 +11,8 @@ import {
   ORCHESTRATION_V2_WS_METHODS,
   OrchestrationDispatchCommandError,
   OrchestrationThreadNotFoundError,
+  OrchestrationV2ArchivedShellSnapshot,
+  OrchestrationV2ArchivedShellStreamItem,
   OrchestrationV2Command,
   OrchestrationV2DispatchCommandResult,
   OrchestrationV2ShellStreamItem,
@@ -20,6 +22,8 @@ import {
 import {
   Project,
   ProjectConflictError,
+  ProjectEnsureScratchError,
+  ProjectEnsureScratchResult,
   ProjectMutation,
   ProjectMutationError,
   ProjectWriteFileError,
@@ -34,6 +38,11 @@ import {
   ServerProviderUpdatedPayload,
 } from "./server.ts";
 import { ServerSettings, ServerSettingsError, ServerSettingsPatch } from "./settings.ts";
+import {
+  OrchestrationSearchThreadsError,
+  OrchestrationSearchThreadsInput,
+  OrchestrationSearchThreadsResult,
+} from "./threadSearch.ts";
 
 export const WS_METHODS = {
   serverGetConfig: "server.getConfig",
@@ -43,6 +52,7 @@ export const WS_METHODS = {
   subscribeServerLifecycle: "subscribeServerLifecycle",
   projectsWriteFile: "projects.writeFile",
   projectsMutate: "projects.mutate",
+  projectsEnsureScratch: "projects.ensureScratch",
   filesystemBrowse: "filesystem.browse",
 } as const;
 
@@ -90,6 +100,13 @@ const WsProjectsMutateRpc = Rpc.make(WS_METHODS.projectsMutate, {
   error: Schema.Union([ProjectMutationError, ProjectConflictError]),
 });
 
+/** Finds or creates the "No project" project, for a thread without a project. */
+const WsProjectsEnsureScratchRpc = Rpc.make(WS_METHODS.projectsEnsureScratch, {
+  payload: Schema.Struct({}),
+  success: ProjectEnsureScratchResult,
+  error: ProjectEnsureScratchError,
+});
+
 /** Writes a file inside a project's folder, as **Save to workspace** does with a plan. */
 const WsProjectsWriteFileRpc = Rpc.make(WS_METHODS.projectsWriteFile, {
   payload: ProjectWriteFileInput,
@@ -109,6 +126,25 @@ const WsOrchestrationSubscribeShellRpc = Rpc.make(ORCHESTRATION_V2_WS_METHODS.su
   payload: Schema.Struct({}),
   success: OrchestrationV2ShellStreamItem,
   stream: true,
+});
+
+/** **Settings → Archive**'s threads as they are now. */
+const WsOrchestrationGetArchivedShellSnapshotRpc = Rpc.make(
+  ORCHESTRATION_V2_WS_METHODS.getArchivedShellSnapshot,
+  { payload: Schema.Struct({}), success: OrchestrationV2ArchivedShellSnapshot },
+);
+
+/** **Settings → Archive**'s threads: a snapshot, then each change. */
+const WsOrchestrationSubscribeArchivedShellRpc = Rpc.make(
+  ORCHESTRATION_V2_WS_METHODS.subscribeArchivedShell,
+  { payload: Schema.Struct({}), success: OrchestrationV2ArchivedShellStreamItem, stream: true },
+);
+
+/** The sidebar's and the palette's thread search over what was said in active threads. */
+const WsOrchestrationSearchThreadsRpc = Rpc.make(ORCHESTRATION_V2_WS_METHODS.searchThreads, {
+  payload: OrchestrationSearchThreadsInput,
+  success: OrchestrationSearchThreadsResult,
+  error: OrchestrationSearchThreadsError,
 });
 
 /** Sends an orchestration command; the result is the last event it produced. */
@@ -138,9 +174,13 @@ export const WsRpcGroup = RpcGroup.make(
   WsSubscribeServerConfigRpc,
   WsSubscribeServerLifecycleRpc,
   WsProjectsMutateRpc,
+  WsProjectsEnsureScratchRpc,
   WsProjectsWriteFileRpc,
   WsFilesystemBrowseRpc,
   WsOrchestrationSubscribeShellRpc,
+  WsOrchestrationGetArchivedShellSnapshotRpc,
+  WsOrchestrationSubscribeArchivedShellRpc,
+  WsOrchestrationSearchThreadsRpc,
   WsOrchestrationDispatchCommandRpc,
   WsOrchestrationSubscribeThreadRpc,
 );

@@ -15,6 +15,7 @@ import {
   type OrchestrationV2ThreadProjection,
   type OrchestrationV2ThreadShell,
   OrchestrationV2TurnItem,
+  QUEUED_RUN_STATUSES,
 } from "@playstead/contracts/orchestrationV2";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -22,6 +23,8 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
+
+import { latestRunOf } from "./ThreadLifecycle.ts";
 
 export class ProjectionStoreV2Error extends Schema.TaggedError<ProjectionStoreV2Error>()(
   "ProjectionStoreV2Error",
@@ -70,6 +73,20 @@ const entityKindOf = (event: OrchestrationV2StoredEvent["event"]): EntityKind | 
     case "thread.created":
     case "thread.metadata-updated":
     case "thread.model-selection-updated":
+    case "thread.archived":
+    case "thread.unarchived":
+    case "thread.deleted":
+    case "thread.visited":
+    case "thread.marked-unread":
+    case "thread.pinned":
+    case "thread.unpinned":
+    case "thread.pin-reordered":
+    case "thread.active-reordered":
+    case "thread.settled":
+    case "thread.unsettled":
+    case "thread.snoozed":
+    case "thread.unsnoozed":
+    case "thread.auto-settle-set":
     case "thread.runtime-mode-updated":
     case "thread.interaction-mode-updated":
       return "thread";
@@ -110,12 +127,9 @@ const decodeThread = decodeJsonString(OrchestrationV2AppThread);
 const toThreadShell = (
   thread: OrchestrationV2AppThread,
   runs: ReadonlyArray<OrchestrationV2Run>,
+  runtimeRequests: ReadonlyArray<OrchestrationV2RuntimeRequest>,
 ): OrchestrationV2ThreadShell => {
-  const latest = runs.reduce<OrchestrationV2Run | undefined>(
-    (found, run) =>
-      run.status !== "queued" && (found === undefined || run.ordinal > found.ordinal) ? run : found,
-    undefined,
-  );
+  const latest = latestRunOf(runs);
   return {
     id: thread.id,
     projectId: thread.projectId,
@@ -127,8 +141,58 @@ const toThreadShell = (
     status: latest?.status ?? "idle",
     createdAt: thread.createdAt,
     updatedAt: thread.updatedAt,
+    archivedAt: thread.archivedAt,
+    deletedAt: thread.deletedAt,
+    latestRunRequestedAt: latest?.requestedAt ?? null,
+    latestRunCompletedAt: latest?.completedAt ?? null,
+    lastVisitedAt: thread.lastVisitedAt,
+    settledOverride: thread.settledOverride,
+    settledAt: thread.settledAt,
+    unsettledAt: thread.unsettledAt,
+    pinnedAt: thread.pinnedAt,
+    pinOrderKey: thread.pinOrderKey,
+    activeOrderKey: thread.activeOrderKey,
+    snoozedUntil: thread.snoozedUntil,
+    snoozedAt: thread.snoozedAt,
+    hasQueuedRun: runs.some((run) => run.status === "queued"),
+    hasPendingUserInput: runtimeRequests.some((request) => request.status === "pending"),
+    autoSettleDisabledAt: thread.autoSettleDisabledAt,
+    titleRegeneration: thread.titleRegeneration,
+    worktreePath: thread.worktreePath,
   };
 };
+
+/**
+ * A thread automatic settlement may settle, as the sweep reads it (T3 Code's
+ * `ProjectionSettlementCandidate`, without branches and pull requests):
+ * the thread's own fields and its latest run's times, and the latest time
+ * the person wrote to it.
+ */
+export type ProjectionSettlementCandidate = Pick<
+  OrchestrationV2ThreadShell,
+  | "id"
+  | "projectId"
+  | "createdAt"
+  | "updatedAt"
+  | "archivedAt"
+  | "settledOverride"
+  | "pinnedAt"
+  | "autoSettleDisabledAt"
+  | "status"
+  | "latestRunId"
+  | "latestRunRequestedAt"
+  | "latestRunCompletedAt"
+> & {
+  readonly latestRunStartedAt: string | null;
+  readonly latestUserMessageAt: string | null;
+  readonly hasPendingRuntimeRequest: boolean;
+  readonly hasActiveRun: boolean;
+  /** The thread itself, for what the sweep reads beyond these fields. */
+  readonly thread: OrchestrationV2AppThread;
+};
+
+/** Where a thread shows: the sidebar, or **Settings → Archive**. */
+export type ThreadShellLocation = "active" | "archive";
 
 /**
  * The thread projections (T3 Code's `apps/server/src/orchestration-v2/ProjectionStore.ts`
@@ -150,11 +214,14 @@ export class ProjectionStoreV2 extends Context.Service<
     readonly getThreadShell: (
       threadId: ThreadId,
     ) => Effect.Effect<Option.Option<OrchestrationV2ThreadShell>, ProjectionStoreV2Error>;
-    /** Oldest first. */
-    readonly listThreadShells: Effect.Effect<
-      ReadonlyArray<OrchestrationV2ThreadShell>,
-      ProjectionStoreV2Error
-    >;
+    /**
+     * The threads shown in one place, oldest first: those not archived, or
+     * the archived ones (T3 Code's `readShellSnapshot({location})`). A
+     * deleted thread shows in neither.
+     */
+    readonly listThreadShells: (
+      location: ThreadShellLocation,
+    ) => Effect.Effect<ReadonlyArray<OrchestrationV2ThreadShell>, ProjectionStoreV2Error>;
     /**
      * Threads whose projection still says a provider is at work: an active
      * run, a queued run not held, a provider session not stopped, or an
@@ -162,6 +229,17 @@ export class ProjectionStoreV2 extends Context.Service<
      * and `"queued-runs"`).
      */
     readonly listRecoveryThreadIds: Effect.Effect<ReadonlyArray<ThreadId>, ProjectionStoreV2Error>;
+    /**
+     * The threads automatic settlement may settle, least recently updated
+     * first, or only the one given (T3 Code's `getSettlementCandidates`):
+     * not deleted, archived, settled or un-settled, pinned or opted out, with
+     * no run active or queued and nothing waiting on the person. T3 Code
+     * leaves a thread with queued runs to its settle guard, which refuses it;
+     * leaving it out here keeps the sweep from asking every minute.
+     */
+    readonly getSettlementCandidates: (
+      threadId?: ThreadId,
+    ) => Effect.Effect<ReadonlyArray<ProjectionSettlementCandidate>, ProjectionStoreV2Error>;
     /** One run as the projection has it now. */
     readonly getRun: (
       runId: RunId,
@@ -202,6 +280,14 @@ const make = Effect.gen(function* () {
         INSERT INTO ${sql(ENTITIES[kind].table)} (id, thread_id, first_sequence, payload_json)
         VALUES (${event.payload.id}, ${event.threadId}, ${stored.sequence}, ${payloadJson})
         ON CONFLICT (id) DO UPDATE SET payload_json = excluded.payload_json
+      `;
+      // The thread's work is activity: it updates the thread (T3 Code's
+      // `updated_at` bump). Thread events carry their own `updatedAt`, and a
+      // visit or mark-unread leaves it, so reading a thread is not activity.
+      yield* sql`
+        UPDATE orchestration_v2_projection_threads
+        SET payload_json = json_set(payload_json, '$.updatedAt', ${event.occurredAt})
+        WHERE thread_id = ${event.threadId}
       `;
     }).pipe(Effect.mapError(failWith("apply")));
 
@@ -281,21 +367,38 @@ const make = Effect.gen(function* () {
     Effect.gen(function* () {
       const thread = yield* readThread(threadId);
       if (Option.isNone(thread)) return Option.none();
-      return Option.some(toThreadShell(thread.value, yield* readRows(ENTITIES.runs, threadId)));
+      const [runs, runtimeRequests] = yield* Effect.all([
+        readRows(ENTITIES.runs, threadId),
+        readRows(ENTITIES.runtimeRequests, threadId),
+      ]);
+      return Option.some(toThreadShell(thread.value, runs, runtimeRequests));
     }).pipe(Effect.mapError(failWith("getThreadShell")));
 
-  const listThreadShells = Effect.gen(function* () {
-    const rows = yield* sql<{ readonly payloadJson: string }>`
+  const listThreadShells = (location: ThreadShellLocation) =>
+    Effect.gen(function* () {
+      const rows = yield* sql<{ readonly payloadJson: string }>`
       SELECT payload_json AS "payloadJson"
       FROM orchestration_v2_projection_threads
+      WHERE json_extract(payload_json, '$.deletedAt') IS NULL
+        AND ${
+          location === "archive"
+            ? sql`json_extract(payload_json, '$.archivedAt') IS NOT NULL`
+            : sql`json_extract(payload_json, '$.archivedAt') IS NULL`
+        }
       ORDER BY first_sequence ASC
     `;
-    return yield* Effect.forEach(rows, (row) =>
-      Effect.flatMap(decodeThread(row.payloadJson), (thread) =>
-        Effect.map(readRows(ENTITIES.runs, thread.id), (runs) => toThreadShell(thread, runs)),
-      ),
-    );
-  }).pipe(Effect.mapError(failWith("listThreadShells")));
+      return yield* Effect.forEach(rows, (row) =>
+        Effect.flatMap(decodeThread(row.payloadJson), (thread) =>
+          Effect.map(
+            Effect.all([
+              readRows(ENTITIES.runs, thread.id),
+              readRows(ENTITIES.runtimeRequests, thread.id),
+            ]),
+            ([runs, runtimeRequests]) => toThreadShell(thread, runs, runtimeRequests),
+          ),
+        ),
+      );
+    }).pipe(Effect.mapError(failWith("listThreadShells")));
 
   const listRecoveryThreadIds = sql<{ readonly threadId: ThreadId }>`
     SELECT thread_id AS "threadId" FROM orchestration_v2_projection_runs
@@ -312,6 +415,70 @@ const make = Effect.gen(function* () {
     Effect.map((rows) => rows.map((row) => row.threadId)),
     Effect.mapError(failWith("listRecoveryThreadIds")),
   );
+
+  const getSettlementCandidates = (threadId?: ThreadId) =>
+    Effect.gen(function* () {
+      const rows = yield* sql<{
+        readonly payloadJson: string;
+        readonly latestUserMessageAt: string | null;
+      }>`
+        SELECT t.payload_json AS "payloadJson",
+          (
+            SELECT MAX(json_extract(message.payload_json, '$.updatedAt'))
+            FROM orchestration_v2_projection_messages message
+            WHERE message.thread_id = t.thread_id
+              AND json_extract(message.payload_json, '$.role') = 'user'
+          ) AS "latestUserMessageAt"
+        FROM orchestration_v2_projection_threads t
+        WHERE json_extract(t.payload_json, '$.deletedAt') IS NULL
+          ${threadId === undefined ? sql`` : sql`AND t.thread_id = ${threadId}`}
+          AND json_extract(t.payload_json, '$.archivedAt') IS NULL
+          AND json_extract(t.payload_json, '$.settledOverride') IS NULL
+          AND json_extract(t.payload_json, '$.pinnedAt') IS NULL
+          AND json_extract(t.payload_json, '$.autoSettleDisabledAt') IS NULL
+          AND NOT EXISTS (
+            SELECT 1 FROM orchestration_v2_projection_runs run
+            WHERE run.thread_id = t.thread_id
+              AND json_extract(run.payload_json, '$.status') IN ${sql.in([
+                ...ACTIVE_RUN_STATUSES,
+                ...QUEUED_RUN_STATUSES,
+              ])}
+          )
+          AND NOT EXISTS (
+            SELECT 1 FROM orchestration_v2_projection_runtime_requests request
+            WHERE request.thread_id = t.thread_id
+              AND json_extract(request.payload_json, '$.status') = 'pending'
+          )
+        ORDER BY json_extract(t.payload_json, '$.updatedAt') ASC, t.thread_id ASC
+      `;
+      return yield* Effect.forEach(rows, (row) =>
+        Effect.gen(function* () {
+          const thread = yield* decodeThread(row.payloadJson);
+          const runs = yield* readRows(ENTITIES.runs, thread.id);
+          const shell = toThreadShell(thread, runs, []);
+          const latest = latestRunOf(runs);
+          return {
+            id: shell.id,
+            projectId: shell.projectId,
+            createdAt: shell.createdAt,
+            updatedAt: shell.updatedAt,
+            archivedAt: shell.archivedAt,
+            settledOverride: shell.settledOverride,
+            pinnedAt: shell.pinnedAt,
+            autoSettleDisabledAt: shell.autoSettleDisabledAt,
+            status: shell.status,
+            latestRunId: shell.latestRunId,
+            latestRunRequestedAt: shell.latestRunRequestedAt,
+            latestRunCompletedAt: shell.latestRunCompletedAt,
+            latestRunStartedAt: latest?.startedAt ?? null,
+            latestUserMessageAt: row.latestUserMessageAt,
+            hasPendingRuntimeRequest: false,
+            hasActiveRun: false,
+            thread,
+          } satisfies ProjectionSettlementCandidate;
+        }),
+      );
+    }).pipe(Effect.mapError(failWith("getSettlementCandidates")));
 
   const getTurnItemOrdinal = (itemId: TurnItemId) =>
     sql<{ readonly ordinal: number }>`
@@ -353,6 +520,7 @@ const make = Effect.gen(function* () {
     getThreadShell,
     listThreadShells,
     listRecoveryThreadIds,
+    getSettlementCandidates,
     getTurnItemOrdinal,
     maxTurnItemOrdinal,
   });

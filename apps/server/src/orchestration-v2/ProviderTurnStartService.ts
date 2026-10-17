@@ -29,9 +29,10 @@ import * as ProviderSessionManager from "./ProviderSessionManager.ts";
 import * as RunExecutionService from "./RunExecutionService.ts";
 
 /**
- * A turn runs in its thread's runtime and interaction modes, in its
- * project's folder (T3 Code's `RuntimePolicyV2.resolve` at
- * 2577baf, without project or instance overrides).
+ * A turn runs in its thread's runtime and interaction modes, in the
+ * thread's own folder if it has one (a thread without a project), else its
+ * project's (T3 Code's `RuntimePolicyV2.resolve` at 2577baf, without
+ * project or instance overrides).
  */
 const resolveRuntimePolicy = (
   thread: OrchestrationV2AppThread,
@@ -171,7 +172,10 @@ const make = Effect.gen(function* () {
       if (Option.isNone(adapter)) {
         return yield* fail(`Provider instance ${thread.providerInstanceId} cannot run threads.`);
       }
-      const runtimePolicy = resolveRuntimePolicy(thread, project.value.workspaceRoot);
+      const runtimePolicy = resolveRuntimePolicy(
+        thread,
+        thread.worktreePath ?? project.value.workspaceRoot,
+      );
       // A provider thread that has had turns continues its native
       // conversation, as T3 Code resumes one with a persisted turn.
       const earlierTurns = projection.providerTurns.filter(

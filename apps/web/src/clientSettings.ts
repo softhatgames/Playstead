@@ -1,11 +1,7 @@
 import { type ClientSettings, DEFAULT_CLIENT_SETTINGS } from "@playstead/contracts/ipc";
 import { useSyncExternalStore } from "react";
 
-import {
-  readBrowserClientSettings,
-  writeBrowserClientSettings,
-} from "./clientPersistenceStorage.ts";
-import { desktopBridge } from "./env.ts";
+import { readLocalApi } from "./localApi.ts";
 
 /**
  * The interface's client settings (T3 Code's `useClientSettings` and
@@ -23,19 +19,9 @@ const publish = (next: ClientSettings) => {
   for (const listener of listeners) listener();
 };
 
-const getStored = (): Promise<ClientSettings | null> =>
-  desktopBridge === undefined
-    ? Promise.resolve(readBrowserClientSettings())
-    : desktopBridge.getClientSettings();
-
-const setStored = (settings: ClientSettings): Promise<void> => {
-  if (desktopBridge !== undefined) return desktopBridge.setClientSettings(settings);
-  writeBrowserClientSettings(settings);
-  return Promise.resolve();
-};
-
 const load = () => {
-  loading ??= getStored()
+  loading ??= readLocalApi()
+    .persistence.getClientSettings()
     .then((stored) => {
       if (stored !== null) publish(stored);
     })
@@ -54,10 +40,16 @@ export function useClientSettings(): ClientSettings {
   return useSyncExternalStore(subscribe, () => current);
 }
 
+/** The settings once loaded, for an action about to read one. */
+export async function readClientSettings(): Promise<ClientSettings> {
+  await load();
+  return current;
+}
+
 /** Changes some settings and saves them all. */
 export async function updateClientSettings(patch: Partial<ClientSettings>): Promise<void> {
   await load();
   const next = { ...current, ...patch };
   publish(next);
-  await setStored(next);
+  await readLocalApi().persistence.setClientSettings(next);
 }

@@ -16,6 +16,10 @@
       "types": "./src/operations/threadTitle.ts",
       "import": "./src/operations/threadTitle.ts"
     },
+    "./state/archivedThreads": {
+      "types": "./src/state/archivedThreads.ts",
+      "import": "./src/state/archivedThreads.ts"
+    },
     "./state/composerDispatch": {
       "types": "./src/state/composerDispatch.ts",
       "import": "./src/state/composerDispatch.ts"
@@ -35,6 +39,18 @@
     "./state/thread": {
       "types": "./src/state/thread.ts",
       "import": "./src/state/thread.ts"
+    },
+    "./state/threadInbox": {
+      "types": "./src/state/threadInbox.ts",
+      "import": "./src/state/threadInbox.ts"
+    },
+    "./state/threadSettled": {
+      "types": "./src/state/threadSettled.ts",
+      "import": "./src/state/threadSettled.ts"
+    },
+    "./state/threadSort": {
+      "types": "./src/state/threadSort.ts",
+      "import": "./src/state/threadSort.ts"
     }
   },
   "scripts": {

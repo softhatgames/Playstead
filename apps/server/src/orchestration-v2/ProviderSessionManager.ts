@@ -38,7 +38,9 @@ interface LiveSession {
  * there by detaching the session when the mode is set). Sessions close
  * with the server; a session opened for a thread that has had turns, after
  * a restart, a lost process or a mode change, continues the provider's own
- * conversation (`initialNativeThreadId`).
+ * conversation (`initialNativeThreadId`). `detach` stops a thread's session
+ * (T3 Code's `detach`), as archiving, deleting and settling a thread do;
+ * the thread's next turn opens a new one.
  */
 export class ProviderSessionManagerV2 extends Context.Service<
   ProviderSessionManagerV2,
@@ -55,6 +57,15 @@ export class ProviderSessionManagerV2 extends Context.Service<
       { readonly session: ProviderAdapterV2SessionRuntime; readonly opened: boolean },
       ProviderAdapterV2Error
     >;
+    /**
+     * Closes the thread's session if it is the one named. A session already
+     * gone, or replaced since, is left alone, so a detach run again after a
+     * restart does nothing.
+     */
+    readonly detach: (input: {
+      readonly threadId: ThreadId;
+      readonly providerSessionId: ProviderSessionId;
+    }) => Effect.Effect<void>;
   }
 >()("@playstead/server/orchestration-v2/ProviderSessionManager/ProviderSessionManagerV2") {}
 
@@ -108,6 +119,16 @@ const make = Effect.gen(function* () {
             interactionMode: input.runtimePolicy.interactionMode,
           });
           return { session, opened: true };
+        }),
+      ),
+    detach: (input) =>
+      locks.withLock(
+        input.threadId,
+        Effect.suspend(() => {
+          const current = live.get(input.threadId);
+          if (current?.session.providerSession.id !== input.providerSessionId) return Effect.void;
+          live.delete(input.threadId);
+          return Scope.close(current.scope, Exit.void);
         }),
       ),
   });

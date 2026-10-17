@@ -2,10 +2,12 @@ import {
   ORCHESTRATION_V2_WS_METHODS,
   OrchestrationDispatchCommandError,
 } from "@playstead/contracts/orchestrationV2";
-import { ProjectMutationError } from "@playstead/contracts/project";
+import { ProjectEnsureScratchError, ProjectMutationError } from "@playstead/contracts/project";
 import { WS_METHODS, WsRpcGroup } from "@playstead/contracts/rpc";
+import { OrchestrationSearchThreadsError } from "@playstead/contracts/threadSearch";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import type * as Path from "effect/Path";
 import * as Stream from "effect/Stream";
 import * as HttpRouter from "effect/http/HttpRouter";
@@ -18,8 +20,14 @@ import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
 import { failEnvironmentAuthInvalid, failEnvironmentInternal } from "./auth/http.ts";
 import * as ServerEnvironment from "./environment/ServerEnvironment.ts";
 import * as Orchestrator from "./orchestration-v2/Orchestrator.ts";
-import { streamShell } from "./orchestration-v2/ShellStream.ts";
+import {
+  getArchivedShellSnapshot,
+  streamArchivedShell,
+  streamShell,
+} from "./orchestration-v2/ShellStream.ts";
+import * as ThreadSearch from "./orchestration-v2/ThreadSearch.ts";
 import { streamThread } from "./orchestration-v2/ThreadStream.ts";
+import * as ManagedProjectFolders from "./project/ManagedProjectFolders.ts";
 import * as ProjectService from "./project/ProjectService.ts";
 import * as ProviderRegistry from "./provider/ProviderRegistry.ts";
 import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
@@ -44,17 +52,26 @@ const layerWsRpc = WsRpcGroup.toLayer(
     const settings = yield* ServerSettings.ServerSettingsService;
     const projects = yield* ProjectService.ProjectService;
     const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const threadSearch = yield* ThreadSearch.ThreadSearch;
     const context = yield* Effect.context<
       | Effect.Services<typeof streamShell>
       | Stream.Services<ReturnType<typeof streamThread>>
       | Path.Path
     >();
+    const folders = yield* ManagedProjectFolders.ManagedProjectFolders;
     const getConfig = Effect.all({
       environment: environment.getDescriptor,
       auth: Effect.succeed(auth.descriptor),
       providers: providers.getProviders,
       settings: settings.getSettings,
-    });
+      scratchWorkspaceRoot: folders.scratchRoot,
+    }).pipe(
+      Effect.map(({ scratchWorkspaceRoot, ...config }) =>
+        Option.isSome(scratchWorkspaceRoot)
+          ? { ...config, scratchWorkspaceRoot: scratchWorkspaceRoot.value }
+          : config,
+      ),
+    );
     return WsRpcGroup.of({
       [WS_METHODS.serverGetConfig]: () => getConfig,
       [WS_METHODS.serverRefreshProviders]: ({ instanceId }) =>
@@ -94,23 +111,51 @@ const layerWsRpc = WsRpcGroup.toLayer(
           ),
         ),
       [WS_METHODS.subscribeServerLifecycle]: () => lifecycleEvents.subscribe,
+      // T3 Code's `projectMutationOperation` (`project/ProjectMutation.ts`).
       // A conflict passes through so the client can open the project that owns
-      // the folder. Anything else is T3 Code's one mutation error, carrying the
-      // folder check's reason when that is what failed.
+      // the folder. Anything else is T3 Code's one mutation error, carrying
+      // "Project X is not empty." or the folder check's reason when that is
+      // what failed.
       [WS_METHODS.projectsMutate]: (mutation) =>
-        projects.create(mutation).pipe(
-          Effect.catchTag("ProjectOperationError", (cause) =>
-            Effect.fail(
-              new ProjectMutationError({
-                commandId: mutation.commandId,
-                message:
-                  cause.operation === "normalize-workspace" && cause.cause instanceof Error
-                    ? cause.cause.message
-                    : "Failed to mutate project.",
-                cause,
-              }),
-            ),
-          ),
+        (mutation.type === "project.create"
+          ? projects.create(mutation)
+          : mutation.type === "project.update"
+            ? projects.update(mutation)
+            : projects.delete(mutation)
+        ).pipe(
+          Effect.catchTags({
+            ProjectNotFoundError: (cause) =>
+              Effect.fail(
+                new ProjectMutationError({
+                  commandId: mutation.commandId,
+                  message: "Failed to mutate project.",
+                  cause,
+                }),
+              ),
+            ProjectNotEmptyError: (cause) =>
+              Effect.fail(
+                new ProjectMutationError({
+                  commandId: mutation.commandId,
+                  message: cause.message,
+                  cause,
+                }),
+              ),
+            ProjectOperationError: (cause) =>
+              Effect.fail(
+                new ProjectMutationError({
+                  commandId: mutation.commandId,
+                  message:
+                    cause.operation === "normalize-workspace" && cause.cause instanceof Error
+                      ? cause.cause.message
+                      : "Failed to mutate project.",
+                  cause,
+                }),
+              ),
+          }),
+        ),
+      [WS_METHODS.projectsEnsureScratch]: () =>
+        projects.ensureScratchProject.pipe(
+          Effect.mapError((cause) => new ProjectEnsureScratchError({ message: cause.message })),
         ),
       [WS_METHODS.projectsWriteFile]: (input) =>
         WorkspaceFileSystem.writeFile(input).pipe(Effect.provideContext(context)),
@@ -118,6 +163,18 @@ const layerWsRpc = WsRpcGroup.toLayer(
         WorkspaceEntries.browse(input).pipe(Effect.provideContext(context)),
       [ORCHESTRATION_V2_WS_METHODS.subscribeShell]: () =>
         streamShell.pipe(Stream.orDie, Stream.provideContext(context)),
+      [ORCHESTRATION_V2_WS_METHODS.getArchivedShellSnapshot]: () =>
+        getArchivedShellSnapshot.pipe(Effect.orDie, Effect.provideContext(context)),
+      [ORCHESTRATION_V2_WS_METHODS.subscribeArchivedShell]: () =>
+        streamArchivedShell.pipe(Stream.orDie, Stream.provideContext(context)),
+      [ORCHESTRATION_V2_WS_METHODS.searchThreads]: (input) =>
+        threadSearch
+          .search(input)
+          .pipe(
+            Effect.mapError(
+              () => new OrchestrationSearchThreadsError({ message: "Failed to search threads" }),
+            ),
+          ),
       // Mutations reach here only after startup: `/ws` waits at the readiness gate.
       [ORCHESTRATION_V2_WS_METHODS.dispatchCommand]: (command) =>
         orchestrator.dispatch(command).pipe(

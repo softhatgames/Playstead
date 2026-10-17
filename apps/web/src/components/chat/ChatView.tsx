@@ -14,6 +14,7 @@ import {
   ACTIVE_RUN_STATUSES,
   DEFAULT_RUNTIME_MODE,
   type ModelSelection,
+  type OrchestrationV2ThreadShell,
   type OrchestrationV2Command,
   type OrchestrationV2SourcePlanRef,
   type ProviderApprovalDecision,
@@ -22,7 +23,7 @@ import {
   type RuntimeMode,
 } from "@playstead/contracts/orchestrationV2";
 import { useNavigate } from "@tanstack/react-router";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { useClientSettings } from "../../clientSettings.ts";
 import { requestPrimary, usePrimaryConnectionState } from "../../connection/runtime.ts";
@@ -46,6 +47,8 @@ import {
   useComposerInteractionMode,
   useComposerRuntimeMode,
 } from "../../drafts.ts";
+import { type ThreadLifecycleTarget, visitThread } from "../../hooks/useThreadActions.ts";
+import { useThreadShortcuts } from "../../hooks/useThreadShortcuts.ts";
 import { newId } from "../../ids.ts";
 import {
   buildPlanImplementationPrompt,
@@ -54,6 +57,9 @@ import {
   resolvePlanFollowUpSubmission,
 } from "../../proposedPlan.ts";
 import { ChatComposer } from "./ChatComposer.tsx";
+import { ChatHeader } from "./ChatHeader.tsx";
+import { ThreadStatusLine } from "./ThreadStatusLine.tsx";
+import { DraftHeroHeadline } from "./DraftHeroHeadline.tsx";
 import {
   buildSendCommands,
   defaultModelSelection,
@@ -65,6 +71,7 @@ import { traitsForDispatch } from "./traits.logic.ts";
 import { MessagesTimeline } from "./MessagesTimeline.tsx";
 import { derivePendingApprovals } from "./pendingApproval.logic.ts";
 import { derivePendingUserInputs } from "./pendingUserInput.logic.ts";
+import { resolveThreadVisit } from "./threadVisit.logic.ts";
 import {
   deriveActiveTasks,
   findLatestProposedPlan,
@@ -72,6 +79,49 @@ import {
   shouldShowPlanFollowUpPrompt,
 } from "./plan.logic.ts";
 import { deriveTimelineRows } from "./timeline.logic.ts";
+
+/**
+ * Sends `thread.visit` while the thread is in view, as `resolveThreadVisit`
+ * decides from the sidebar's copy of the thread (T3 Code's visit effect in
+ * `ChatView.tsx` at 2577baf, which reads the shell too). A failed visit is
+ * not reported, as in T3 Code.
+ */
+function useThreadVisits(thread: OrchestrationV2ThreadShell | undefined) {
+  const lastDispatchedKey = useRef<string | null>(null);
+  const lastDispatchAt = useRef(0);
+  const threadId = thread?.id;
+  const updatedAt = thread?.updatedAt;
+  const lastVisitedAt = thread?.lastVisitedAt;
+  const latestRunCompletedAt = thread?.latestRunCompletedAt;
+  useEffect(() => {
+    if (
+      threadId === undefined ||
+      updatedAt === undefined ||
+      lastVisitedAt === undefined ||
+      latestRunCompletedAt === undefined
+    ) {
+      return;
+    }
+    const decision = resolveThreadVisit({
+      thread: { id: threadId, updatedAt, lastVisitedAt, latestRunCompletedAt },
+      lastDispatchedKey: lastDispatchedKey.current,
+      lastDispatchAt: lastDispatchAt.current,
+      now: Date.now(),
+    });
+    if (decision.kind === "none") return;
+    const dispatch = () => {
+      lastDispatchedKey.current = decision.key;
+      lastDispatchAt.current = Date.now();
+      visitThread(threadId, decision.visitedAt).catch(() => undefined);
+    };
+    if (decision.kind === "now") {
+      dispatch();
+      return;
+    }
+    const timer = setTimeout(dispatch, decision.delayMs);
+    return () => clearTimeout(timer);
+  }, [threadId, updatedAt, lastVisitedAt, latestRunCompletedAt]);
+}
 
 const sendCommands = async (
   target: SendTarget,
@@ -216,7 +266,8 @@ function useReconnectWarning(unavailable: boolean): boolean {
  * The thread view: the chat column only, after T3 Code's `ChatView.tsx` at
  * 2577baf without its right-hand panel, terminal, diffs, branch toolbar or
  * thread details. A draft becomes a thread when its first message is sent,
- * and the view moves to it.
+ * and the view moves to it. A thread's header opens its menu, from the
+ * title's chevron or a right-click (T3 Code's `ChatHeader.tsx`).
  */
 export function ChatView(
   props:
@@ -501,18 +552,44 @@ export function ChatView(
   };
 
   const title = projection?.thread.title ?? "New thread";
+  // The latest run that left the queue, as the sidebar's shell counts it.
+  const target = useMemo(
+    (): ThreadLifecycleTarget | null =>
+      projection === undefined
+        ? null
+        : {
+            id: projection.thread.id,
+            projectId: projection.thread.projectId,
+            title: projection.thread.title,
+            status: latestRun?.status ?? "idle",
+            pinnedAt: projection.thread.pinnedAt,
+            pinOrderKey: projection.thread.pinOrderKey,
+            settledOverride: projection.thread.settledOverride,
+            snoozedUntil: projection.thread.snoozedUntil,
+            snoozedAt: projection.thread.snoozedAt,
+            latestRunCompletedAt: latestRun?.completedAt ?? null,
+            hasQueuedRun: projection.runs.some((run) => run.status === "queued"),
+            hasPendingUserInput: projection.runtimeRequests.some(
+              (request) => request.status === "pending",
+            ),
+            autoSettleDisabledAt: projection.thread.autoSettleDisabledAt,
+            titleRegeneration: projection.thread.titleRegeneration,
+          },
+    [projection, latestRun?.status, latestRun?.completedAt],
+  );
+  useThreadShortcuts(target);
+  const threadShell =
+    props.kind === "thread"
+      ? connection?.shell?.threads.find((candidate) => candidate.id === props.threadId)
+      : undefined;
+  useThreadVisits(threadShell);
   return (
     <div className="flex h-full flex-col">
-      <header className="flex items-baseline gap-2 border-b border-neutral-200 px-6 py-3 dark:border-neutral-800">
-        <h1 className="truncate text-sm font-medium">{title}</h1>
-        {project === undefined ? null : (
-          <span className="truncate text-xs text-neutral-500 dark:text-neutral-400">
-            {project.title}
-          </span>
-        )}
-      </header>
+      <ChatHeader title={title} projectTitle={project?.title} thread={target} />
       <div className="min-h-0 flex-1 overflow-y-auto">
-        {error === undefined ? (
+        {props.kind === "draft" ? (
+          <DraftHeroHeadline draft={props.draft} />
+        ) : error === undefined ? (
           <MessagesTimeline
             rows={rows}
             working={working}
@@ -523,6 +600,7 @@ export function ChatView(
           <p className="px-6 py-6 text-sm text-neutral-600 dark:text-neutral-300">{error}</p>
         )}
       </div>
+      <ThreadStatusLine thread={threadShell} />
       <ChatComposer
         entries={entries}
         selection={selection}

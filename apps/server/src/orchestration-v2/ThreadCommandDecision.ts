@@ -6,8 +6,8 @@ import type {
   TurnItemId,
 } from "@playstead/contracts/baseSchemas";
 import type {
-  OrchestrationV2Command,
   OrchestrationV2Run,
+  OrchestrationV2ServerCommand,
   OrchestrationV2ThreadProjection,
 } from "@playstead/contracts/orchestrationV2";
 import * as Result from "effect/Result";
@@ -42,6 +42,11 @@ export interface ThreadCommandState {
   readonly supportsQueuedMessages: boolean;
   /** For `message.dispatch` and promotion: whether the thread's adapter can steer a running turn. */
   readonly supportsActiveSteering: boolean;
+  /**
+   * For a first `message.dispatch`: the folder claimed for a thread without
+   * a project, which becomes its `worktreePath`.
+   */
+  readonly worktreePath?: string;
 }
 
 /** Ids a message needs, allocated before deciding so the decision stays pure. */
@@ -64,19 +69,19 @@ export interface ThreadCommandDecision {
 export type ThreadCommandResult = Result.Result<ThreadCommandDecision, ThreadCommandRejection>;
 
 /** Everything a command decider is given. */
-export interface ThreadCommandInput<Command extends OrchestrationV2Command> {
+export interface ThreadCommandInput<Command extends OrchestrationV2ServerCommand> {
   readonly command: Command;
   readonly state: ThreadCommandState;
   readonly ids: ThreadCommandIds;
   readonly now: string;
 }
 
-export const reject = (command: OrchestrationV2Command, reason: string) =>
+export const reject = (command: OrchestrationV2ServerCommand, reason: string) =>
   Result.fail(new ThreadCommandRejection({ commandType: command.type, reason }));
 
 /** The thread the command names, or the command refused because it does not exist. */
 export const requireThread = (
-  command: OrchestrationV2Command,
+  command: OrchestrationV2ServerCommand,
   state: ThreadCommandState,
 ): Result.Result<OrchestrationV2ThreadProjection, ThreadCommandRejection> =>
   state.projection === undefined
@@ -88,7 +93,7 @@ export const requireThread = (
  * "<subject> <id> is not queued.".
  */
 export const requireQueuedRun = (
-  command: OrchestrationV2Command,
+  command: OrchestrationV2ServerCommand,
   runs: ReadonlyArray<OrchestrationV2Run>,
   runId: RunId,
   subject: string,

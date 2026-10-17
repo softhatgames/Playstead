@@ -28,6 +28,20 @@ const applyEvent = (
     case "thread.created":
     case "thread.metadata-updated":
     case "thread.model-selection-updated":
+    case "thread.archived":
+    case "thread.unarchived":
+    case "thread.deleted":
+    case "thread.visited":
+    case "thread.marked-unread":
+    case "thread.pinned":
+    case "thread.unpinned":
+    case "thread.pin-reordered":
+    case "thread.active-reordered":
+    case "thread.settled":
+    case "thread.unsettled":
+    case "thread.snoozed":
+    case "thread.unsnoozed":
+    case "thread.auto-settle-set":
     case "thread.runtime-mode-updated":
     case "thread.interaction-mode-updated":
       return { ...projection, thread: event.payload, updatedAt: event.payload.updatedAt };

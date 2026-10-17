@@ -1,3 +1,4 @@
+import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
 import {
@@ -39,6 +40,9 @@ import { ProviderDriverKind, ProviderInstanceId } from "./providerInstance.ts";
 
 export const ORCHESTRATION_V2_WS_METHODS = {
   dispatchCommand: "orchestration.dispatchCommand",
+  getArchivedShellSnapshot: "orchestration.getArchivedShellSnapshot",
+  searchThreads: "orchestration.searchThreads",
+  subscribeArchivedShell: "orchestration.subscribeArchivedShell",
   subscribeShell: "orchestration.subscribeShell",
   subscribeThread: "orchestration.subscribeThread",
 } as const;
@@ -89,6 +93,54 @@ const OrchestrationV2ProviderRef = Schema.Struct({
 });
 export type OrchestrationV2ProviderRef = typeof OrchestrationV2ProviderRef.Type;
 
+/**
+ * A thread field added after threads were first stored: a row written before
+ * it decodes with null (T3 Code's decoding defaults on the thread).
+ */
+const NullOrTimeDefaultNull = Schema.NullOr(IsoDateTime).pipe(
+  Schema.withDecodingDefault(Effect.succeed(null)),
+);
+
+const NullOrOrderKeyDefaultNull = Schema.NullOr(TrimmedNonEmptyString).pipe(
+  Schema.withDecodingDefault(Effect.succeed(null)),
+);
+
+/** The person settled the thread, or brought it back to active work (T3 Code's). */
+const ThreadSettledOverride = Schema.NullOr(Schema.Literals(["settled", "active"]));
+export type ThreadSettledOverride = typeof ThreadSettledOverride.Type;
+
+/**
+ * A title being generated for the thread: the command that asked for it,
+ * and when. A result applies only while this is still the thread's request
+ * (T3 Code's `titleRegeneration`).
+ */
+const OrchestrationV2TitleRegeneration = Schema.Struct({
+  requestId: CommandId,
+  startedAt: IsoDateTime,
+});
+export type OrchestrationV2TitleRegeneration = typeof OrchestrationV2TitleRegeneration.Type;
+
+/**
+ * A thread (T3 Code's `OrchestrationV2AppThread`, trimmed). An archived
+ * thread has `archivedAt`; a deleted one keeps its row with `deletedAt`,
+ * T3 Code's soft delete, and refuses every command. `lastVisitedAt` is the
+ * read marker: the thread is unread while its latest run completed after it.
+ *
+ * A settled thread has `settledOverride` "settled" and `settledAt`; one the
+ * person un-settled has "active" and `unsettledAt`, which keeps automatic
+ * settlement away until a message clears the override. A pinned thread has
+ * `pinnedAt`. `pinOrderKey` and `activeOrderKey` are the pinned and active
+ * lists' a–z order keys, which settling clears. `autoSettleDisabledAt` is
+ * set while the person has turned automatic settlement off for the thread.
+ * A snoozed thread has `snoozedUntil`, when it wakes, and `snoozedAt`, when
+ * it was snoozed; there is no timer, so it counts as snoozed while
+ * `snoozedUntil` is ahead and no run has completed since `snoozedAt`.
+ * `lastSnoozeWakeAt` is when the person last woke it, or a pin did.
+ * `titleRegeneration` is set while a title is being generated.
+ * `worktreePath` is the thread's own working folder, which its provider and
+ * title generation run in instead of the project's: a thread without a
+ * project gets one with its first message (T3 Code's `worktreePath`).
+ */
 export const OrchestrationV2AppThread = Schema.Struct({
   id: ThreadId,
   projectId: ProjectId,
@@ -100,6 +152,25 @@ export const OrchestrationV2AppThread = Schema.Struct({
   activeProviderThreadId: Schema.NullOr(ProviderThreadId),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
+  archivedAt: NullOrTimeDefaultNull,
+  deletedAt: NullOrTimeDefaultNull,
+  lastVisitedAt: NullOrTimeDefaultNull,
+  settledOverride: ThreadSettledOverride.pipe(Schema.withDecodingDefault(Effect.succeed(null))),
+  settledAt: NullOrTimeDefaultNull,
+  unsettledAt: NullOrTimeDefaultNull,
+  pinnedAt: NullOrTimeDefaultNull,
+  pinOrderKey: NullOrOrderKeyDefaultNull,
+  activeOrderKey: NullOrOrderKeyDefaultNull,
+  snoozedUntil: NullOrTimeDefaultNull,
+  snoozedAt: NullOrTimeDefaultNull,
+  lastSnoozeWakeAt: NullOrTimeDefaultNull,
+  autoSettleDisabledAt: NullOrTimeDefaultNull,
+  titleRegeneration: Schema.NullOr(OrchestrationV2TitleRegeneration).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
+  worktreePath: Schema.NullOr(TrimmedNonEmptyString).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
 });
 export type OrchestrationV2AppThread = typeof OrchestrationV2AppThread.Type;
 
@@ -132,6 +203,13 @@ export const ACTIVE_RUN_STATUSES: ReadonlySet<OrchestrationV2RunStatus> = new Se
   "running",
   "waiting",
 ]);
+
+/**
+ * The statuses of a run waiting in the queue behind an active one. Settle
+ * and snooze are refused while one waits; archive and delete cancel them, as
+ * T3 Code does its `queued` runs.
+ */
+export const QUEUED_RUN_STATUSES: ReadonlySet<OrchestrationV2RunStatus> = new Set(["queued"]);
 
 /** The statuses in which a run has ended; each lets the next queued run start (T3 Code's `handleTerminalRun`). */
 export const TERMINAL_RUN_STATUSES: ReadonlySet<OrchestrationV2RunStatus> = new Set([
@@ -530,6 +608,20 @@ export const OrchestrationV2DomainEvent = Schema.Union([
   event("thread.created", OrchestrationV2AppThread),
   event("thread.metadata-updated", OrchestrationV2AppThread),
   event("thread.model-selection-updated", OrchestrationV2AppThread),
+  event("thread.archived", OrchestrationV2AppThread),
+  event("thread.unarchived", OrchestrationV2AppThread),
+  event("thread.deleted", OrchestrationV2AppThread),
+  event("thread.visited", OrchestrationV2AppThread),
+  event("thread.marked-unread", OrchestrationV2AppThread),
+  event("thread.pinned", OrchestrationV2AppThread),
+  event("thread.unpinned", OrchestrationV2AppThread),
+  event("thread.pin-reordered", OrchestrationV2AppThread),
+  event("thread.active-reordered", OrchestrationV2AppThread),
+  event("thread.settled", OrchestrationV2AppThread),
+  event("thread.unsettled", OrchestrationV2AppThread),
+  event("thread.snoozed", OrchestrationV2AppThread),
+  event("thread.unsnoozed", OrchestrationV2AppThread),
+  event("thread.auto-settle-set", OrchestrationV2AppThread),
   event("thread.runtime-mode-updated", OrchestrationV2AppThread),
   event("thread.interaction-mode-updated", OrchestrationV2AppThread),
   event("run.created", OrchestrationV2Run),
@@ -593,6 +685,30 @@ export const OrchestrationV2ThreadShell = Schema.Struct({
   status: OrchestrationV2ShellThreadStatus,
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
+  archivedAt: Schema.NullOr(IsoDateTime),
+  deletedAt: Schema.NullOr(IsoDateTime),
+  /** When the latest run completed, or null while it has not (T3 Code's `latestRunCompletedAt`). */
+  /** When the latest run was asked for, or null before the first message. */
+  latestRunRequestedAt: Schema.NullOr(IsoDateTime),
+  latestRunCompletedAt: Schema.NullOr(IsoDateTime),
+  lastVisitedAt: Schema.NullOr(IsoDateTime),
+  settledOverride: ThreadSettledOverride,
+  settledAt: Schema.NullOr(IsoDateTime),
+  unsettledAt: Schema.NullOr(IsoDateTime),
+  pinnedAt: Schema.NullOr(IsoDateTime),
+  pinOrderKey: Schema.NullOr(TrimmedNonEmptyString),
+  activeOrderKey: Schema.NullOr(TrimmedNonEmptyString),
+  snoozedUntil: Schema.NullOr(IsoDateTime),
+  snoozedAt: Schema.NullOr(IsoDateTime),
+  /** A provider waits on the person's answer (T3 Code's `hasPendingUserInput`); it wakes a snooze. */
+  hasPendingUserInput: Schema.Boolean,
+  /** A message waits in the queue; older server shells may omit this. */
+  hasQueuedRun: Schema.optional(Schema.Boolean),
+  autoSettleDisabledAt: Schema.NullOr(IsoDateTime),
+  /** Set while a title is being generated; the sidebar dims the title. */
+  titleRegeneration: Schema.NullOr(OrchestrationV2TitleRegeneration),
+  /** The thread's own folder, if it has one; Copy → Path copies it before the project's. */
+  worktreePath: Schema.NullOr(TrimmedNonEmptyString),
 });
 export type OrchestrationV2ThreadShell = typeof OrchestrationV2ThreadShell.Type;
 
@@ -600,12 +716,22 @@ export const OrchestrationV2ShellSnapshot = Schema.Struct({
   /** The last application event the snapshot includes. */
   snapshotSequence: NonNegativeInt,
   projects: Schema.Array(OrchestrationProjectShell),
-  /** Oldest first. */
+  /** The threads not archived, oldest first. */
   threads: Schema.Array(OrchestrationV2ThreadShell),
+  /**
+   * Archived threads, kept apart from the rest. The sidebar's stream sends
+   * none here, as T3 Code's active shell does; **Settings → Archive** reads
+   * them from the archived shell.
+   */
+  archivedThreads: Schema.Array(OrchestrationV2ThreadShell),
 });
 export type OrchestrationV2ShellSnapshot = typeof OrchestrationV2ShellSnapshot.Type;
 
-/** The snapshot first, then each change after it. */
+/**
+ * The snapshot first, then each change after it. A thread that is archived
+ * or deleted leaves the sidebar with `thread.removed`, and a removed project
+ * with `project.removed`.
+ */
 export const OrchestrationV2ShellStreamItem = Schema.Union([
   Schema.Struct({
     kind: Schema.Literal("snapshot"),
@@ -617,12 +743,54 @@ export const OrchestrationV2ShellStreamItem = Schema.Union([
     project: OrchestrationProjectShell,
   }),
   Schema.Struct({
+    kind: Schema.Literal("project.removed"),
+    sequence: NonNegativeInt,
+    projectId: ProjectId,
+  }),
+  Schema.Struct({
     kind: Schema.Literal("thread.updated"),
     sequence: NonNegativeInt,
     thread: OrchestrationV2ThreadShell,
   }),
+  Schema.Struct({
+    kind: Schema.Literal("thread.removed"),
+    sequence: NonNegativeInt,
+    threadId: ThreadId,
+  }),
 ]);
 export type OrchestrationV2ShellStreamItem = typeof OrchestrationV2ShellStreamItem.Type;
+
+/** **Settings → Archive**'s threads, with the projects they belong to (T3 Code's). */
+export const OrchestrationV2ArchivedShellSnapshot = Schema.Struct({
+  snapshotSequence: NonNegativeInt,
+  projects: Schema.Array(OrchestrationProjectShell),
+  /** Oldest first. */
+  threads: Schema.Array(OrchestrationV2ThreadShell),
+});
+export type OrchestrationV2ArchivedShellSnapshot = typeof OrchestrationV2ArchivedShellSnapshot.Type;
+
+/**
+ * The archived shell, then each change: a thread archived, or changed while
+ * archived, is updated, and one unarchived or deleted is removed.
+ */
+export const OrchestrationV2ArchivedShellStreamItem = Schema.Union([
+  Schema.Struct({
+    kind: Schema.Literal("snapshot"),
+    snapshot: OrchestrationV2ArchivedShellSnapshot,
+  }),
+  Schema.Struct({
+    kind: Schema.Literal("thread.updated"),
+    sequence: NonNegativeInt,
+    thread: OrchestrationV2ThreadShell,
+  }),
+  Schema.Struct({
+    kind: Schema.Literal("thread.removed"),
+    sequence: NonNegativeInt,
+    threadId: ThreadId,
+  }),
+]);
+export type OrchestrationV2ArchivedShellStreamItem =
+  typeof OrchestrationV2ArchivedShellStreamItem.Type;
 
 export const OrchestrationV2SubscribeThreadInput = Schema.Struct({ threadId: ThreadId });
 export type OrchestrationV2SubscribeThreadInput = typeof OrchestrationV2SubscribeThreadInput.Type;
@@ -672,7 +840,17 @@ export type MessageDispatchMode = typeof MessageDispatchMode.Type;
  * a steer, and once held wait for `queue.resume`. `run.interrupt` stops a
  * run that is still active, and **Stop** holds the queue with it.
  * `runtime-request.respond` answers a provider's request: an approval with
- * a `decision`, questions with `answers`.
+ * a `decision`, questions with `answers`. `thread.archive` and
+ * `thread.unarchive` move a thread to and from **Settings → Archive**, and
+ * `thread.delete` deletes it. `thread.metadata.update` renames it, or with
+ * `regenerateTitle` has a provider write a new title (false drops a pending
+ * one).
+ * `thread.visit` moves its read marker forward when the thread is viewed,
+ * and `thread.mark-unread` moves it back before the latest run's completion.
+ * `thread.pin` and `thread.unpin` pin and unpin it; `thread.settle` moves it
+ * out of active work and `thread.unsettle` brings it back. `thread.snooze`
+ * hides it until `snoozedUntil`, and `thread.unsnooze` wakes it.
+ * `thread.auto-settle.set` turns automatic settlement on or off for it.
  */
 export const OrchestrationV2Command = Schema.Union([
   Schema.Struct({
@@ -777,8 +955,128 @@ export const OrchestrationV2Command = Schema.Union([
     decision: Schema.optionalKey(ProviderApprovalDecision),
     answers: Schema.optionalKey(ProviderUserInputAnswers),
   }),
+  Schema.Struct({
+    type: Schema.Literal("thread.archive"),
+    commandId: CommandId,
+    threadId: ThreadId,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("thread.unarchive"),
+    commandId: CommandId,
+    threadId: ThreadId,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("thread.delete"),
+    commandId: CommandId,
+    threadId: ThreadId,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("thread.visit"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    visitedAt: IsoDateTime,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("thread.mark-unread"),
+    commandId: CommandId,
+    threadId: ThreadId,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("thread.metadata.update"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    title: Schema.optionalKey(TrimmedNonEmptyString),
+    regenerateTitle: Schema.optionalKey(Schema.Boolean),
+  }),
+  Schema.Struct({
+    type: Schema.Literal("thread.pin"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    /** The pinned list's order key, kept only by the first pin. */
+    orderKey: Schema.optionalKey(TrimmedNonEmptyString),
+  }),
+  Schema.Struct({
+    type: Schema.Literal("thread.unpin"),
+    commandId: CommandId,
+    threadId: ThreadId,
+  }),
+  /** A pinned thread's place among the pins: an order key the client made. */
+  Schema.Struct({
+    type: Schema.Literal("thread.pin.reorder"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    orderKey: TrimmedNonEmptyString,
+  }),
+  /** An active thread's place in Active: an order key the client made. */
+  Schema.Struct({
+    type: Schema.Literal("thread.active.reorder"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    orderKey: TrimmedNonEmptyString,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("thread.settle"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    settledAt: Schema.optionalKey(IsoDateTime),
+  }),
+  Schema.Struct({
+    type: Schema.Literal("thread.unsettle"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    reason: Schema.Literal("user"),
+  }),
+  Schema.Struct({
+    type: Schema.Literal("thread.snooze"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    snoozedUntil: IsoDateTime,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("thread.unsnooze"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    reason: Schema.Literal("user"),
+  }),
+  Schema.Struct({
+    type: Schema.Literal("thread.auto-settle.set"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    enabled: Schema.Boolean,
+  }),
 ]);
 export type OrchestrationV2Command = typeof OrchestrationV2Command.Type;
+
+/**
+ * Commands only the server dispatches (T3 Code's
+ * `OrchestrationV2InternalCommand`). They stay out of `OrchestrationV2Command`,
+ * the `dispatchCommand` payload, so no client can send them.
+ * `thread.title.regeneration.complete` ends a title request, with the
+ * generated title or without one; it applies only while `requestId` is the
+ * thread's current request. `thread.auto-settle` is the settlement sweep's
+ * settle, with the last activity as `settledAt`; it is refused when the thread
+ * has changed since `snapshotAt` (its `updatedAt` when the sweep read it) or
+ * carries any settled override, so it never races the person.
+ */
+const OrchestrationV2InternalCommand = Schema.Union([
+  Schema.Struct({
+    type: Schema.Literal("thread.title.regeneration.complete"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    requestId: CommandId,
+    title: Schema.optionalKey(TrimmedNonEmptyString),
+  }),
+  Schema.Struct({
+    type: Schema.Literal("thread.auto-settle"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    snapshotAt: IsoDateTime,
+    settledAt: Schema.optionalKey(IsoDateTime),
+  }),
+]);
+export type OrchestrationV2InternalCommand = typeof OrchestrationV2InternalCommand.Type;
+
+export type OrchestrationV2ServerCommand = OrchestrationV2Command | OrchestrationV2InternalCommand;
 
 export const OrchestrationV2DispatchCommandResult = Schema.Struct({
   /** The last event the command produced. */
