@@ -101,3 +101,15 @@ export function useThreadRename(thread: Pick<OrchestrationV2ThreadShell, "id" | 
 
   return { start, input, isRenaming: renamingTitle !== null };
 }
+
+/** A row's jump key, such as `⌘3`, shown while the jump modifier is held (T3 Code's `JumpHintBadge`). */
+export function JumpHintBadge({ label }: { readonly label: string }) {
+  return (
+    <span
+      aria-hidden
+      className="pointer-events-none absolute top-1/2 right-1.5 z-10 inline-flex h-5 -translate-y-1/2 items-center rounded-full border border-neutral-300 bg-white/95 px-1.5 font-mono text-[10px] font-medium text-neutral-900 shadow-sm dark:border-neutral-700 dark:bg-neutral-950/95 dark:text-neutral-100"
+    >
+      {label}
+    </span>
+  );
+}

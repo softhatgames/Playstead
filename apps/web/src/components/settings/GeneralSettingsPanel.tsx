@@ -45,6 +45,7 @@ export function GeneralSettingsPanel() {
         </h2>
         <div className="divide-y divide-neutral-200 rounded-lg border border-neutral-200 dark:divide-neutral-800 dark:border-neutral-800">
           <SettingsSwitchRow
+            id="working-shelf"
             title="Working section (beta)"
             description="Fold working and monitoring threads into a Working section. They return to the top of the inbox when they need you."
             ariaLabel="Working section (beta)"
@@ -67,6 +68,7 @@ export function GeneralSettingsPanel() {
         </h2>
         <div className="divide-y divide-neutral-200 rounded-lg border border-neutral-200 dark:divide-neutral-800 dark:border-neutral-800">
           <SettingsSwitchRow
+            id="archive-confirmation"
             title="Archive confirmation"
             description="Ask before archiving a thread."
             ariaLabel="Confirm thread archiving"
@@ -77,6 +79,7 @@ export function GeneralSettingsPanel() {
             onChange={(confirmThreadArchive) => save({ confirmThreadArchive })}
           />
           <SettingsSwitchRow
+            id="delete-confirmation"
             title="Delete confirmation"
             description="Ask before deleting a thread and its chat history."
             ariaLabel="Confirm thread deletion"
@@ -94,6 +97,7 @@ export function GeneralSettingsPanel() {
         </summary>
         <div className="mt-2 divide-y divide-neutral-200 rounded-lg border border-neutral-200 dark:divide-neutral-800 dark:border-neutral-800">
           <SettingsSwitchRow
+            id="legacy-sidebar"
             title="Sidebar (legacy)"
             description="Restore per-project thread trees instead of the default flat sidebar."
             ariaLabel="Sidebar (legacy)"
@@ -127,7 +131,7 @@ function AutoSettleRows() {
   if (afterDays === undefined) return null;
   return (
     <>
-      <div className="flex items-center gap-4 px-4 py-3">
+      <div id="auto-settle-inactive-threads" className="flex items-center gap-4 px-4 py-3">
         <div className="min-w-0 flex-1">
           <div className="text-sm font-medium">Auto-settle inactive threads</div>
           <div className="text-xs text-neutral-500 dark:text-neutral-400">
@@ -228,7 +232,7 @@ function TextGenerationSection() {
         Text generation
       </h2>
       <div className="rounded-lg border border-neutral-200 dark:border-neutral-800">
-        <div className="flex items-center gap-4 px-4 py-3">
+        <div id="text-generation-model" className="flex items-center gap-4 px-4 py-3">
           <div className="min-w-0 flex-1">
             <div className="text-sm font-medium">Text generation model</div>
             <div className="text-xs text-neutral-500 dark:text-neutral-400">
@@ -271,6 +275,8 @@ function TextGenerationSection() {
 
 /** A row with a switch, and **Reset** while it is off its default (T3 Code's `SettingsRow`). */
 function SettingsSwitchRow(props: {
+  /** Where the command palette's settings search opens the page. */
+  readonly id: string;
   readonly title: string;
   readonly description: ReactNode;
   readonly ariaLabel: string;
@@ -279,7 +285,7 @@ function SettingsSwitchRow(props: {
   readonly onChange: (checked: boolean) => void;
 }) {
   return (
-    <div className="flex items-center gap-4 px-4 py-3">
+    <div id={props.id} className="flex items-center gap-4 px-4 py-3">
       <div className="min-w-0 flex-1">
         <div className="text-sm font-medium">{props.title}</div>
         <div className="text-xs text-neutral-500 dark:text-neutral-400">{props.description}</div>

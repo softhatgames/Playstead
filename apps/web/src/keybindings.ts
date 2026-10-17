@@ -5,8 +5,12 @@ import {
   type KeybindingShortcut,
   type KeybindingWhenNode,
   matchesKeybindingShortcut,
+  matchesKeybindingShortcutModifiers,
   type ResolvedKeybindingsConfig,
   type ShortcutEventLike,
+  type ShortcutModifierStateLike,
+  THREAD_JUMP_KEYBINDING_COMMANDS,
+  type ThreadJumpKeybindingCommand,
 } from "@playstead/shared/keybindings";
 
 /**
@@ -18,7 +22,10 @@ import {
 
 export const keybindings: ResolvedKeybindingsConfig = DEFAULT_RESOLVED_KEYBINDINGS;
 
-/** What `when` clauses read; a name not given is false. */
+/**
+ * What `when` clauses read. A name not given is false, except `isDesktop`
+ * and `isWeb`, which default to where the page runs (T3 Code's `resolveContext`).
+ */
 export type ShortcutMatchContext = Readonly<Record<string, boolean>>;
 
 interface ShortcutMatchOptions {
@@ -28,6 +35,11 @@ interface ShortcutMatchOptions {
 
 const platformOf = (options: ShortcutMatchOptions | undefined) =>
   options?.platform ?? navigator.platform;
+
+const contextOf = (options: ShortcutMatchOptions | undefined): ShortcutMatchContext => {
+  const isDesktop = typeof window !== "undefined" && window.desktopBridge !== undefined;
+  return { isDesktop, isWeb: !isDesktop, ...options?.context };
+};
 
 function evaluateWhen(node: KeybindingWhenNode, context: ShortcutMatchContext): boolean {
   switch (node.type) {
@@ -49,7 +61,7 @@ export function resolveShortcutCommand(
   options?: ShortcutMatchOptions,
 ): KeybindingCommand | null {
   const platform = platformOf(options);
-  const context = options?.context ?? {};
+  const context = contextOf(options);
   for (let index = config.length - 1; index >= 0; index -= 1) {
     const binding = config[index]!;
     if (binding.whenAst !== undefined && !evaluateWhen(binding.whenAst, context)) continue;
@@ -86,17 +98,89 @@ function formatShortcutLabel(shortcut: KeybindingShortcut, platform: string): st
   ].join("+");
 }
 
+/** The keys a shortcut presses, with `mod` resolved for the platform. */
+function shortcutConflictKey(shortcut: KeybindingShortcut, platform: string): string {
+  const mac = isMacPlatform(platform);
+  return [
+    shortcut.key,
+    shortcut.metaKey || (shortcut.modKey && mac) ? "meta" : "",
+    shortcut.ctrlKey || (shortcut.modKey && !mac) ? "ctrl" : "",
+    shortcut.shiftKey ? "shift" : "",
+    shortcut.altKey ? "alt" : "",
+  ].join("|");
+}
+
+/**
+ * The shortcut that runs the command where the context holds: the last of
+ * its rules whose `when` applies and whose keys no later applying rule
+ * takes (T3 Code's `findEffectiveShortcutForCommand`).
+ */
+function effectiveShortcutForCommand(
+  config: ResolvedKeybindingsConfig,
+  command: KeybindingCommand,
+  platform: string,
+  context: ShortcutMatchContext,
+): KeybindingShortcut | null {
+  const claimed = new Set<string>();
+  for (let index = config.length - 1; index >= 0; index -= 1) {
+    const binding = config[index]!;
+    if (binding.whenAst !== undefined && !evaluateWhen(binding.whenAst, context)) continue;
+    const conflictKey = shortcutConflictKey(binding.shortcut, platform);
+    if (claimed.has(conflictKey)) continue;
+    claimed.add(conflictKey);
+    if (binding.command === command) return binding.shortcut;
+  }
+  return null;
+}
+
 /** The label of the shortcut that runs the command, or null when none does. */
 export function shortcutLabelForCommand(
   config: ResolvedKeybindingsConfig,
   command: KeybindingCommand,
   platform: string = navigator.platform,
+  context?: ShortcutMatchContext,
 ): string | null {
-  for (let index = config.length - 1; index >= 0; index -= 1) {
-    const binding = config[index]!;
-    if (binding.command === command) return formatShortcutLabel(binding.shortcut, platform);
-  }
-  return null;
+  const shortcut = effectiveShortcutForCommand(
+    config,
+    command,
+    platform,
+    contextOf(context === undefined ? undefined : { context }),
+  );
+  return shortcut === null ? null : formatShortcutLabel(shortcut, platform);
+}
+
+/** The jump for a position in the sidebar, or null past the ninth (T3 Code's). */
+export function threadJumpCommandForIndex(index: number): ThreadJumpKeybindingCommand | null {
+  return THREAD_JUMP_KEYBINDING_COMMANDS[index] ?? null;
+}
+
+/** The sidebar position a jump goes to, or null for any other command. */
+export function threadJumpIndexFromCommand(command: KeybindingCommand | null): number | null {
+  const index = THREAD_JUMP_KEYBINDING_COMMANDS.indexOf(command as ThreadJumpKeybindingCommand);
+  return index === -1 ? null : index;
+}
+
+export function threadTraversalDirectionFromCommand(
+  command: KeybindingCommand | null,
+): "previous" | "next" | null {
+  return command === "thread.previous" ? "previous" : command === "thread.next" ? "next" : null;
+}
+
+/**
+ * Whether the held modifiers are exactly a thread jump's, so the sidebar
+ * shows each row's jump key (T3 Code's `shouldShowThreadJumpHintsForModifiers`).
+ */
+export function shouldShowThreadJumpHintsForModifiers(
+  modifiers: ShortcutModifierStateLike,
+  config: ResolvedKeybindingsConfig,
+  options?: ShortcutMatchOptions,
+): boolean {
+  const platform = platformOf(options);
+  const context = contextOf(options);
+  return THREAD_JUMP_KEYBINDING_COMMANDS.some((command) => {
+    const shortcut = effectiveShortcutForCommand(config, command, platform, context);
+    return shortcut !== null && matchesKeybindingShortcutModifiers(modifiers, shortcut, platform);
+  });
 }
 
 /** Whether a text field has focus, which `mod+z` leaves to the field (T3 Code's `isEditableFocused`). */

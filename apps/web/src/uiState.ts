@@ -69,7 +69,7 @@ export function openProject(projectId: string): void {
   publish();
 }
 
-export const readActiveProjectId = (): string | undefined => activeProjectId;
+const readActiveProjectId = (): string | undefined => activeProjectId;
 
 export function useActiveProjectId(): string | undefined {
   return useSyncExternalStore(subscribe, readActiveProjectId);

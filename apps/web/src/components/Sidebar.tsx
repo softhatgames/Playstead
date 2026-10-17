@@ -21,11 +21,12 @@ import {
   resolveSnoozePresets,
   snoozeWakeLabel,
 } from "@playstead/client-runtime/state/threadSettled";
-import type { ProjectId, ThreadId } from "@playstead/contracts/baseSchemas";
+import type { ThreadId } from "@playstead/contracts/baseSchemas";
 import type { OrchestrationV2ThreadShell } from "@playstead/contracts/orchestrationV2";
 import { Link, useNavigate, useParams } from "@tanstack/react-router";
 import {
   type KeyboardEvent as ReactKeyboardEvent,
+  type MouseEvent as ReactMouseEvent,
   type PointerEvent as ReactPointerEvent,
   type ReactNode,
   useCallback,
@@ -42,6 +43,9 @@ import { usePrimaryConnectionState } from "../connection/runtime.ts";
 import { useThreadSearch } from "../connection/useThreadSearch.ts";
 import { createDraft } from "../drafts.ts";
 import { useBulkThreadMenu } from "../hooks/useBulkThreadMenu.ts";
+import { useNewThread } from "../hooks/useNewThread.ts";
+import { useSidebarThreadShortcuts } from "../hooks/useSidebarThreadShortcuts.ts";
+import { keybindings, shortcutLabelForCommand } from "../keybindings.ts";
 import { useThreadActionMenu } from "../hooks/useThreadActionMenu.ts";
 import {
   pinThread,
@@ -64,12 +68,7 @@ import {
   useThreadSelection,
 } from "../threadSelection.ts";
 import { failureToast } from "../toast.ts";
-import {
-  openProject,
-  readActiveProjectId,
-  setSidebarProjectScopeKey,
-  useSidebarProjectScopeKey,
-} from "../uiState.ts";
+import { openProject, setSidebarProjectScopeKey, useSidebarProjectScopeKey } from "../uiState.ts";
 import { requestCustomSnooze } from "./CustomSnoozeDialog.tsx";
 import {
   AlarmClockOffIcon,
@@ -130,7 +129,12 @@ import {
   SidebarSearchResultRow,
   searchResultId,
 } from "./sidebar/SidebarThreadSearch.tsx";
-import { ThreadStatusIndicator, useThreadRename } from "./sidebar/SidebarThreadParts.tsx";
+import {
+  JumpHintBadge,
+  ThreadStatusIndicator,
+  useThreadRename,
+} from "./sidebar/SidebarThreadParts.tsx";
+import { shouldCreateNewThreadInCurrentProject } from "./threadNavigation.logic.ts";
 
 type SidebarThread = OrchestrationV2ThreadShell;
 
@@ -288,8 +292,11 @@ function useStoredBoolean(key: string, initial: boolean) {
  * what the drop will do; pressed and dragged, a row's Settle, Un-settle or
  * Wake button acts on every row it crosses.
  *
- * Seam for the slice's later tickets: **New thread in…** from the palette
- * (#42).
+ * **New thread** opens **New thread in…** in the command palette when there
+ * are several project groups, unless Shift is held. `mod+shift+[` and `]`
+ * move through the rows as shown, and `mod+1` to `mod+9` open the first
+ * nine in the desktop app, whose rows show their keys while the modifier
+ * is held.
  */
 export function Sidebar() {
   const state = usePrimaryConnectionState();
@@ -991,22 +998,21 @@ export function Sidebar() {
     }
   };
 
-  const startNewThread = () => {
-    // T3 Code opens **New thread in…** with several projects unless Shift
-    // is held; until the palette has that mode (#42), it starts in the
-    // current project: the thread in view's or the last opened, while the
-    // scope shows it; otherwise the scope's, or the first project.
-    const routeThread = routeThreadId === undefined ? undefined : threadsById.get(routeThreadId);
-    const inScope = (projectId: string | undefined) =>
-      projectId !== undefined && (scopedProjectIds === null || scopedProjectIds.has(projectId));
-    const current = [routeThread?.projectId, readActiveProjectId()].find(inScope) as
-      | ProjectId
-      | undefined;
-    const projectId = current ?? scopedGroup?.projectIds[0] ?? groups[0]?.projectIds[0];
-    if (projectId === undefined) return;
-    openProject(projectId);
-    void navigate({ to: "/draft/$draftId", params: { draftId: createDraft(projectId) } });
+  const jumpLabels = useSidebarThreadShortcuts(orderedThreads, routeThreadId);
+
+  // In the current project while the scope shows it: the thread in view's,
+  // the draft's or the last opened; otherwise the scope's first.
+  const newThread = useNewThread({ scopedProjectIds });
+  const startNewThread = (event: ReactMouseEvent) => {
+    if (!shouldCreateNewThreadInCurrentProject(event.shiftKey, groups.length)) {
+      openCommandPalette({ open: "new-thread-in" });
+      return;
+    }
+    void newThread.startFromContext();
   };
+  const newThreadShortcut =
+    shortcutLabelForCommand(keybindings, "chat.new") ??
+    (groups.length <= 1 ? shortcutLabelForCommand(keybindings, "chat.newLocal") : null);
 
   const projectNameById = useMemo(
     () => new Map(projects.map((project) => [project.id as string, project.title])),
@@ -1030,6 +1036,7 @@ export function Sidebar() {
             scopedGroup === null ? (projectNameById.get(thread.projectId) ?? null) : null
           }
           orderedIdsRef={orderedIdsRef}
+          jumpLabel={jumpLabels.get(thread.id) ?? null}
           sortable={sortable}
           dropVerb={
             dragState?.activeKey === thread.id
@@ -1178,7 +1185,12 @@ export function Sidebar() {
             </HeaderButton>
           </>
         ) : null}
-        <HeaderButton label="New thread" disabled={projects.length === 0} onClick={startNewThread}>
+        <HeaderButton
+          label="New thread"
+          {...(newThreadShortcut === null ? {} : { shortcut: newThreadShortcut })}
+          disabled={projects.length === 0}
+          onClick={startNewThread}
+        >
           <SquarePenIcon className="size-4" />
         </HeaderButton>
       </div>
@@ -1285,15 +1297,17 @@ export function Sidebar() {
 
 function HeaderButton(props: {
   readonly label: string;
+  /** Shown with the label on hover. */
+  readonly shortcut?: string;
   readonly disabled?: boolean;
-  readonly onClick: () => void;
+  readonly onClick: (event: ReactMouseEvent) => void;
   readonly children: ReactNode;
 }) {
   return (
     <button
       type="button"
       aria-label={props.label}
-      title={props.label}
+      title={props.shortcut === undefined ? props.label : `${props.label} (${props.shortcut})`}
       disabled={props.disabled}
       onClick={props.onClick}
       className="rounded p-1.5 text-neutral-500 hover:bg-neutral-200 hover:text-neutral-900 disabled:opacity-40 dark:text-neutral-400 dark:hover:bg-neutral-800 dark:hover:text-neutral-100"
@@ -1637,6 +1651,8 @@ function InboxThreadRow(props: {
   /** Shown when the sidebar spans several projects. */
   readonly projectName: string | null;
   readonly orderedIdsRef: { readonly current: ReadonlyArray<string> };
+  /** The row's jump key while the jump modifier is held. */
+  readonly jumpLabel: string | null;
   readonly sortable: SortableBag;
   readonly dropVerb: SidebarDropVerb | null;
   readonly dragOverPinned: boolean;
@@ -1836,6 +1852,7 @@ function InboxThreadRow(props: {
             {timeLabel}
           </span>
         )}
+        {props.jumpLabel === null ? null : <JumpHintBadge label={props.jumpLabel} />}
       </Link>
       {showPin && !dragging ? (
         <button

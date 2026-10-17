@@ -31,8 +31,10 @@ import { usePrimaryConnectionState } from "../connection/runtime.ts";
 import { createDraft } from "../drafts.ts";
 import { useBulkThreadMenu } from "../hooks/useBulkThreadMenu.ts";
 import { type ProjectActionTarget, removeProjectFromTree } from "../hooks/useProjectActions.ts";
+import { useSidebarThreadShortcuts } from "../hooks/useSidebarThreadShortcuts.ts";
 import { useThreadActionMenu } from "../hooks/useThreadActionMenu.ts";
 import { useThreadActions } from "../hooks/useThreadActions.ts";
+import { keybindings, shortcutLabelForCommand } from "../keybindings.ts";
 import {
   clearThreadSelection,
   rangeSelectThreadsTo,
@@ -41,6 +43,7 @@ import {
   toggleThreadSelection,
   useThreadSelection,
 } from "../threadSelection.ts";
+import { sortThreads } from "../threadSort.ts";
 import { openProject, setProjectOrder, useActiveProjectId, useProjectOrder } from "../uiState.ts";
 import {
   ArchiveIcon,
@@ -48,6 +51,7 @@ import {
   CheckIcon,
   FolderIcon,
   FolderPlusIcon,
+  SearchIcon,
   SquarePenIcon,
 } from "./icons.tsx";
 import { isTrailingDoubleClick, reorderProjects, sortTreeProjects } from "./Sidebar.logic.ts";
@@ -55,28 +59,15 @@ import { readLocalApi } from "../localApi.ts";
 import { failureToast, successToast } from "../toast.ts";
 import { projectMenuItems } from "./projectActions.logic.ts";
 import { ProjectRenameDialog } from "./sidebar/ProjectRenameDialog.tsx";
-import { ThreadStatusIndicator, useThreadRename } from "./sidebar/SidebarThreadParts.tsx";
+import {
+  JumpHintBadge,
+  ThreadStatusIndicator,
+  useThreadRename,
+} from "./sidebar/SidebarThreadParts.tsx";
 import { threadRuntimeCanArchive } from "./threadActionMenu.logic.ts";
+import { visibleTreeThreads } from "./threadNavigation.logic.ts";
 
 type SidebarThread = OrchestrationV2ThreadShell;
-
-const timeOf = (iso: string | null) => (iso === null ? 0 : Date.parse(iso) || 0);
-
-/**
- * The project tree's thread order (T3 Code's `sortThreads`): newest first by
- * the latest message sent (`updated_at`) or by creation (`created_at`).
- */
-const sortTreeThreads = (
-  threads: ReadonlyArray<SidebarThread>,
-  order: "updated_at" | "created_at",
-) =>
-  threads.toSorted((left, right) => {
-    const time = (thread: SidebarThread) =>
-      order === "created_at"
-        ? timeOf(thread.createdAt)
-        : timeOf(thread.latestRunRequestedAt) || timeOf(thread.updatedAt);
-    return time(right) - time(left) || right.id.localeCompare(left.id);
-  });
 
 /**
  * **Sidebar (legacy)**: T3 Code's project tree (`apps/web/src/components/LegacySidebar.tsx`
@@ -91,6 +82,9 @@ const sortTreeThreads = (
  * the tree's own menu on right-click. Mod-click and shift-click select
  * several threads for the bulk menu. A project's right-click menu offers
  * **Rename**, **Copy Path**, **Project settings** and **Remove**.
+ * **Search** at the top opens the command palette. `mod+shift+[` and `]`
+ * move through the threads as shown, and `mod+1` to `mod+9` open the
+ * first nine in the desktop app.
  */
 export function LegacySidebar() {
   const state = usePrimaryConnectionState();
@@ -146,6 +140,45 @@ export function LegacySidebar() {
     () => sortTreeProjects({ projects: projects ?? [], threads, sortOrder, projectOrder }),
     [projects, threads, sortOrder, projectOrder],
   );
+  const [expandedProjectIds, setExpandedProjectIds] = useState<ReadonlySet<string>>(new Set());
+  const toggleProjectExpanded = (projectId: string) =>
+    setExpandedProjectIds((current) => {
+      const next = new Set(current);
+      if (!next.delete(projectId)) next.add(projectId);
+      return next;
+    });
+  const threadsByProject = useMemo(() => {
+    const byProject = new Map<string, ReadonlyArray<SidebarThread>>();
+    for (const project of sortedProjects) {
+      byProject.set(
+        project.id,
+        sortThreads(
+          threads.filter((thread) => thread.projectId === project.id),
+          settings.sidebarThreadSortOrder,
+        ),
+      );
+    }
+    return byProject;
+  }, [sortedProjects, threads, settings.sidebarThreadSortOrder]);
+  const visibleThreads = useMemo(
+    () =>
+      visibleTreeThreads({
+        projects: sortedProjects,
+        threadsByProject,
+        previewCount: settings.sidebarThreadPreviewCount,
+        expandedProjectIds,
+        activeThreadId,
+      }),
+    [
+      sortedProjects,
+      threadsByProject,
+      settings.sidebarThreadPreviewCount,
+      expandedProjectIds,
+      activeThreadId,
+    ],
+  );
+  const jumpLabels = useSidebarThreadShortcuts(visibleThreads, activeThreadId);
+  const searchShortcut = shortcutLabelForCommand(keybindings, "commandPalette.toggle");
   const projectSensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
   );
@@ -222,10 +255,11 @@ export function LegacySidebar() {
         </div>
         <ProjectThreadList
           projectTitle={project.title}
-          threads={sortTreeThreads(
-            threads.filter((thread) => thread.projectId === project.id),
-            settings.sidebarThreadSortOrder,
-          )}
+          threads={threadsByProject.get(project.id) ?? []}
+          visibleThreads={visibleThreads.filter((thread) => thread.projectId === project.id)}
+          expanded={expandedProjectIds.has(project.id)}
+          onToggleExpanded={() => toggleProjectExpanded(project.id)}
+          jumpLabels={jumpLabels}
           previewCount={settings.sidebarThreadPreviewCount}
           confirmArchive={settings.confirmThreadArchive}
           activeThreadId={activeThreadId}
@@ -237,6 +271,17 @@ export function LegacySidebar() {
 
   return (
     <nav aria-label="Projects" className="flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto p-2">
+      <button
+        type="button"
+        onClick={() => openCommandPalette()}
+        className="mb-1 flex items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm text-neutral-600 hover:bg-neutral-100 dark:text-neutral-300 dark:hover:bg-neutral-900"
+      >
+        <SearchIcon className="size-3.5 shrink-0" />
+        <span className="flex-1 truncate">Search</span>
+        {searchShortcut === null ? null : (
+          <kbd className="text-xs text-neutral-500 dark:text-neutral-400">{searchShortcut}</kbd>
+        )}
+      </button>
       <div className="mb-1 flex items-center justify-between pr-1 pl-2">
         <span className="flex-1 text-xs font-medium text-neutral-500 dark:text-neutral-400">
           Projects
@@ -300,26 +345,20 @@ export function LegacySidebar() {
 function ProjectThreadList(props: {
   readonly projectTitle: string;
   readonly threads: ReadonlyArray<SidebarThread>;
+  /** The threads shown, from `visibleTreeThreads`; the thread in view stays while folded. */
+  readonly visibleThreads: ReadonlyArray<SidebarThread>;
+  readonly expanded: boolean;
+  readonly onToggleExpanded: () => void;
+  readonly jumpLabels: ReadonlyMap<string, string>;
   readonly previewCount: number;
   readonly confirmArchive: boolean;
   readonly activeThreadId: string | undefined;
   readonly onBulkMenu: (position: { x: number; y: number }) => void;
 }) {
-  const [expanded, setExpanded] = useState(false);
-  const { threads, previewCount, activeThreadId } = props;
+  const { threads, expanded, activeThreadId } = props;
   if (threads.length === 0) return null;
-  const overflowing = threads.length > previewCount;
-  const visible =
-    expanded || !overflowing
-      ? threads
-      : (() => {
-          const shown = threads.slice(0, previewCount);
-          // The thread in view stays visible while the list is folded.
-          const current = threads
-            .slice(previewCount)
-            .find((thread) => thread.id === activeThreadId);
-          return current === undefined ? shown : [...shown, current];
-        })();
+  const overflowing = threads.length > props.previewCount;
+  const visible = props.visibleThreads;
   const orderedIds = visible.map((thread) => thread.id as string);
   return (
     <ul
@@ -332,6 +371,7 @@ function ProjectThreadList(props: {
           thread={thread}
           current={thread.id === activeThreadId}
           orderedIds={orderedIds}
+          jumpLabel={props.jumpLabels.get(thread.id) ?? null}
           confirmArchive={props.confirmArchive}
           onBulkMenu={props.onBulkMenu}
         />
@@ -340,7 +380,7 @@ function ProjectThreadList(props: {
         <li>
           <button
             type="button"
-            onClick={() => setExpanded((value) => !value)}
+            onClick={props.onToggleExpanded}
             className="px-2 py-0.5 text-xs text-neutral-500 hover:text-neutral-900 dark:text-neutral-400 dark:hover:text-neutral-100"
           >
             {expanded ? "Show less" : "Show more"}
@@ -550,6 +590,7 @@ function TreeThreadRow(props: {
   readonly thread: SidebarThread;
   readonly current: boolean;
   readonly orderedIds: ReadonlyArray<string>;
+  readonly jumpLabel: string | null;
   readonly confirmArchive: boolean;
   readonly onBulkMenu: (position: { x: number; y: number }) => void;
 }) {
@@ -640,6 +681,7 @@ function TreeThreadRow(props: {
         >
           {thread.title}
         </span>
+        {props.jumpLabel === null ? null : <JumpHintBadge label={props.jumpLabel} />}
       </Link>
       {confirmingArchive ? (
         <button

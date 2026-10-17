@@ -59,7 +59,9 @@ export function ArchivedThreadsPanel() {
 
   return (
     <div className="flex flex-col gap-6">
-      <h1 className="text-xl font-semibold">Archive</h1>
+      <h1 id="archive" className="text-xl font-semibold">
+        Archive
+      </h1>
       {groups.length === 0 ? (
         <section className="rounded-lg border border-neutral-200 px-4 py-3 dark:border-neutral-800">
           <div className="text-sm font-medium">

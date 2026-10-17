@@ -1,7 +1,9 @@
-import { type ReactNode, useEffect } from "react";
+import { type ReactNode, useEffect, useRef } from "react";
 
 import { APP_DISPLAY_NAME } from "../branding.ts";
 import { useClientSettings } from "../clientSettings.ts";
+import { isCommandPaletteOpen, openCommandPalette } from "../commandPaletteBus.ts";
+import { useNewThread } from "../hooks/useNewThread.ts";
 import { undoLatestThreadAction } from "../hooks/showThreadUndoNotice.ts";
 import { isEditableTarget, keybindings, resolveShortcutCommand } from "../keybindings.ts";
 import { clearThreadSelection, readThreadSelection } from "../threadSelection.ts";
@@ -15,16 +17,33 @@ import { SidebarThreadUndoNotice } from "./sidebar/SidebarThreadUndoNotice.tsx";
  * The page's own shortcuts (T3 Code's `SidebarControl` in
  * `AppSidebarLayout.tsx` and `ChatRouteGlobalShortcuts` in `routes/_chat.tsx`
  * at 2577baf): `mod+b` shows or hides the sidebar, `mod+z` undoes the
- * latest thread action while no text field has focus, and Escape clears a
- * multiple selection.
+ * latest thread action while no text field has focus, Escape clears a
+ * multiple selection, `mod+shift+n` starts a thread in the current project
+ * and `mod+n` does too, unless the inbox sidebar has several project groups:
+ * then it opens **New thread in…**. All stand aside while the command
+ * palette is open.
  */
-function useGlobalShortcuts() {
+function useGlobalShortcuts(legacySidebarEnabled: boolean) {
+  const { groups, startFromContext } = useNewThread();
+  const latest = useRef({ legacySidebarEnabled, groupCount: groups.length, startFromContext });
+  latest.current = { legacySidebarEnabled, groupCount: groups.length, startFromContext };
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.defaultPrevented) return;
+      if (event.defaultPrevented || isCommandPaletteOpen()) return;
       const command = resolveShortcutCommand(event, keybindings, {
         context: { editableFocus: isEditableTarget(event.target) },
       });
+      if (command === "chat.new" || command === "chat.newLocal") {
+        event.preventDefault();
+        event.stopPropagation();
+        const { legacySidebarEnabled, groupCount, startFromContext } = latest.current;
+        if (command === "chat.new" && !legacySidebarEnabled && groupCount > 1) {
+          openCommandPalette({ open: "new-thread-in" });
+          return;
+        }
+        void startFromContext();
+        return;
+      }
       if (command === "sidebar.toggle") {
         event.preventDefault();
         event.stopPropagation();
@@ -59,7 +78,7 @@ function useGlobalShortcuts() {
 export function AppSidebarLayout({ children }: { readonly children: ReactNode }) {
   const { legacySidebarEnabled } = useClientSettings();
   const sidebarOpen = useSidebarOpen();
-  useGlobalShortcuts();
+  useGlobalShortcuts(legacySidebarEnabled);
   return (
     <div className="flex h-screen">
       {sidebarOpen ? (
