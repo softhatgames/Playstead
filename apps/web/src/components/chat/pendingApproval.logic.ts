@@ -48,37 +48,26 @@ export function derivePendingApprovals(
   });
 }
 
-/** What the panel calls each kind of approval. */
-export function approvalHeading(kind: ProviderRequestKind): string {
-  switch (kind) {
-    case "command":
-      return "Command approval";
-    case "file-read":
-      return "File read approval";
-    case "file-change":
-      return "File change approval";
-    case "permission":
-      return "App permission approval";
-    case "mcp-elicitation":
-      return "App access approval";
-  }
-}
+/**
+ * What the panel calls each kind of approval, and what its detail is for a
+ * screen reader.
+ */
+const approvalKindConfig: Record<
+  ProviderRequestKind,
+  { readonly heading: string; readonly detailLabel: string }
+> = {
+  command: { heading: "Command approval", detailLabel: "Command" },
+  "file-read": { heading: "File read approval", detailLabel: "File to read" },
+  "file-change": { heading: "File change approval", detailLabel: "File change" },
+  permission: { heading: "App permission approval", detailLabel: "Permission request" },
+  "mcp-elicitation": { heading: "App access approval", detailLabel: "App access request" },
+};
 
-/** What the detail is, for a screen reader. */
-export function approvalDetailLabel(kind: ProviderRequestKind): string {
-  switch (kind) {
-    case "command":
-      return "Command";
-    case "file-read":
-      return "File to read";
-    case "file-change":
-      return "File change";
-    case "permission":
-      return "Permission request";
-    case "mcp-elicitation":
-      return "App access request";
-  }
-}
+export const approvalHeading = (kind: ProviderRequestKind): string =>
+  approvalKindConfig[kind].heading;
+
+export const approvalDetailLabel = (kind: ProviderRequestKind): string =>
+  approvalKindConfig[kind].detailLabel;
 
 /** The panel's detail: the prompt, the kind of approval without one, or that nobody can answer it. */
 export function approvalDetail(approval: PendingApproval): string {

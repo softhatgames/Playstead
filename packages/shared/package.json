@@ -31,9 +31,9 @@
       "types": "./src/model.ts",
       "import": "./src/model.ts"
     },
-    "./orchestrationRuns": {
-      "types": "./src/orchestrationRuns.ts",
-      "import": "./src/orchestrationRuns.ts"
+    "./orchestrationV2ThreadError": {
+      "types": "./src/orchestrationV2ThreadError.ts",
+      "import": "./src/orchestrationV2ThreadError.ts"
     },
     "./path": {
       "types": "./src/path.ts",

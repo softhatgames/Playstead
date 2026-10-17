@@ -35,7 +35,7 @@ export const CLAUDE_TURN_INTERRUPT_SCENARIO = {
   instanceId: "claudeAgent",
   model: "claude-haiku-5-5",
   longPrompt:
-    'Use your Bash tool to run `python3 -c "import time; time.sleep(30)"` in the foreground, then reply with the single word: slept',
+    'Use your Bash tool to run `node -e "setTimeout(() => {}, 30000)"` in the foreground, then reply with the single word: slept',
   nextPrompt: "Reply with the single word: ready",
   nextReply: "ready",
 } as const satisfies TurnInterruptScenario;
@@ -45,7 +45,7 @@ export const CODEX_TURN_INTERRUPT_SCENARIO = {
   instanceId: "codex",
   model: "gpt-5.6-terra",
   longPrompt:
-    'Run the shell command `python3 -c "import time; time.sleep(30)"`, then reply with the single word: slept',
+    'Run the shell command `node -e "setTimeout(() => {}, 30000)"`, then reply with the single word: slept',
   nextPrompt: "Reply with the single word: ready",
   nextReply: "ready",
 } as const satisfies TurnInterruptScenario;

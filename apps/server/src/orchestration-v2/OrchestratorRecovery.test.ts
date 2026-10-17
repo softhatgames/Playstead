@@ -1,13 +1,9 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import { CommandId, MessageId } from "@playstead/contracts/baseSchemas";
-import {
-  decodeProviderReplayNdjson,
-  materializeReplayWorkspace,
-} from "@playstead/provider-testing/replayTranscript";
+import { materializeReplayWorkspace } from "@playstead/provider-testing/replayTranscript";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
-import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Stream from "effect/Stream";
@@ -16,6 +12,7 @@ import { makeTestServerConfig } from "../testUtils/testServer.ts";
 import type { ClaudeAgentSdkQueryRunner } from "./Adapters/ClaudeAdapterV2.ts";
 import { makeClaudeReplay } from "./Adapters/ClaudeAdapterV2.testkit.ts";
 import { makeOrchestrationHarness } from "./testkit/OrchestratorHarness.ts";
+import { readRecording } from "./testkit/ProviderReplay.ts";
 import {
   FILE_CREATE_IDS,
   FILE_CREATE_SCENARIO,
@@ -33,19 +30,6 @@ import {
  * at 2577baf): the real services are built over a Playstead home, stop, and
  * are built again over the same SQLite file with startup recovery.
  */
-
-const readRecording = (name: string) =>
-  Effect.gen(function* () {
-    const fs = yield* FileSystem.FileSystem;
-    const path = yield* Path.Path;
-    const recordingPath = path.join(
-      path.dirname(yield* path.fromFileUrl(new URL(import.meta.url))),
-      "testkit",
-      "fixtures",
-      name,
-    );
-    return yield* decodeProviderReplayNdjson(yield* fs.readFileString(recordingPath));
-  });
 
 /** A provider that must not be reached: the restarted server only takes the message. */
 const unreachableClaude: ClaudeAgentSdkQueryRunner["Service"] = {

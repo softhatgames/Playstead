@@ -40,7 +40,7 @@ import * as Stream from "effect/Stream";
 import type { EventSinkWriteError } from "./EventSink.ts";
 import * as EventSink from "./EventSink.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
-import { interruptRequestItemId, interruptResultItem } from "./ThreadCommands.ts";
+import { interruptRequestItemId, interruptResultItem } from "./RunInterrupt.ts";
 
 /** The run's records as the turn started them; the final events update these. */
 export interface RootRunRecords {
