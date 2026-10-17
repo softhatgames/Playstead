@@ -64,6 +64,7 @@ Playstead keeps its data in `~/.playstead`, outside the checkout.
 | [Architecture](docs/ARCHITECTURE.md)               | How the application is structured, mapped onto T3 Code's                                                                               |
 | [Following T3 Code](docs/t3-code.md)               | What Playstead follows from T3 Code, and the weekly review                                                                             |
 | [Decisions](docs/adr/)                             | Why Playstead is built the way it is                                                                                                   |
+| [Roadmap](docs/ROADMAP.md)                         | The versions, from the first public release, 0.1, and the milestones on the way                                                        |
 | [Research](docs/research/README.md)                | Investigations into providers, Effect, game stacks and the interface                                                                   |
 | [Game development skills](skills/README.md)        | The starter skills Playstead ships for making games                                                                                    |
 | [Contributor skills](dev/skills/README.md)         | The engineering workflow used to build Playstead                                                                                       |
