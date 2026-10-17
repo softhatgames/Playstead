@@ -1,10 +1,30 @@
+import {
+  DndContext,
+  PointerSensor,
+  KeyboardSensor,
+  useSensor,
+  useSensors,
+  closestCenter,
+} from "@dnd-kit/core";
+import {
+  SortableContext,
+  useSortable,
+  verticalListSortingStrategy,
+  sortableKeyboardCoordinates,
+} from "@dnd-kit/sortable";
+import { restrictToVerticalAxis } from "@dnd-kit/modifiers";
+import { CSS } from "@dnd-kit/utilities";
+import type { ReactNode } from "react";
+import { sortSidebarProjects } from "./LegacySidebar.sort.ts";
+import { useReducedMotion } from "./sidebar/SidebarThreadDrag.tsx";
+import { useProjectOrder, reorderProjects } from "../uiState.ts";
 import type { ProjectId } from "@playstead/contracts/baseSchemas";
 import type { OrchestrationV2ThreadShell } from "@playstead/contracts/orchestrationV2";
 import { isMacPlatform } from "@playstead/shared/keybindings";
 import { Link, useNavigate, useParams } from "@tanstack/react-router";
 import { type MouseEvent, useEffect, useMemo, useRef, useState } from "react";
 
-import { useClientSettings } from "../clientSettings.ts";
+import { useClientSettings, updateClientSettings } from "../clientSettings.ts";
 import { openCommandPalette } from "../commandPaletteBus.ts";
 import { usePrimaryConnectionState } from "../connection/runtime.ts";
 import { createDraft } from "../drafts.ts";
@@ -66,13 +86,26 @@ const sortTreeThreads = (
  * double-click, archives from its hover button (asking inline when **Confirm
  * before archiving** is on), and opens the tree's own menu on right-click.
  * Mod-click and shift-click select several threads for the bulk menu.
- * Project sorting and dragging come with #40, and the project menu with #44.
+ * Projects sort by update time, creation time or persisted manual order.
+ * Manual order exposes drag handles; the project menu arrives with #44.
  */
 export function LegacySidebar() {
   const state = usePrimaryConnectionState();
   const projects = state?.shell?.projects;
   const threads = useMemo(() => state?.shell?.threads ?? [], [state?.shell?.threads]);
   const settings = useClientSettings();
+  const projectOrder = useProjectOrder();
+  const sortedProjects = sortSidebarProjects(
+    projects ?? [],
+    threads,
+    settings.sidebarProjectSortOrder,
+    projectOrder,
+  );
+  const manual = settings.sidebarProjectSortOrder === "manual";
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
+  );
   const projectExpanded = useProjectExpandedById();
   const activeProjectId = useActiveProjectId();
   const { threadId: activeThreadId } = useParams({ strict: false });
@@ -103,68 +136,123 @@ export function LegacySidebar() {
           <FolderPlusIcon className="size-3.5" />
         </button>
       </div>
-      <ul className="flex flex-col gap-0.5">
-        {(projects ?? []).map((project) => {
-          const active = project.id === activeProjectId;
-          return (
-            <li key={project.id}>
-              <div className="group flex items-center">
-                <button
-                  ref={active ? activeRow : undefined}
-                  type="button"
-                  title={project.workspaceRoot}
-                  aria-current={active ? "true" : undefined}
-                  aria-expanded={resolveProjectExpanded(projectExpanded, project.id)}
-                  onClick={() => {
-                    openProject(project.id);
-                    setProjectExpanded(
-                      project.id,
-                      !resolveProjectExpanded(projectExpanded, project.id),
-                    );
-                  }}
-                  className={`flex min-w-0 flex-1 items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm ${
-                    active
-                      ? "bg-neutral-200 font-medium dark:bg-neutral-800"
-                      : "hover:bg-neutral-100 dark:hover:bg-neutral-900"
-                  }`}
-                >
-                  {resolveProjectExpanded(projectExpanded, project.id) ? (
-                    <FolderIcon className="size-3.5 shrink-0 text-neutral-500 dark:text-neutral-400" />
-                  ) : (
-                    <ThreadStatusDot
-                      status={resolveProjectStatusIndicator(
-                        threads.filter((thread) => thread.projectId === project.id),
-                      )}
-                    />
+      <label className="px-2 text-xs text-neutral-500">
+        Sort projects
+        <select
+          aria-label="Sort projects"
+          value={settings.sidebarProjectSortOrder}
+          onChange={(event) => {
+            const value = event.target.value;
+            if (value === "manual" || value === "updated_at" || value === "created_at")
+              void updateClientSettings({ sidebarProjectSortOrder: value }).catch((error) =>
+                failureToast("Failed to save project sort", error),
+              );
+          }}
+          className="ml-2 rounded bg-transparent py-1"
+        >
+          <option value="updated_at">Updated</option>
+          <option value="created_at">Created</option>
+          <option value="manual">Manual</option>
+        </select>
+      </label>
+      <DndContext
+        sensors={sensors}
+        collisionDetection={closestCenter}
+        modifiers={[restrictToVerticalAxis]}
+        onDragEnd={({ active, over }) => {
+          if (manual && over)
+            reorderProjects(
+              sortedProjects.map((p) => p.id),
+              String(active.id),
+              String(over.id),
+            );
+        }}
+      >
+        <SortableContext
+          items={sortedProjects.map((p) => p.id)}
+          strategy={verticalListSortingStrategy}
+        >
+          <ul className="flex flex-col gap-0.5">
+            {sortedProjects.map((project) => {
+              const active = project.id === activeProjectId;
+              return (
+                <SortableProject key={project.id} id={project.id} enabled={manual}>
+                  {(handle) => (
+                    <>
+                      <div className="group flex items-center">
+                        {manual ? (
+                          <button
+                            {...handle.attributes}
+                            {...handle.listeners}
+                            ref={handle.setActivatorNodeRef}
+                            type="button"
+                            aria-label={`Move project ${project.title}`}
+                            style={{ touchAction: "none" }}
+                            className="cursor-grab px-1 text-neutral-500"
+                          >
+                            ⠿
+                          </button>
+                        ) : null}
+                        <button
+                          ref={active ? activeRow : undefined}
+                          type="button"
+                          title={project.workspaceRoot}
+                          aria-current={active ? "true" : undefined}
+                          aria-expanded={resolveProjectExpanded(projectExpanded, project.id)}
+                          onClick={() => {
+                            openProject(project.id);
+                            setProjectExpanded(
+                              project.id,
+                              !resolveProjectExpanded(projectExpanded, project.id),
+                            );
+                          }}
+                          className={`flex min-w-0 flex-1 items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm ${
+                            active
+                              ? "bg-neutral-200 font-medium dark:bg-neutral-800"
+                              : "hover:bg-neutral-100 dark:hover:bg-neutral-900"
+                          }`}
+                        >
+                          {resolveProjectExpanded(projectExpanded, project.id) ? (
+                            <FolderIcon className="size-3.5 shrink-0 text-neutral-500 dark:text-neutral-400" />
+                          ) : (
+                            <ThreadStatusDot
+                              status={resolveProjectStatusIndicator(
+                                threads.filter((thread) => thread.projectId === project.id),
+                              )}
+                            />
+                          )}
+                          <span className="truncate">{project.title}</span>
+                        </button>
+                        <button
+                          type="button"
+                          aria-label={`New thread in ${project.title}`}
+                          title="New thread"
+                          onClick={() => startThread(project.id)}
+                          className="rounded p-1 text-neutral-500 hover:bg-neutral-200 hover:text-neutral-900 dark:text-neutral-400 dark:hover:bg-neutral-800 dark:hover:text-neutral-100"
+                        >
+                          <SquarePenIcon className="size-3.5" />
+                        </button>
+                      </div>
+                      <ProjectThreadList
+                        projectTitle={project.title}
+                        projectExpanded={resolveProjectExpanded(projectExpanded, project.id)}
+                        threads={sortTreeThreads(
+                          threads.filter((thread) => thread.projectId === project.id),
+                          settings.sidebarThreadSortOrder,
+                        )}
+                        previewCount={settings.sidebarThreadPreviewCount}
+                        confirmArchive={settings.confirmThreadArchive}
+                        activeThreadId={activeThreadId}
+                        onBulkMenu={openBulkMenu}
+                      />
+                    </>
                   )}
-                  <span className="truncate">{project.title}</span>
-                </button>
-                <button
-                  type="button"
-                  aria-label={`New thread in ${project.title}`}
-                  title="New thread"
-                  onClick={() => startThread(project.id)}
-                  className="rounded p-1 text-neutral-500 hover:bg-neutral-200 hover:text-neutral-900 dark:text-neutral-400 dark:hover:bg-neutral-800 dark:hover:text-neutral-100"
-                >
-                  <SquarePenIcon className="size-3.5" />
-                </button>
-              </div>
-              <ProjectThreadList
-                projectTitle={project.title}
-                projectExpanded={resolveProjectExpanded(projectExpanded, project.id)}
-                threads={sortTreeThreads(
-                  threads.filter((thread) => thread.projectId === project.id),
-                  settings.sidebarThreadSortOrder,
-                )}
-                previewCount={settings.sidebarThreadPreviewCount}
-                confirmArchive={settings.confirmThreadArchive}
-                activeThreadId={activeThreadId}
-                onBulkMenu={openBulkMenu}
-              />
-            </li>
-          );
-        })}
-      </ul>
+                </SortableProject>
+              );
+            })}
+          </ul>
+        </SortableContext>
+      </DndContext>
       {projects !== undefined && projects.length === 0 ? (
         <div className="px-2 pt-4 text-center text-xs text-neutral-500 dark:text-neutral-400">
           No projects yet
@@ -349,6 +437,33 @@ function TreeThreadRow(props: {
           <ArchiveIcon className="size-3.5" />
         </button>
       ) : null}
+    </li>
+  );
+}
+
+function SortableProject(props: {
+  id: string;
+  enabled: boolean;
+  children: (handle: ReturnType<typeof useSortable>) => ReactNode;
+}) {
+  const reduced = useReducedMotion();
+  const sortable = useSortable({
+    id: props.id,
+    disabled: !props.enabled,
+    transition: reduced ? null : { duration: 150, easing: "ease" },
+  });
+  return (
+    <li
+      ref={sortable.setNodeRef}
+      style={{
+        transform:
+          reduced && !sortable.isDragging ? undefined : CSS.Transform.toString(sortable.transform),
+        transition: reduced ? undefined : sortable.transition,
+        position: "relative",
+        zIndex: sortable.isDragging ? 10 : undefined,
+      }}
+    >
+      {props.children(sortable)}
     </li>
   );
 }

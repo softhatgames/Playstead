@@ -1,3 +1,9 @@
+import {
+  SidebarThreadDrag,
+  ThreadDropBoundary,
+  useThreadDrag,
+  useSettleSweep,
+} from "./sidebar/SidebarThreadDrag.tsx";
 import { canSnooze } from "@playstead/client-runtime/state/threadSnoozed";
 import { registerSnoozeAndAdvance } from "../snoozeAndAdvance.ts";
 import { buildSnoozeMenuItems, resolveSnoozePresets, snoozeWakeLabel } from "./Sidebar.snooze.ts";
@@ -6,7 +12,15 @@ import { readLocalApi } from "../localApi.ts";
 import type { ProjectId, ThreadId } from "@playstead/contracts/baseSchemas";
 import type { OrchestrationV2ThreadShell } from "@playstead/contracts/orchestrationV2";
 import { Link, useNavigate, useParams } from "@tanstack/react-router";
-import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  type ReactNode,
+  type PointerEvent as ReactPointerEvent,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 
 import { useClientSettings } from "../clientSettings.ts";
 import { openCommandPalette } from "../commandPaletteBus.ts";
@@ -32,6 +46,7 @@ import {
 } from "../threadSelection.ts";
 import { failureToast } from "../toast.ts";
 import {
+  useProjectOrder,
   openProject,
   readActiveProjectId,
   setSidebarProjectScopeKey,
@@ -84,9 +99,8 @@ const inboxReturns = createInboxReturnTracker();
  * Mod-click and shift-click select several rows for the bulk menu. Unpin,
  * settle and archive show **Undo** below it (`AppSidebarLayout`).
  *
- * Seams for the slice's later tickets: **Snoozed** goes between Working and
- * Settled (#38), dragging between and
- * within sections (#40), and **New thread in…** from the palette (#42).
+ * Dragging arranges Pinned and Active or changes shelves. **New thread in…**
+ * comes from the palette (#42).
  */
 export function Sidebar() {
   const state = usePrimaryConnectionState();
@@ -97,14 +111,16 @@ export function Sidebar() {
   const { threadId: routeThreadId } = useParams({ strict: false });
   const navigate = useNavigate();
 
+  const projectOrder = useProjectOrder();
   const groups = useMemo(
     () =>
       buildSidebarProjectGroups({
         projects,
         threads,
         sortOrder: settings.sidebarProjectSortOrder,
+        projectOrder,
       }),
-    [projects, threads, settings.sidebarProjectSortOrder],
+    [projects, threads, settings.sidebarProjectSortOrder, projectOrder],
   );
   const scopeKey = useSidebarProjectScopeKey();
   const scopedGroup = resolveSidebarProjectScope(groups, scopeKey);
@@ -308,6 +324,7 @@ export function Sidebar() {
     () => new Map(projects.map((project) => [project.id as string, project.title])),
     [projects],
   );
+  const sweep = useSettleSweep(sections, settleThreads);
   const renderRow = (thread: SidebarThread, section: SidebarSection) => (
     <InboxThreadRow
       key={thread.id}
@@ -317,6 +334,8 @@ export function Sidebar() {
       projectName={scopedGroup === null ? (projectNameById.get(thread.projectId) ?? null) : null}
       orderedIdsRef={orderedIdsRef}
       onSettle={attemptSettle}
+      onSweep={sweep.begin}
+      sweeping={sweep.marked.has(thread.id)}
       onSnooze={attemptSnooze}
       onBulkMenu={openBulkMenu}
     />
@@ -331,113 +350,121 @@ export function Sidebar() {
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <SidebarThreadSearch
-        threads={[
-          ...sections.pinned,
-          ...sections.active,
-          ...sections.working,
-          ...sections.snoozed,
-          ...sections.settled,
-        ]}
-        projects={projects}
-        actions={
-          <>
-            {groups.length > 0 ? (
-              <>
-                <ProjectScopeMenu groups={groups} scopedGroup={scopedGroup} />
-                <HeaderButton
-                  label="Add project"
-                  onClick={() => openCommandPalette({ open: "add-project" })}
-                >
-                  <FolderPlusIcon className="size-4" />
-                </HeaderButton>
-              </>
-            ) : null}
-            <HeaderButton
-              label="New thread"
-              disabled={projects.length === 0}
-              onClick={startNewThread}
-            >
-              <SquarePenIcon className="size-4" />
-            </HeaderButton>
-          </>
-        }
+      <SidebarThreadDrag
+        sections={sections}
+        allThreads={threads}
+        workingShelfEnabled={workingShelfEnabled}
+        onSettle={attemptSettle}
       >
-        <nav
-          aria-label="Threads"
-          className="flex min-h-0 flex-1 flex-col overflow-y-auto px-2 pb-2"
-        >
-          {total === 0 ? (
-            <div className="flex flex-col items-center gap-2 px-2 py-6 text-center text-xs text-neutral-500 dark:text-neutral-400">
-              {projects.length === 0 ? (
+        <SidebarThreadSearch
+          threads={[
+            ...sections.pinned,
+            ...sections.active,
+            ...sections.working,
+            ...sections.snoozed,
+            ...sections.settled,
+          ]}
+          projects={projects}
+          actions={
+            <>
+              {groups.length > 0 ? (
                 <>
-                  <span>No projects yet</span>
-                  <button
-                    type="button"
+                  <ProjectScopeMenu groups={groups} scopedGroup={scopedGroup} />
+                  <HeaderButton
+                    label="Add project"
                     onClick={() => openCommandPalette({ open: "add-project" })}
-                    className="rounded-md border border-neutral-300 px-2.5 py-1 font-medium hover:bg-neutral-100 dark:border-neutral-700 dark:hover:bg-neutral-900"
                   >
-                    Add project
-                  </button>
+                    <FolderPlusIcon className="size-4" />
+                  </HeaderButton>
                 </>
-              ) : scopedGroup !== null ? (
-                `No threads in ${scopedGroup.displayName} yet`
-              ) : (
-                "No threads yet"
-              )}
-            </div>
-          ) : (
-            <ul role="presentation" className="flex flex-1 flex-col gap-px">
-              {sections.pinned.length > 0 ? (
-                <SectionLabel label="Pinned">
-                  {sections.pinned.map((thread) => renderRow(thread, "pinned"))}
+              ) : null}
+              <HeaderButton
+                label="New thread"
+                disabled={projects.length === 0}
+                onClick={startNewThread}
+              >
+                <SquarePenIcon className="size-4" />
+              </HeaderButton>
+            </>
+          }
+        >
+          <nav
+            aria-label="Threads"
+            className="flex min-h-0 flex-1 flex-col overflow-y-auto px-2 pb-2"
+          >
+            {total === 0 ? (
+              <div className="flex flex-col items-center gap-2 px-2 py-6 text-center text-xs text-neutral-500 dark:text-neutral-400">
+                {projects.length === 0 ? (
+                  <>
+                    <span>No projects yet</span>
+                    <button
+                      type="button"
+                      onClick={() => openCommandPalette({ open: "add-project" })}
+                      className="rounded-md border border-neutral-300 px-2.5 py-1 font-medium hover:bg-neutral-100 dark:border-neutral-700 dark:hover:bg-neutral-900"
+                    >
+                      Add project
+                    </button>
+                  </>
+                ) : scopedGroup !== null ? (
+                  `No threads in ${scopedGroup.displayName} yet`
+                ) : (
+                  "No threads yet"
+                )}
+              </div>
+            ) : (
+              <ul role="presentation" className="flex flex-1 flex-col gap-px">
+                {
+                  <SectionLabel label="Pinned" section="pinned">
+                    {sections.pinned.map((thread) => renderRow(thread, "pinned"))}
+                  </SectionLabel>
+                }
+                <SectionLabel label="Active" section="active">
+                  {sections.active.map((thread) => renderRow(thread, "active"))}
                 </SectionLabel>
-              ) : null}
-              <SectionLabel label="Active">
-                {sections.active.map((thread) => renderRow(thread, "active"))}
-              </SectionLabel>
-              <li className="mt-auto" aria-hidden />
-              {sections.working.length > 0 ? (
+                <li className="mt-auto" aria-hidden />
+                {sections.working.length > 0 ? (
+                  <ShelfHeader
+                    label={workingExpanded ? "Working" : `Working (${sections.working.length})`}
+                    expanded={workingExpanded}
+                    onToggle={toggleWorking}
+                  />
+                ) : null}
+                {visibleWorking.map((thread) => renderRow(thread, "working"))}
+                {sections.snoozed.length > 0 ? (
+                  <ShelfHeader
+                    label={snoozedExpanded ? "Snoozed" : `Snoozed (${sections.snoozed.length})`}
+                    expanded={snoozedExpanded}
+                    onToggle={() => toggleSidebarShelfExpanded("snoozed")}
+                  />
+                ) : null}
+                {snoozedExpanded
+                  ? sections.snoozed.map((thread) => renderRow(thread, "snoozed"))
+                  : null}
                 <ShelfHeader
-                  label={workingExpanded ? "Working" : `Working (${sections.working.length})`}
-                  expanded={workingExpanded}
-                  onToggle={toggleWorking}
+                  dropSection="settled"
+                  label={settledExpanded ? "Settled" : `Settled (${sections.settled.length})`}
+                  expanded={settledExpanded}
+                  onToggle={toggleSettled}
                 />
-              ) : null}
-              {visibleWorking.map((thread) => renderRow(thread, "working"))}
-              {sections.snoozed.length > 0 ? (
-                <ShelfHeader
-                  label={snoozedExpanded ? "Snoozed" : `Snoozed (${sections.snoozed.length})`}
-                  expanded={snoozedExpanded}
-                  onToggle={() => toggleSidebarShelfExpanded("snoozed")}
-                />
-              ) : null}
-              {snoozedExpanded
-                ? sections.snoozed.map((thread) => renderRow(thread, "snoozed"))
-                : null}
-              <ShelfHeader
-                label={settledExpanded ? "Settled" : `Settled (${sections.settled.length})`}
-                expanded={settledExpanded}
-                onToggle={toggleSettled}
-              />
-              {visibleSettled.map((thread) => renderRow(thread, "settled"))}
-              {settledExpanded && hiddenSettledCount > 0 ? (
-                <li>
-                  <button
-                    type="button"
-                    onClick={() =>
-                      setSettledVisibleCount((count) => count + SETTLED_TAIL_PAGE_COUNT)
-                    }
-                    className="w-full rounded-md px-2.5 py-1.5 text-left text-sm text-neutral-500 hover:bg-neutral-100 dark:text-neutral-400 dark:hover:bg-neutral-900"
-                  >
-                    Show {Math.min(hiddenSettledCount, SETTLED_TAIL_PAGE_COUNT)} more
-                  </button>
-                </li>
-              ) : null}
-            </ul>
-          )}
-        </nav>
-      </SidebarThreadSearch>
+                {visibleSettled.map((thread) => renderRow(thread, "settled"))}
+                {settledExpanded && hiddenSettledCount > 0 ? (
+                  <li>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setSettledVisibleCount((count) => count + SETTLED_TAIL_PAGE_COUNT)
+                      }
+                      className="w-full rounded-md px-2.5 py-1.5 text-left text-sm text-neutral-500 hover:bg-neutral-100 dark:text-neutral-400 dark:hover:bg-neutral-900"
+                    >
+                      Show {Math.min(hiddenSettledCount, SETTLED_TAIL_PAGE_COUNT)} more
+                    </button>
+                  </li>
+                ) : null}
+              </ul>
+            )}
+          </nav>
+        </SidebarThreadSearch>
+      </SidebarThreadDrag>
     </div>
   );
 }
@@ -464,11 +491,16 @@ function HeaderButton(props: {
 
 /**
  * A section's rows. T3 Code shows the Pinned and Active labels only while
- * dragging (#40); here they name the groups for assistive technology.
+ * dragging; their target space stays stable during a gesture.
  */
-function SectionLabel(props: { readonly label: string; readonly children: ReactNode }) {
+function SectionLabel(props: {
+  readonly label: string;
+  readonly section: "pinned" | "active";
+  readonly children: ReactNode;
+}) {
   return (
     <li className="list-none">
+      <ThreadDropBoundary section={props.section} />
       <ul aria-label={props.label} className="flex flex-col gap-px">
         {props.children}
       </ul>
@@ -479,22 +511,30 @@ function SectionLabel(props: { readonly label: string; readonly children: ReactN
 /** A shelf's header, which folds and unfolds it (T3 Code's `SidebarSectionHeader`). */
 function ShelfHeader(props: {
   readonly label: string;
+  readonly dropSection?: "settled";
   readonly expanded: boolean;
   readonly onToggle: () => void;
 }) {
+  const button = (
+    <button
+      type="button"
+      aria-expanded={props.expanded}
+      onClick={props.onToggle}
+      className="flex h-8 w-full items-center gap-1 rounded-md px-2 text-xs font-medium text-neutral-500 hover:text-neutral-900 dark:text-neutral-400 dark:hover:text-neutral-100"
+    >
+      <ChevronRightIcon
+        className={`size-3 transition-transform motion-reduce:transition-none ${props.expanded ? "rotate-90" : ""}`}
+      />
+      {props.label}
+    </button>
+  );
   return (
     <li className="list-none">
-      <button
-        type="button"
-        aria-expanded={props.expanded}
-        onClick={props.onToggle}
-        className="flex h-8 w-full items-center gap-1 rounded-md px-2 text-xs font-medium text-neutral-500 hover:text-neutral-900 dark:text-neutral-400 dark:hover:text-neutral-100"
-      >
-        <ChevronRightIcon
-          className={`size-3 transition-transform motion-reduce:transition-none ${props.expanded ? "rotate-90" : ""}`}
-        />
-        {props.label}
-      </button>
+      {props.dropSection ? (
+        <ThreadDropBoundary section={props.dropSection}>{button}</ThreadDropBoundary>
+      ) : (
+        button
+      )}
     </li>
   );
 }
@@ -615,6 +655,8 @@ function InboxThreadRow(props: {
   readonly orderedIdsRef: { readonly current: ReadonlyArray<string> };
   readonly onSnooze: (thread: SidebarThread, until: string) => void;
   readonly onSettle: (thread: SidebarThread) => void;
+  readonly onSweep: (event: ReactPointerEvent, thread: SidebarThread) => void;
+  readonly sweeping: boolean;
   readonly onBulkMenu: (position: { x: number; y: number }) => void;
 }) {
   const { thread, section, current } = props;
@@ -623,6 +665,7 @@ function InboxThreadRow(props: {
     onStartRename: rename.start,
     projectFilter: true,
   });
+  const drag = useThreadDrag(thread.id, section, rename.input !== null);
   const selected = useThreadSelection().selectedThreadIds.has(thread.id);
   const settled = section === "settled";
   const snoozed = section === "snoozed";
@@ -658,10 +701,20 @@ function InboxThreadRow(props: {
   }
 
   return (
-    <li className="group relative list-none">
+    <li
+      ref={drag.setNodeRef}
+      style={drag.style}
+      data-sweep-thread={thread.id}
+      className={`group relative list-none ${props.sweeping ? "ring-1 ring-sky-500" : ""}`}
+    >
       <Link
         to="/threads/$threadId"
         params={{ threadId: thread.id }}
+        {...drag.attributes}
+        {...drag.listeners}
+        role="link"
+        draggable={false}
+        style={{ touchAction: "none" }}
         data-thread-item={thread.id}
         aria-current={current ? "page" : undefined}
         aria-selected={selected || undefined}
@@ -789,7 +842,10 @@ function InboxThreadRow(props: {
           type="button"
           aria-label="Settle thread"
           title="Settle thread"
-          onClick={() => props.onSettle(thread)}
+          onPointerDown={(event) => props.onSweep(event, thread)}
+          onClick={(event) => {
+            if (event.detail === 0) props.onSettle(thread);
+          }}
           className="pointer-events-none absolute top-1/2 right-1 -translate-y-1/2 rounded-md p-1.5 text-neutral-500 opacity-0 group-hover:pointer-events-auto group-hover:opacity-100 focus-visible:pointer-events-auto focus-visible:opacity-100 hover:text-neutral-900 dark:text-neutral-400 dark:hover:text-neutral-100"
         >
           <CheckIcon className="size-3.5" />

@@ -180,3 +180,6 @@ export function usePrimaryConnectionState(): ConnectionState | undefined {
   startPrimaryConnection();
   return useSyncExternalStore(subscribe, () => current);
 }
+
+/** Latest connection state for actions outside React render. */
+export const readPrimaryConnectionState = (): ConnectionState | undefined => current;

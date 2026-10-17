@@ -34,6 +34,8 @@ const applyEvent = (
     case "thread.visited":
     case "thread.marked-unread":
     case "thread.pinned":
+    case "thread.pin-reordered":
+    case "thread.active-reordered":
     case "thread.unpinned":
     case "thread.settled":
     case "thread.unsettled":

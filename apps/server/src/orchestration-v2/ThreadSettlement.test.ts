@@ -107,6 +107,78 @@ const refusal = <A, E>(effect: Effect.Effect<A, E>) =>
 describe("Pin and settle a thread", () => {
   it.layer(NodeServices.layer)((it) => {
     it.effect(
+      "reordering preserves pin state and Active activity time, and refuses raced moves",
+      () =>
+        Effect.gen(function* () {
+          const { harness } = yield* makeHarness("file_create.claude.ndjson", "reorder-game");
+          yield* runFileCreateScenario(harness);
+          const threadId = FILE_CREATE_IDS.threadId;
+          const reorder = (
+            type: "thread.pin.reorder" | "thread.active.reorder",
+            orderKey: string,
+            id: string,
+          ) =>
+            harness.orchestrator.dispatch({
+              type,
+              commandId: CommandId.make(id),
+              threadId,
+              orderKey,
+            });
+          const initial = yield* threadOf(harness, threadId);
+          yield* TestClock.adjust("1 minute");
+          const activeReceipt = yield* reorder("thread.active.reorder", "n", "active:1");
+          assert.deepStrictEqual(
+            yield* reorder("thread.active.reorder", "n", "active:1"),
+            activeReceipt,
+          );
+          assert.strictEqual((yield* threadOf(harness, threadId)).activeOrderKey, "n");
+          assert.strictEqual((yield* threadOf(harness, threadId)).updatedAt, initial.updatedAt);
+          assert.include(
+            yield* refusal(reorder("thread.pin.reorder", "n", "pin:refused")),
+            "not pinned",
+          );
+          yield* send(harness, threadId, "thread.pin", "pin:first", { orderKey: "n" });
+          const pinned = yield* threadOf(harness, threadId);
+          yield* TestClock.adjust("1 minute");
+          yield* reorder("thread.pin.reorder", "t", "pin:move");
+          const moved = yield* threadOf(harness, threadId);
+          const shell = Option.getOrThrow(yield* Stream.runHead(harness.shell));
+          assert.strictEqual(shell.kind, "snapshot");
+          if (shell.kind === "snapshot") {
+            assert.strictEqual(shell.snapshot.threads[0]?.pinOrderKey, "t");
+            assert.strictEqual(shell.snapshot.threads[0]?.activeOrderKey, "n");
+          }
+          assert.strictEqual(moved.pinOrderKey, "t");
+          assert.strictEqual(moved.pinnedAt, pinned.pinnedAt);
+          assert.notStrictEqual(moved.updatedAt, pinned.updatedAt);
+          yield* TestClock.adjust("1 minute");
+          yield* reorder("thread.pin.reorder", "t", "pin:same");
+          assert.strictEqual((yield* threadOf(harness, threadId)).updatedAt, moved.updatedAt);
+          assert.include(
+            yield* refusal(reorder("thread.active.reorder", "u", "active:pinned")),
+            "not active",
+          );
+          yield* send(harness, threadId, "thread.settle", "settle:reorder");
+          assert.include(
+            yield* refusal(reorder("thread.active.reorder", "u", "active:settled")),
+            "not active",
+          );
+          for (const state of ["archive", "delete"] as const) {
+            yield* harness.orchestrator.dispatch({
+              type: `thread.${state}`,
+              commandId: CommandId.make(state),
+              threadId,
+            });
+            for (const type of ["thread.pin.reorder", "thread.active.reorder"] as const) {
+              assert.include(
+                yield* refusal(reorder(type, "v", `${state}:${type}`)),
+                state === "archive" ? "archived" : "deleted",
+              );
+            }
+          }
+        }),
+    );
+    it.effect(
       "settling an idle thread stops its provider session, and its next message un-settles it and resumes the conversation",
       () =>
         Effect.gen(function* () {

@@ -9,7 +9,7 @@ import { useSyncExternalStore } from "react";
  * project tree marks and **New thread** starts in. Kept in the browser's
  * storage, as T3 Code's store persists it: the project scope of the inbox
  * sidebar (`sidebarProjectScopeKey`, null for every project), and whether
- * the sidebar is shown. Project order and expansion join it with #40.
+ * the sidebar is shown. Project order and expansion persist alongside it.
  */
 
 const STORAGE_KEY = `${identity.urlScheme.production}:ui-state:v1`;
@@ -25,6 +25,7 @@ const PersistedUiState = Schema.Struct({
     settled: Schema.Boolean,
     snoozed: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   }).pipe(Schema.withDecodingDefault(Effect.succeed(SHELVES_FOLDED))),
+  projectOrder: Schema.Array(Schema.String).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
   projectExpandedById: Schema.Record(Schema.String, Schema.Boolean).pipe(
     Schema.withDecodingDefault(Effect.succeed({})),
   ),
@@ -36,6 +37,7 @@ const DEFAULT_PERSISTED: PersistedUiState = {
   sidebarOpen: true,
   sidebarShelvesExpanded: SHELVES_FOLDED,
   projectExpandedById: {},
+  projectOrder: [],
 };
 const decode = Schema.decodeUnknownSync(Schema.fromJsonString(PersistedUiState));
 const encode = Schema.encodeSync(Schema.fromJsonString(PersistedUiState));
@@ -148,4 +150,23 @@ export function toggleSidebarShelfExpanded(shelf: SidebarShelf): void {
 export const readSidebarShelvesExpanded = () => current().sidebarShelvesExpanded;
 export function useSidebarShelvesExpanded() {
   return useSyncExternalStore(subscribe, readSidebarShelvesExpanded);
+}
+
+/** Manual project order, independent of the temporary time-based sort. */
+export const readProjectOrder = (): ReadonlyArray<string> => current().projectOrder;
+export function useProjectOrder(): ReadonlyArray<string> {
+  return useSyncExternalStore(subscribe, readProjectOrder);
+}
+export function reorderProjects(
+  visibleOrder: ReadonlyArray<string>,
+  moved: string,
+  target: string,
+): void {
+  const from = visibleOrder.indexOf(moved);
+  const to = visibleOrder.indexOf(target);
+  if (from < 0 || to < 0 || from === to) return;
+  const order = [...visibleOrder];
+  order.splice(from, 1);
+  order.splice(to, 0, moved);
+  persist({ projectOrder: order });
 }
