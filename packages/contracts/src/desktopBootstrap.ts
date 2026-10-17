@@ -3,6 +3,13 @@ import * as Schema from "effect/Schema";
 import { TrimmedNonEmptyString } from "./baseSchemas.ts";
 
 /**
+ * The server's exit code when another server already owns its Playstead
+ * home. The desktop app must not start it again (T3 Code's
+ * `SERVER_EXIT_CODE_STATE_DIR_OWNED`).
+ */
+export const SERVER_EXIT_CODE_STATE_DIR_OWNED = 78;
+
+/**
  * The settings the desktop app hands the server it starts. They travel as one
  * JSON line on a private file descriptor, not in the environment or the
  * arguments, because the bootstrap token signs the window in.

@@ -3,15 +3,13 @@ import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 import * as NodeSqlite from "node:sqlite";
 
+import { SERVER_EXIT_CODE_STATE_DIR_OWNED } from "@playstead/contracts/desktopBootstrap";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Runtime from "effect/Runtime";
 import * as Schema from "effect/Schema";
 
 import * as ServerConfig from "./config.ts";
-
-/** T3 Code's `SERVER_EXIT_CODE_STATE_DIR_OWNED`: another server owns the state directory. */
-const SERVER_EXIT_CODE_STATE_DIR_OWNED = 78;
 
 class ServerAlreadyRunningError extends Schema.TaggedError<ServerAlreadyRunningError>()(
   "ServerAlreadyRunningError",
