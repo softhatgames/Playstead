@@ -70,6 +70,16 @@ describe("applyShellStreamItem", () => {
     });
   });
 
+  it("takes out a project that was removed", () => {
+    const shell = applyShellStreamItem(
+      { ...snapshot, projects: [project("a"), project("b")] },
+      { kind: "project.removed", sequence: 4, projectId: ProjectId.make("a") },
+    );
+
+    assert.deepStrictEqual(shell?.projects, [project("b")]);
+    assert.strictEqual(shell?.snapshotSequence, 4);
+  });
+
   it("adds a thread, then follows its title and run", () => {
     const shell = applyShellStreamItem(undefined, { kind: "snapshot", snapshot });
     const created = applyShellStreamItem(shell, {

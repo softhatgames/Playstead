@@ -114,6 +114,33 @@ export function runPrimaryStream<A, E>(
   };
 }
 
+/** The page's connection state now, for an action that needs the latest shell. */
+export const readPrimaryConnectionState = (): ConnectionState | undefined => current;
+
+/**
+ * Resolves true once the page's connection state matches, or false after
+ * `timeoutMs`, as T3 Code's `waitForProjectRemoval` waits for the shell to
+ * drop a removed project.
+ */
+export function waitForPrimaryState(
+  matches: (state: ConnectionState | undefined) => boolean,
+  timeoutMs = 5_000,
+): Promise<boolean> {
+  if (matches(current)) return Promise.resolve(true);
+  return new Promise((resolve) => {
+    const finish = (matched: boolean) => {
+      clearTimeout(timer);
+      listeners.delete(listener);
+      resolve(matched);
+    };
+    const listener = () => {
+      if (matches(current)) finish(true);
+    };
+    const timer = setTimeout(() => finish(false), timeoutMs);
+    listeners.add(listener);
+  });
+}
+
 export function usePrimaryConnectionState(): ConnectionState | undefined {
   startPrimaryConnection();
   return useSyncExternalStore(subscribe, () => current);

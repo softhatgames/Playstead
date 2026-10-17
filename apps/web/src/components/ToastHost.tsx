@@ -34,6 +34,22 @@ export function ToastHost() {
                 {toast.description}
               </div>
             )}
+            {toast.action === undefined ? null : (
+              <button
+                type="button"
+                onClick={() => {
+                  dismissToast(toast.id);
+                  toast.action?.onClick();
+                }}
+                className={`mt-2 rounded-md px-2.5 py-1 text-xs font-medium ${
+                  toast.action.destructive === true
+                    ? "bg-red-600 text-white hover:bg-red-700"
+                    : "border border-neutral-300 hover:bg-neutral-100 dark:border-neutral-700 dark:hover:bg-neutral-800"
+                }`}
+              >
+                {toast.action.label}
+              </button>
+            )}
           </div>
           <button
             type="button"

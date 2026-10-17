@@ -91,11 +91,8 @@ export const makeOrchestrationHarness = Effect.fn("makeOrchestrationHarness")(fu
     ),
   );
   const context = yield* Layer.build(
-    Layer.mergeAll(
-      OrchestrationRuntime.layerCore,
-      ProjectService.layer,
-      ProviderRuntimeRecoveryService.layer,
-    ).pipe(
+    Layer.mergeAll(ProjectService.layer, ProviderRuntimeRecoveryService.layer).pipe(
+      Layer.provideMerge(OrchestrationRuntime.layerCore),
       Layer.provide(adapters),
       Layer.provide(
         Layer.succeed(TextGeneration.TextGeneration, input.textGeneration ?? keepsTheSeed),

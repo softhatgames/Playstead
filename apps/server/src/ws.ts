@@ -97,23 +97,47 @@ const layerWsRpc = WsRpcGroup.toLayer(
           ),
         ),
       [WS_METHODS.subscribeServerLifecycle]: () => lifecycleEvents.subscribe,
+      // T3 Code's `projectMutationOperation` (`project/ProjectMutation.ts`).
       // A conflict passes through so the client can open the project that owns
-      // the folder. Anything else is T3 Code's one mutation error, carrying the
-      // folder check's reason when that is what failed.
+      // the folder. Anything else is T3 Code's one mutation error, carrying
+      // "Project X is not empty." or the folder check's reason when that is
+      // what failed.
       [WS_METHODS.projectsMutate]: (mutation) =>
-        projects.create(mutation).pipe(
-          Effect.catchTag("ProjectOperationError", (cause) =>
-            Effect.fail(
-              new ProjectMutationError({
-                commandId: mutation.commandId,
-                message:
-                  cause.operation === "normalize-workspace" && cause.cause instanceof Error
-                    ? cause.cause.message
-                    : "Failed to mutate project.",
-                cause,
-              }),
-            ),
-          ),
+        (mutation.type === "project.create"
+          ? projects.create(mutation)
+          : mutation.type === "project.update"
+            ? projects.update(mutation)
+            : projects.delete(mutation)
+        ).pipe(
+          Effect.catchTags({
+            ProjectNotFoundError: (cause) =>
+              Effect.fail(
+                new ProjectMutationError({
+                  commandId: mutation.commandId,
+                  message: "Failed to mutate project.",
+                  cause,
+                }),
+              ),
+            ProjectNotEmptyError: (cause) =>
+              Effect.fail(
+                new ProjectMutationError({
+                  commandId: mutation.commandId,
+                  message: cause.message,
+                  cause,
+                }),
+              ),
+            ProjectOperationError: (cause) =>
+              Effect.fail(
+                new ProjectMutationError({
+                  commandId: mutation.commandId,
+                  message:
+                    cause.operation === "normalize-workspace" && cause.cause instanceof Error
+                      ? cause.cause.message
+                      : "Failed to mutate project.",
+                  cause,
+                }),
+              ),
+          }),
         ),
       [WS_METHODS.filesystemBrowse]: (input) =>
         WorkspaceEntries.browse(input).pipe(Effect.provideContext(context)),

@@ -532,7 +532,8 @@ export type OrchestrationV2ShellSnapshot = typeof OrchestrationV2ShellSnapshot.T
 
 /**
  * The snapshot first, then each change after it. A thread that is archived
- * or deleted leaves the sidebar with `thread.removed`.
+ * or deleted leaves the sidebar with `thread.removed`, and a removed project
+ * with `project.removed`.
  */
 export const OrchestrationV2ShellStreamItem = Schema.Union([
   Schema.Struct({
@@ -543,6 +544,11 @@ export const OrchestrationV2ShellStreamItem = Schema.Union([
     kind: Schema.Literal("project.updated"),
     sequence: NonNegativeInt,
     project: OrchestrationProjectShell,
+  }),
+  Schema.Struct({
+    kind: Schema.Literal("project.removed"),
+    sequence: NonNegativeInt,
+    projectId: ProjectId,
   }),
   Schema.Struct({
     kind: Schema.Literal("thread.updated"),

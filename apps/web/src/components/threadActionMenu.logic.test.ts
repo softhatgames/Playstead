@@ -31,7 +31,7 @@ const outline = (items: ReturnType<typeof buildThreadActionMenuItems>) =>
   ]);
 
 describe("buildThreadActionMenuItems", () => {
-  it("offers T3 Code's items in its order: pin, settle, rename, regenerate title, mark unread, copy, archive, then delete", () => {
+  it("offers T3 Code's items in its order: pin, settle, rename, regenerate title, mark unread, copy, project settings, archive, then delete", () => {
     assert.deepStrictEqual(outline(buildThreadActionMenuItems(idle)), [
       ["pin", "Pin thread", false, false, false, []],
       ["settle", "Settle thread", false, false, false, []],
@@ -49,6 +49,7 @@ describe("buildThreadActionMenuItems", () => {
           ["copy-thread-id", "Thread ID"],
         ],
       ],
+      ["project-settings", "Project settings", false, false, false, []],
       ["archive", "Archive thread", false, false, true, []],
       ["delete", "Delete", false, true, false, []],
     ]);
@@ -107,7 +108,7 @@ describe("buildThreadActionMenuItems", () => {
 });
 
 describe("legacyThreadMenuItems", () => {
-  it("offers the project tree's flat menu: rename, mark unread, copy path, copy thread ID, then delete", () => {
+  it("offers the project tree's flat menu: rename, mark unread, copy path, copy thread ID, project settings, then delete", () => {
     assert.deepStrictEqual(
       legacyThreadMenuItems.map((item) => [item.id, item.label, item.destructive === true]),
       [
@@ -115,6 +116,7 @@ describe("legacyThreadMenuItems", () => {
         ["mark-unread", "Mark unread", false],
         ["copy-path", "Copy Path", false],
         ["copy-thread-id", "Copy Thread ID", false],
+        ["project-settings", "Project settings", false],
         ["delete", "Delete", true],
       ],
     );

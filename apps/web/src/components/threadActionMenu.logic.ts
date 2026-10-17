@@ -5,11 +5,11 @@ import type { OrchestrationV2ThreadShell } from "@playstead/contracts/orchestrat
 /**
  * The thread menu (T3 Code's `apps/web/src/components/threadActionMenu.logic.ts`
  * at 2577baf), opened from a sidebar row and the thread view's header. It
- * has T3 Code's items in T3 Code's order as each arrives: so far **Rename
- * thread**, **Regenerate title**, **Mark unread**, **Filter by project**,
- * **Copy** (Path and Thread ID), **Archive thread** and **Delete**. Pin,
- * settle, snooze, auto-settle and project settings come with their
- * features, as fields of the state and ids here. Threads have no branch, so
+ * has T3 Code's items in T3 Code's order as each arrives: so far **Pin**,
+ * **Settle**, **Rename thread**, **Regenerate title**, **Mark unread**,
+ * **Filter by project**, **Copy** (Path and Thread ID), **Project
+ * settings**, **Archive thread** and **Delete**. Snooze and auto-settle
+ * come with their features, as fields of the state and ids here. Threads have no branch, so
  * T3 Code's "New thread on (branch)" and **Copy → Branch** never show.
  */
 export type ThreadActionMenuId =
@@ -24,6 +24,7 @@ export type ThreadActionMenuId =
   | "copy"
   | "copy-path"
   | "copy-thread-id"
+  | "project-settings"
   | "archive"
   | "delete";
 
@@ -76,6 +77,7 @@ export function buildThreadActionMenuItems(
         { id: "copy-thread-id", label: "Thread ID" },
       ],
     },
+    { id: "project-settings", label: "Project settings" },
     {
       id: "archive",
       label: "Archive thread",
@@ -99,18 +101,20 @@ export type LegacyThreadMenuId =
   | "mark-unread"
   | "copy-path"
   | "copy-thread-id"
+  | "project-settings"
   | "delete";
 
 /**
  * A thread's menu in the project tree (**Sidebar (legacy)**), flat as T3
  * Code's `LegacySidebar.tsx` builds it; archiving is the row's hover button
- * there. **Project settings** joins before Delete with #44.
+ * there.
  */
 export const legacyThreadMenuItems: ReadonlyArray<ContextMenuItem<LegacyThreadMenuId>> = [
   { id: "rename", label: "Rename thread" },
   { id: "mark-unread", label: "Mark unread" },
   { id: "copy-path", label: "Copy Path" },
   { id: "copy-thread-id", label: "Copy Thread ID" },
+  { id: "project-settings", label: "Project settings" },
   { id: "delete", label: "Delete", destructive: true },
 ];
 

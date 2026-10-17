@@ -1,14 +1,17 @@
 import type { ProjectId } from "@playstead/contracts/baseSchemas";
+import type { ContextMenuPosition } from "@playstead/contracts/ipc";
 import type { OrchestrationV2ThreadShell } from "@playstead/contracts/orchestrationV2";
 import { isMacPlatform } from "@playstead/shared/keybindings";
 import { Link, useNavigate, useParams } from "@tanstack/react-router";
 import { type MouseEvent, useEffect, useMemo, useRef, useState } from "react";
 
+import { copyTextToClipboard } from "../clipboard.ts";
 import { useClientSettings } from "../clientSettings.ts";
 import { openCommandPalette } from "../commandPaletteBus.ts";
 import { usePrimaryConnectionState } from "../connection/runtime.ts";
 import { createDraft } from "../drafts.ts";
 import { useBulkThreadMenu } from "../hooks/useBulkThreadMenu.ts";
+import { type ProjectActionTarget, removeProjectFromTree } from "../hooks/useProjectActions.ts";
 import { useThreadActionMenu } from "../hooks/useThreadActionMenu.ts";
 import { useThreadActions } from "../hooks/useThreadActions.ts";
 import {
@@ -19,10 +22,13 @@ import {
   toggleThreadSelection,
   useThreadSelection,
 } from "../threadSelection.ts";
-import { failureToast } from "../toast.ts";
+import { readLocalApi } from "../localApi.ts";
+import { failureToast, successToast } from "../toast.ts";
 import { openProject, useActiveProjectId } from "../uiState.ts";
 import { ArchiveIcon, FolderIcon, FolderPlusIcon, SquarePenIcon } from "./icons.tsx";
+import { projectMenuItems } from "./projectActions.logic.ts";
 import { isTrailingDoubleClick } from "./Sidebar.logic.ts";
+import { ProjectRenameDialog } from "./sidebar/ProjectRenameDialog.tsx";
 import { ThreadStatusIndicator, useThreadRename } from "./sidebar/SidebarThreadParts.tsx";
 import { threadRuntimeCanArchive } from "./threadActionMenu.logic.ts";
 
@@ -55,8 +61,9 @@ const sortTreeThreads = (
  * **Show more**. **New thread** opens a draft. A thread row renames on
  * double-click, archives from its hover button (asking inline when **Confirm
  * before archiving** is on), and opens the tree's own menu on right-click.
- * Mod-click and shift-click select several threads for the bulk menu.
- * Project sorting and dragging come with #40, and the project menu with #44.
+ * Mod-click and shift-click select several threads for the bulk menu. A
+ * project's right-click menu offers **Rename**, **Copy Path**, **Project
+ * settings** and **Remove**. Project sorting and dragging come with #40.
  */
 export function LegacySidebar() {
   const state = usePrimaryConnectionState();
@@ -76,6 +83,33 @@ export function LegacySidebar() {
   const startThread = (projectId: ProjectId) => {
     openProject(projectId);
     void navigate({ to: "/draft/$draftId", params: { draftId: createDraft(projectId) } });
+  };
+
+  const [renaming, setRenaming] = useState<ProjectActionTarget | null>(null);
+  // T3 Code's `handleProjectButtonContextMenu`.
+  const openProjectMenu = async (project: ProjectActionTarget, position: ContextMenuPosition) => {
+    const chosen = await readLocalApi()
+      .contextMenu.show(projectMenuItems, position)
+      .catch(() => null);
+    switch (chosen) {
+      case "rename":
+        setRenaming(project);
+        return;
+      case "copy-path":
+        await copyTextToClipboard(project.workspaceRoot).then(
+          () => successToast("Path copied", project.workspaceRoot),
+          (error: unknown) => failureToast("Failed to copy path", error),
+        );
+        return;
+      case "project-settings":
+        await navigate({ to: "/projects/$projectKey", params: { projectKey: project.id } });
+        return;
+      case "delete":
+        removeProjectFromTree(project);
+        return;
+      case null:
+        return;
+    }
   };
 
   return (
@@ -104,6 +138,10 @@ export function LegacySidebar() {
                   title={project.workspaceRoot}
                   aria-current={active ? "true" : undefined}
                   onClick={() => openProject(project.id)}
+                  onContextMenu={(event) => {
+                    event.preventDefault();
+                    void openProjectMenu(project, { x: event.clientX, y: event.clientY });
+                  }}
                   className={`flex min-w-0 flex-1 items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm ${
                     active
                       ? "bg-neutral-200 font-medium dark:bg-neutral-800"
@@ -143,6 +181,7 @@ export function LegacySidebar() {
           No projects yet
         </div>
       ) : null}
+      <ProjectRenameDialog project={renaming} onClose={() => setRenaming(null)} />
     </nav>
   );
 }
