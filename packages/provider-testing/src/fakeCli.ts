@@ -12,6 +12,8 @@ export interface FakeCliOptions {
   readonly source: string;
   /** Variables the stub sets on itself before its source runs. */
   readonly env?: Readonly<Record<string, string>>;
+  /** A file each start appends the environment it was started with to, as one JSON line. */
+  readonly environmentLog?: string;
 }
 
 /**
@@ -33,7 +35,12 @@ export const writeFakeCli = Effect.fn("writeFakeCli")(function* (options: FakeCl
   yield* fs.writeFileString(
     path.join(options.directory, stubName),
     [
-      'import { readFileSync as readFakeCliEnv } from "node:fs";',
+      'import { appendFileSync as logFakeCliEnv, readFileSync as readFakeCliEnv } from "node:fs";',
+      ...(options.environmentLog === undefined
+        ? []
+        : [
+            `logFakeCliEnv(${JSON.stringify(options.environmentLog)}, JSON.stringify(process.env) + "\\n");`,
+          ]),
       `Object.assign(process.env, JSON.parse(readFakeCliEnv(${JSON.stringify(envPath)}, "utf8")));`,
       options.source,
     ].join("\n"),

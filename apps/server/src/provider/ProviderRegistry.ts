@@ -8,7 +8,7 @@ import type { ServerSettings } from "@playstead/contracts/settings";
 import type { ProviderDriver, ProviderInstance } from "@playstead/provider-core/server/driver";
 import type { ProviderAdapterV2 } from "@playstead/provider-core/server/ProviderAdapter";
 import * as HostProcess from "@playstead/shared/hostProcess";
-import { withKnownCliDirs } from "@playstead/shared/shell";
+import { type ProcessEnvironment, withKnownCliDirs } from "@playstead/shared/shell";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
@@ -70,6 +70,20 @@ interface LiveInstance {
 const instanceSettings = (settings: ServerSettings, instanceId: ProviderInstanceId) =>
   settings.providerInstances[instanceId]?.config ?? {};
 
+/**
+ * The environment Codex and Claude are started with, and pass on to every
+ * program they start: the server's, as in T3 Code, without
+ * `ELECTRON_RUN_AS_NODE`. The desktop app sets it to run the server on
+ * Electron's Node, and an agent that inherits it starts any Electron app,
+ * a game included, as plain Node. A deliberate departure from T3 Code at
+ * 2577baf, which passes it to Codex and Claude. Windows variable names are
+ * case-insensitive, so the match is too.
+ */
+const providerEnvironment = (environment: ProcessEnvironment): ProcessEnvironment =>
+  Object.fromEntries(
+    Object.entries(environment).filter(([name]) => name.toUpperCase() !== "ELECTRON_RUN_AS_NODE"),
+  );
+
 const sameSettings = (left: ProviderInstanceSettings, right: ProviderInstanceSettings) =>
   left.binaryPath === right.binaryPath;
 
@@ -83,8 +97,10 @@ export const layer = Layer.effect(
     const crypto = yield* Crypto.Crypto;
     const platform = yield* HostProcess.Platform;
     const homeDirectory = yield* HostProcess.HomeDirectory;
-    // Provider processes get the server's environment, as in T3 Code.
-    const environment = withKnownCliDirs({ platform, env: yield* HostProcess.Environment });
+    const environment = withKnownCliDirs({
+      platform,
+      env: providerEnvironment(yield* HostProcess.Environment),
+    });
     const registryScope = yield* Effect.scope;
 
     const live = new Map<ProviderInstanceId, LiveInstance>();

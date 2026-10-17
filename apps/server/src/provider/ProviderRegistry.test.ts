@@ -5,6 +5,7 @@ import { makeTempDirectoryScoped } from "@playstead/shared/tempDirectory";
 import { assert, describe, it } from "@effect/vitest";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
@@ -28,12 +29,16 @@ const isWindows = process.platform === "win32";
  * The registry over a temporary home, with PATH holding only the given
  * folders and Node's, so the fakes' launchers can start `node`.
  */
-const startRegistry = (pathDirectories: ReadonlyArray<string>) =>
+const startRegistry = (
+  pathDirectories: ReadonlyArray<string>,
+  serverEnvironment: Readonly<Record<string, string>> = {},
+) =>
   Effect.gen(function* () {
     const path = yield* Path.Path;
     const home = yield* makeTempDirectoryScoped("playstead-providers-");
     const paths = yield* ServerConfig.deriveServerPaths(home, undefined);
     const environment: Record<string, string | undefined> = {
+      ...serverEnvironment,
       PATH: [...pathDirectories, path.dirname(process.execPath)].join(isWindows ? ";" : ":"),
       ...(isWindows ? { PATHEXT: ".COM;.EXE;.BAT;.CMD", SystemRoot: process.env.SystemRoot } : {}),
     };
@@ -284,6 +289,54 @@ describe("ProviderRegistry", () => {
         assert.strictEqual(session.providerSession.driver, "codex");
         assert.isTrue(yield* session.isLive);
       }).pipe(Effect.scoped),
+    );
+
+    it.effect(
+      "starts Codex and Claude with the server's environment, but not ELECTRON_RUN_AS_NODE",
+      () =>
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const bin = yield* makeTempDirectoryScoped("playstead-bin-");
+          const workspace = yield* makeTempDirectoryScoped("playstead-workspace-");
+          const codexLog = path.join(bin, "codex-environments.ndjson");
+          const claudeLog = path.join(bin, "claude-environments.ndjson");
+          yield* writeFakeCodex({ directory: bin, version: "0.163.0", environmentLog: codexLog });
+          yield* writeFakeClaude({ directory: bin, version: "2.1.301", environmentLog: claudeLog });
+          // The desktop app starts the server with ELECTRON_RUN_AS_NODE=1.
+          const { registry } = yield* startRegistry([bin], {
+            ELECTRON_RUN_AS_NODE: "1",
+            PLAYSTEAD_SERVER_VARIABLE: "from the server",
+          });
+          yield* registry.refresh();
+          const codex = Option.getOrThrow(yield* registry.getAdapter("codex"));
+          yield* codex
+            .openSession({
+              threadId: ThreadId.make("thread:codex-environment"),
+              providerSessionId: ProviderSessionId.make("provider-session:codex-environment"),
+              modelSelection: { instanceId: "codex", model: "gpt-fake" },
+              runtimePolicy: {
+                runtimeMode: "full-access",
+                interactionMode: "default",
+                cwd: workspace,
+              },
+            })
+            .pipe(Effect.timeout("30 seconds"));
+
+          const started = (log: string) =>
+            Effect.map(fs.readFileString(log), (text) =>
+              text
+                .trim()
+                .split("\n")
+                .map((line) => JSON.parse(line) as Record<string, string>),
+            );
+          const environments = [...(yield* started(codexLog)), ...(yield* started(claudeLog))];
+          assert.isAbove(environments.length, 1);
+          for (const environment of environments) {
+            assert.strictEqual(environment.PLAYSTEAD_SERVER_VARIABLE, "from the server");
+            assert.notProperty(environment, "ELECTRON_RUN_AS_NODE");
+          }
+        }).pipe(Effect.scoped),
     );
 
     it.effect("labels a Codex signed in with an API key, without an e-mail", () =>
