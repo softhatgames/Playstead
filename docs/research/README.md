@@ -11,3 +11,4 @@ Playstead's own investigations, with sources, versions, findings and limits. Acc
 | [Interface concepts](interface-concepts.md)         | The interface concepts considered for making a game with Playstead, and the founder's decisions.                                                |
 | [Game stacks](game-stacks.md)                       | Languages and libraries for code-first games: web builds, reload speed, desktop, phones, consoles, and REDox.                                   |
 | [Odin and compile speed](odin-and-compile-speed.md) | Odin as a second supported stack, and the languages that compile fastest: builds, reload, replay, platforms, agents and cost.                   |
+| [C# game libraries](csharp-game-libraries.md)       | Which C# libraries games build on in each area of game development, the combinations agents recommend, and how Playstead keeps that know-how.   |
