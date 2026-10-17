@@ -4,6 +4,8 @@
  * `lib/chatThreadActions.ts` at 2577baf).
  */
 
+import { resolveProjectExpanded } from "../uiState.ts";
+
 /**
  * The thread `mod+shift+[` or `]` goes to in the sidebar's order: the one
  * above or below, nothing past either end, and from no thread the last or
@@ -63,29 +65,31 @@ export function resolveNewThreadProjectId(input: {
 }
 
 /**
- * The tree's threads as shown, top to bottom, for the previous, next and
- * jump shortcuts: each project's first `previewCount` until **Show more**,
- * plus the thread in view when it is folded away (T3 Code's
- * `visibleSidebarThreadKeys`).
+ * The tree's threads as shown, top to bottom, for the rows and for the
+ * previous, next and jump shortcuts (T3 Code's `visibleSidebarThreadKeys`
+ * and `SidebarProjectItem`): an open project shows its first
+ * `previewCount` until **Show more**; a folded one shows only the thread in
+ * view, when that is one of its own.
  */
 export function visibleTreeThreads<T extends { readonly id: string }>(input: {
   readonly projects: ReadonlyArray<{ readonly id: string }>;
   /** Each project's threads, already in the tree's order. */
   readonly threadsByProject: ReadonlyMap<string, ReadonlyArray<T>>;
   readonly previewCount: number;
-  readonly expandedProjectIds: ReadonlySet<string>;
+  /** The projects whose lists **Show more** has opened. */
+  readonly threadListExpandedIds: ReadonlySet<string>;
+  /** The ui state's `projectExpandedById`; a project with no entry is open. */
+  readonly projectExpandedById: Readonly<Record<string, boolean>>;
   readonly activeThreadId: string | undefined;
 }): T[] {
   return input.projects.flatMap((project) => {
     const threads = input.threadsByProject.get(project.id) ?? [];
-    if (input.expandedProjectIds.has(project.id) || threads.length <= input.previewCount) {
-      return [...threads];
+    if (!resolveProjectExpanded(input.projectExpandedById, project.id)) {
+      return threads.filter((thread) => thread.id === input.activeThreadId);
     }
-    const shown = threads.slice(0, input.previewCount);
-    const current = threads
-      .slice(input.previewCount)
-      .find((thread) => thread.id === input.activeThreadId);
-    return current === undefined ? shown : [...shown, current];
+    return input.threadListExpandedIds.has(project.id)
+      ? [...threads]
+      : threads.slice(0, input.previewCount);
   });
 }
 

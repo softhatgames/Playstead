@@ -16,7 +16,11 @@ describe("settings search", () => {
   });
 
   it("finds a row by its title, ranking a title that starts with the query first", () => {
-    expect(titles("confirmation")).toEqual(["Archive confirmation", "Delete confirmation"]);
+    expect(titles("confirmation")).toEqual([
+      "Unpin confirmation",
+      "Archive confirmation",
+      "Delete confirmation",
+    ]);
     expect(titles("archive")).toEqual(["Archive confirmation", "Archived threads"]);
   });
 

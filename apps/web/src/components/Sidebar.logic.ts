@@ -3,14 +3,21 @@ import {
   sortInboxThreadsByReturn,
   sortWorkingThreadsBySend,
 } from "@playstead/client-runtime/state/threadInbox";
-import { effectiveSnoozed, type SnoozePreset } from "@playstead/client-runtime/state/threadSettled";
+import {
+  effectiveSnoozed,
+  type SnoozePreset,
+  threadWokeAt,
+} from "@playstead/client-runtime/state/threadSettled";
 import {
   sortActiveThreadsByOrderKey,
   sortPinnedThreadsByOrderKey,
   sortSettledThreads,
 } from "@playstead/client-runtime/state/threadSort";
 import type { ContextMenuItem } from "@playstead/contracts/ipc";
-import type { OrchestrationV2ThreadShell } from "@playstead/contracts/orchestrationV2";
+import {
+  ACTIVE_RUN_STATUSES,
+  type OrchestrationV2ThreadShell,
+} from "@playstead/contracts/orchestrationV2";
 
 import { type SnoozeMenuId, snoozeMenuChildren } from "./Sidebar.snooze.ts";
 
@@ -224,6 +231,68 @@ export function hasUnseenCompletion(
   const lastVisitedAt = Date.parse(thread.lastVisitedAt);
   if (Number.isNaN(lastVisitedAt)) return true;
   return completedAt > lastVisitedAt;
+}
+
+/** The status a thread row shows before its title (T3 Code's thread status pill, Playstead's two). */
+export type ThreadStatusLabel = "Working" | "Completed";
+
+/** T3 Code's `THREAD_STATUS_PRIORITY` for the statuses Playstead shows. */
+const THREAD_STATUS_PRIORITY: Record<ThreadStatusLabel, number> = { Working: 4, Completed: 1 };
+
+/** The thread's row status: working while its run is, else an unseen completion. */
+export function threadStatusLabel(
+  thread: Pick<OrchestrationV2ThreadShell, "status" | "latestRunCompletedAt" | "lastVisitedAt">,
+): ThreadStatusLabel | null {
+  if (thread.status !== "idle" && ACTIVE_RUN_STATUSES.has(thread.status)) return "Working";
+  return hasUnseenCompletion(thread) ? "Completed" : null;
+}
+
+/**
+ * When the thread woke from its snooze, while its row shows **Woke** (T3
+ * Code's `isWoke` and `topStatus` in `SidebarThreadRow`): from the wake
+ * until the thread is visited after it, unless it is settled. A thread at
+ * work, waiting on the person or failed shows that instead.
+ */
+export function resolveSidebarThreadWokeAt(
+  thread: Pick<
+    OrchestrationV2ThreadShell,
+    | "status"
+    | "latestRunCompletedAt"
+    | "lastVisitedAt"
+    | "settledOverride"
+    | "snoozedUntil"
+    | "snoozedAt"
+    | "hasPendingUserInput"
+  >,
+  options: { readonly now: string },
+): string | null {
+  if (thread.settledOverride === "settled" || thread.hasPendingUserInput) return null;
+  if (thread.status === "failed" || threadStatusLabel(thread) === "Working") return null;
+  const wokeAt = threadWokeAt(thread, options);
+  if (wokeAt === null) return null;
+  const visitedAt = thread.lastVisitedAt === null ? Number.NaN : Date.parse(thread.lastVisitedAt);
+  return Number.isNaN(visitedAt) || visitedAt < Date.parse(wokeAt) ? wokeAt : null;
+}
+
+/**
+ * What a folded project, or the threads behind **Show more**, show in the
+ * tree: the most pressing status of the threads (T3 Code's
+ * `resolveProjectStatusIndicator`).
+ */
+export function resolveProjectStatusIndicator(
+  threads: ReadonlyArray<
+    Pick<OrchestrationV2ThreadShell, "status" | "latestRunCompletedAt" | "lastVisitedAt">
+  >,
+): ThreadStatusLabel | null {
+  let highest: ThreadStatusLabel | null = null;
+  for (const thread of threads) {
+    const status = threadStatusLabel(thread);
+    if (status === null) continue;
+    if (highest === null || THREAD_STATUS_PRIORITY[status] > THREAD_STATUS_PRIORITY[highest]) {
+      highest = status;
+    }
+  }
+  return highest;
 }
 
 /**

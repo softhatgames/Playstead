@@ -96,7 +96,8 @@ function useGlobalShortcuts(legacySidebarEnabled: boolean) {
  * the command palette over both (T3 Code's
  * `apps/web/src/components/AppSidebarLayout.tsx` at 2577baf). The sidebar is
  * the inbox one, or the project tree when **Settings → General → Sidebar
- * (legacy)** is on; the Undo notice sits below either.
+ * (legacy)** is on; the Undo notice sits below either. `mod+b` slides the
+ * sidebar off-screen without unmounting it.
  */
 export function AppSidebarLayout({ children }: { readonly children: ReactNode }) {
   const { legacySidebarEnabled } = useClientSettings();
@@ -104,13 +105,19 @@ export function AppSidebarLayout({ children }: { readonly children: ReactNode })
   useGlobalShortcuts(legacySidebarEnabled);
   return (
     <div className="flex h-screen">
-      {sidebarOpen ? (
-        <aside className="flex w-64 shrink-0 flex-col border-r border-neutral-200 bg-neutral-50 dark:border-neutral-800 dark:bg-neutral-900/40">
-          <div className="px-4 pt-4 pb-2 text-sm font-semibold">{APP_DISPLAY_NAME}</div>
-          {legacySidebarEnabled ? <LegacySidebar /> : <Sidebar />}
-          <SidebarThreadUndoNotice />
-        </aside>
-      ) : null}
+      {/* Hidden, the sidebar moves off-screen but stays mounted (T3 Code's
+          `collapsible="offcanvas"`), so its shortcuts and the Undo notice
+          keep working. */}
+      <aside
+        data-state={sidebarOpen ? "expanded" : "collapsed"}
+        className={`flex w-64 shrink-0 flex-col border-r border-neutral-200 bg-neutral-50 dark:border-neutral-800 dark:bg-neutral-900/40 ${
+          sidebarOpen ? "" : "-ml-64"
+        }`}
+      >
+        <div className="px-4 pt-4 pb-2 text-sm font-semibold">{APP_DISPLAY_NAME}</div>
+        {legacySidebarEnabled ? <LegacySidebar /> : <Sidebar />}
+        <SidebarThreadUndoNotice />
+      </aside>
       <div className="min-w-0 flex-1 overflow-y-auto">{children}</div>
       <CommandPalette />
     </div>

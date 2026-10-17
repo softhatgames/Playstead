@@ -117,6 +117,15 @@ export function GeneralSettingsPanel() {
       </SettingsSection>
       <SettingsSection id="settings-confirmations" title="Confirmations">
         <SettingsSwitchRow
+          id="unpin-confirmation"
+          title="Unpin confirmation"
+          description="Ask before unpinning a thread from the pinned section."
+          ariaLabel="Confirm thread unpinning"
+          checked={settings.confirmThreadUnpin}
+          isDefault={settings.confirmThreadUnpin === DEFAULT_CLIENT_SETTINGS.confirmThreadUnpin}
+          onChange={(confirmThreadUnpin) => save({ confirmThreadUnpin })}
+        />
+        <SettingsSwitchRow
           id="archive-confirmation"
           title="Archive confirmation"
           description="Ask before archiving a thread."

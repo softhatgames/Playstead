@@ -8,6 +8,7 @@ import { useCallback, useMemo } from "react";
 import { readClientSettings } from "../clientSettings.ts";
 import {
   fallbackThreadAfterDelete,
+  requestThreadUnpinConfirmation,
   threadDeleteConfirmation,
   threadRuntimeCanArchive,
 } from "../components/threadActionMenu.logic.ts";
@@ -186,6 +187,24 @@ export async function unpinThread(
     undo: () => pinThread(thread.id, thread.pinOrderKey),
     failureTitle: "Failed to undo unpin",
   });
+}
+
+/**
+ * Unpins the thread after asking, while **Unpin confirmation** is on (T3
+ * Code's `confirmAndUnpinThread`); false if the person declined.
+ */
+export async function confirmAndUnpinThread(
+  thread: Pick<OrchestrationV2ThreadShell, "id" | "pinOrderKey" | "title">,
+): Promise<boolean> {
+  const settings = await readClientSettings();
+  const confirmed = await requestThreadUnpinConfirmation({
+    enabled: settings.confirmThreadUnpin,
+    title: thread.title,
+    confirm: (message) => readLocalApi().dialogs.confirm(message),
+  });
+  if (!confirmed) return false;
+  await unpinThread(thread);
+  return true;
 }
 
 /**

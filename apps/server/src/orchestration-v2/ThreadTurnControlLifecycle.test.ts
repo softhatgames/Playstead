@@ -22,6 +22,7 @@ import {
   MESSAGE_STEERING_IDS,
   runMessageSteeringScenario,
 } from "./testkit/fixtures/messageSteering.ts";
+import { FILE_CREATE_IDS, sendFileCreateMessage } from "./testkit/fixtures/fileCreate.ts";
 import {
   awaitPendingApproval,
   CLAUDE_SUPERVISED_SCENARIO,
@@ -309,6 +310,44 @@ describe("Settle, snooze, archive and delete with approvals and queued messages"
             ["stopped"],
           );
         }).pipe(Effect.scoped),
+    );
+
+    it.effect("the provider session of a thread archived just as its run ends stays stopped", () =>
+      Effect.gen(function* () {
+        // The archive commits after the run's end has decided what to write
+        // and before it writes, as when both land at the same moment.
+        let beforeNextWrite: ReturnType<typeof dispatch> | undefined;
+        const { harness } = yield* replayClaude("file_create.claude.ndjson", {
+          harness: {
+            eventSink: (sink) => ({
+              ...sink,
+              writeIfRunStatus: (guard, events) =>
+                Effect.suspend(() => {
+                  const before = beforeNextWrite;
+                  beforeNextWrite = undefined;
+                  const write = sink.writeIfRunStatus(guard, events);
+                  return before === undefined ? write : Effect.andThen(Effect.orDie(before), write);
+                }),
+            }),
+          },
+        });
+        const threadId = FILE_CREATE_IDS.threadId;
+        const turnEnd = yield* harness.holdNextTurnEnd;
+        const { sent } = yield* sendFileCreateMessage(harness);
+        yield* harness.worker.drain;
+        yield* turnEnd.reached;
+
+        beforeNextWrite = dispatch(harness, threadId, { type: "thread.archive" });
+        yield* turnEnd.release;
+        const run = yield* harness.awaitRunEnded(threadId, sent.sequence);
+        assert.strictEqual(run.status, "completed");
+        const archived = yield* projectionOf(harness, threadId);
+        assert.isNotNull(archived.thread.archivedAt);
+        assert.deepStrictEqual(
+          archived.providerSessions.map((session) => session.status),
+          ["stopped"],
+        );
+      }).pipe(Effect.scoped),
     );
 
     it.effect("deleting a thread cancels its active run and its queued messages", () =>

@@ -105,37 +105,43 @@ describe("the tree's thread order for the keyboard", () => {
     ["rocket", [thread("r1", "rocket")]],
   ]);
 
+  const shown = (input: {
+    readonly previewCount: number;
+    readonly threadListExpandedIds?: ReadonlySet<string>;
+    readonly projectExpandedById?: Readonly<Record<string, boolean>>;
+    readonly activeThreadId?: string;
+  }) =>
+    visibleTreeThreads({
+      projects,
+      threadsByProject,
+      previewCount: input.previewCount,
+      threadListExpandedIds: input.threadListExpandedIds ?? new Set(),
+      projectExpandedById: input.projectExpandedById ?? {},
+      activeThreadId: input.activeThreadId,
+    }).map((entry) => entry.id);
+
   it("follows the projects, each with the threads it shows until Show more", () => {
-    expect(
-      visibleTreeThreads({
-        projects,
-        threadsByProject,
-        previewCount: 2,
-        expandedProjectIds: new Set(),
-        activeThreadId: undefined,
-      }).map((entry) => entry.id),
-    ).toEqual(["s1", "s2", "r1"]);
-    expect(
-      visibleTreeThreads({
-        projects,
-        threadsByProject,
-        previewCount: 2,
-        expandedProjectIds: new Set(["space"]),
-        activeThreadId: undefined,
-      }).map((entry) => entry.id),
-    ).toEqual(["s1", "s2", "s3", "r1"]);
+    expect(shown({ previewCount: 2 })).toEqual(["s1", "s2", "r1"]);
+    expect(shown({ previewCount: 2, threadListExpandedIds: new Set(["space"]) })).toEqual([
+      "s1",
+      "s2",
+      "s3",
+      "r1",
+    ]);
   });
 
-  it("keeps the thread in view shown when its project's list is folded", () => {
+  it("leaves out a thread past Show more, even the one in view", () => {
+    expect(shown({ previewCount: 1, activeThreadId: "s3" })).toEqual(["s1", "r1"]);
+  });
+
+  it("shows nothing of a folded project but the thread in view", () => {
+    expect(shown({ previewCount: 2, projectExpandedById: { space: false } })).toEqual(["r1"]);
     expect(
-      visibleTreeThreads({
-        projects,
-        threadsByProject,
-        previewCount: 1,
-        expandedProjectIds: new Set(),
-        activeThreadId: "s3",
-      }).map((entry) => entry.id),
-    ).toEqual(["s1", "s3", "r1"]);
+      shown({ previewCount: 1, projectExpandedById: { space: false }, activeThreadId: "s3" }),
+    ).toEqual(["s3", "r1"]);
+    expect(shown({ previewCount: 2, projectExpandedById: { space: true, rocket: false } })).toEqual(
+      ["s1", "s2"],
+    );
   });
 });
 
