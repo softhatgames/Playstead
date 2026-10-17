@@ -23,17 +23,19 @@ const signedIn = {
 
 type Answer = "unreachable" | number;
 
+const target = { httpBaseUrl: "http://127.0.0.1:3773" };
+
 /**
  * A server that gives each session check the next answer: unreachable (as
  * fetch fails while nothing listens), a status alone (as the development
  * proxy answers 502 while the server is down) or 200 with the session.
  */
-const serverAnswering = (answers: ReadonlyArray<Answer>) => {
-  const remaining = [...answers];
+const serverAnswering = (answers: ReadonlyArray<Answer> | (() => Answer)) => {
+  const remaining = typeof answers === "function" ? [] : [...answers];
   let asked = 0;
   const client = HttpClient.make((request) => {
     asked += 1;
-    const answer = remaining.shift() ?? 200;
+    const answer = typeof answers === "function" ? answers() : (remaining.shift() ?? 200);
     if (answer === "unreachable") {
       return Effect.fail(
         new HttpClientError.HttpClientError({
@@ -64,10 +66,11 @@ const settle = <A, E>(fiber: Fiber.Fiber<A, E>) =>
   });
 
 describe("The session check", () => {
-  it.effect("waits through a server restart and answers once the server is back", () =>
+  it.effect("waits through a server restart, saying so, and answers once the server is back", () =>
     Effect.gen(function* () {
       const server = serverAnswering(["unreachable", 502, 503, "unreachable", 504, 200]);
-      const check = yield* fetchSessionState({ httpBaseUrl: "http://127.0.0.1:3773" }).pipe(
+      let waited = 0;
+      const check = yield* fetchSessionState(target, { onWaiting: () => (waited += 1) }).pipe(
         Effect.provide(server.layer),
         Effect.forkChild,
       );
@@ -79,13 +82,34 @@ describe("The session check", () => {
         Exit.succeed(true),
       );
       assert.strictEqual(server.asked(), 6);
+      assert.strictEqual(waited, 5);
+    }),
+  );
+
+  it.effect("notices a server back after a long outage within 2 seconds", () =>
+    Effect.gen(function* () {
+      let up = false;
+      const server = serverAnswering(() => (up ? 200 : "unreachable"));
+      const check = yield* fetchSessionState(target).pipe(
+        Effect.provide(server.layer),
+        Effect.forkChild,
+      );
+
+      yield* TestClock.adjust("1 hour");
+      up = true;
+      yield* TestClock.adjust("2 seconds");
+
+      assert.deepStrictEqual(
+        Exit.map(yield* Fiber.await(check), (state) => state.authenticated),
+        Exit.succeed(true),
+      );
     }),
   );
 
   it.effect("fails at once on an answer a restart does not explain", () =>
     Effect.gen(function* () {
       const server = serverAnswering([404]);
-      const check = yield* fetchSessionState({ httpBaseUrl: "http://127.0.0.1:3773" }).pipe(
+      const check = yield* fetchSessionState(target).pipe(
         Effect.provide(server.layer),
         Effect.forkChild,
       );
