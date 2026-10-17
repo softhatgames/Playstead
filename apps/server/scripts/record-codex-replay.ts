@@ -24,6 +24,12 @@ import {
   runProviderFileCreateScenario,
 } from "../src/orchestration-v2/testkit/fixtures/fileCreate.ts";
 import {
+  CODEX_RESTART_RESUME_SCENARIO,
+  RESTART_RESUME_IDS,
+  runFirstTurn,
+  runSecondTurn,
+} from "../src/orchestration-v2/testkit/fixtures/restartResume.ts";
+import {
   QUESTION_ANSWER_SCENARIO_NAME,
   QUESTION_INTERRUPT_SCENARIO_NAME,
 } from "../src/orchestration-v2/testkit/fixtures/questionAnswer.ts";
@@ -37,6 +43,7 @@ import {
   scrubbed,
   writeRecording,
 } from "../src/orchestration-v2/testkit/replayScrub.ts";
+import { makeTestServerConfig } from "../src/testUtils/testServer.ts";
 
 /**
  * Playstead's Codex app-server recorder (T3 Code's
@@ -47,10 +54,12 @@ import {
  * `codex` on PATH, in a temporary empty folder, and writes
  * `src/orchestration-v2/testkit/fixtures/<scenario>.codex.ndjson`.
  *
- *   node apps/server/scripts/record-codex-replay.ts [file_create | turn_interrupt | --help]
+ *   node apps/server/scripts/record-codex-replay.ts [file_create | restart_resume | turn_interrupt | --help]
  *
- * `turn_interrupt` interrupts a long command once it runs, then sends one
- * more message.
+ * `restart_resume` builds the services a second time over the same home
+ * between its two turns, as a restarted server would, so the recording
+ * holds two app-servers. `turn_interrupt` interrupts a long command once it
+ * runs, then sends one more message.
  *
  * `question_answer` and `question_interrupt` cannot be recorded, and the
  * recorder says so when asked for them: Codex 0.163.0 refuses
@@ -72,11 +81,23 @@ const codexVersion = Effect.gen(function* () {
   return version;
 });
 
-type Harness = Effect.Success<ReturnType<typeof makeOrchestrationHarness>>;
+/** The Codex thread the recording's first `thread/start` answered with. */
+const startedThreadId = (entries: ReadonlyArray<ProviderReplayEntry>) =>
+  entries
+    .map((entry) =>
+      entry.type === "emit_inbound"
+        ? (entry.frame as { readonly result?: { readonly thread?: { readonly id?: unknown } } })
+            .result?.thread?.id
+        : undefined,
+    )
+    .find((id) => typeof id === "string");
+
+type HarnessOptions = Parameters<typeof makeOrchestrationHarness>[0];
 
 /** One file-creating turn. */
-const recordFileCreate = (harness: Harness) =>
+const recordFileCreate = (options: HarnessOptions) =>
   Effect.gen(function* () {
+    const harness = yield* makeOrchestrationHarness(options);
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     const scenario = CODEX_FILE_CREATE_SCENARIO;
@@ -91,12 +112,13 @@ const recordFileCreate = (harness: Harness) =>
       }),
     );
     if (run.status !== "completed") return yield* Effect.die(`The run ended ${run.status}.`);
-    return workspace;
+    return { harness, workspace };
   });
 
 /** A turn interrupted while its command runs, then a turn after it. */
-const recordTurnInterrupt = (harness: Harness) =>
+const recordTurnInterrupt = (options: HarnessOptions) =>
   Effect.gen(function* () {
+    const harness = yield* makeOrchestrationHarness(options);
     const { workspace, first, next } = yield* runTurnInterruptScenario(
       harness,
       CODEX_TURN_INTERRUPT_SCENARIO,
@@ -107,7 +129,36 @@ const recordTurnInterrupt = (harness: Harness) =>
     if (first.status !== "interrupted" || next.status !== "completed") {
       return yield* Effect.die(`The runs ended ${first.status} and ${next.status}.`);
     }
-    return workspace;
+    return { harness, workspace };
+  });
+
+/** A turn, a restart over the same home, and a turn that needs the first one's context. */
+const recordRestartResume = (options: HarnessOptions) =>
+  Effect.gen(function* () {
+    const scenario = CODEX_RESTART_RESUME_SCENARIO;
+    const config = yield* makeTestServerConfig();
+    const first = yield* Effect.scoped(
+      Effect.flatMap(makeOrchestrationHarness({ ...options, config }), (harness) =>
+        runFirstTurn(harness, scenario),
+      ),
+    );
+    if (first.run.status !== "completed") {
+      return yield* Effect.die(`The first run ended ${first.run.status}.`);
+    }
+    const harness = yield* makeOrchestrationHarness({ ...options, config, recoverOnStartup: true });
+    const second = yield* runSecondTurn(harness, scenario);
+    const projection = yield* harness.orchestrator.getThreadProjection(RESTART_RESUME_IDS.threadId);
+    const reply =
+      projection._tag === "Some"
+        ? projection.value.messages.findLast((message) => message.role === "assistant")?.text
+        : undefined;
+    yield* Effect.logInfo("The turn after the restart ended.").pipe(
+      Effect.annotateLogs({ run: second.status, reply: JSON.stringify(reply) }),
+    );
+    if (second.status !== "completed" || !reply?.toLowerCase().includes(scenario.codeWord)) {
+      return yield* Effect.die("Codex did not remember the code word after the restart.");
+    }
+    return { harness, workspace: first.workspace };
   });
 
 /** Each scenario: how it is recorded, and what the header says about it. */
@@ -117,6 +168,16 @@ const SCENARIOS = {
     metadata: {
       model: CODEX_FILE_CREATE_SCENARIO.model,
       prompt: CODEX_FILE_CREATE_SCENARIO.prompt,
+    },
+  },
+  [CODEX_RESTART_RESUME_SCENARIO.scenario]: {
+    record: recordRestartResume,
+    metadata: {
+      model: CODEX_RESTART_RESUME_SCENARIO.model,
+      prompts: [
+        CODEX_RESTART_RESUME_SCENARIO.firstPrompt,
+        CODEX_RESTART_RESUME_SCENARIO.secondPrompt,
+      ],
     },
   },
   [CODEX_TURN_INTERRUPT_SCENARIO.scenario]: {
@@ -166,12 +227,11 @@ const program = Effect.gen(function* () {
   const version = yield* codexVersion;
 
   const recording = yield* makeRecordingClientFactory();
-  const harness = yield* makeOrchestrationHarness({
+  const { harness, workspace } = yield* scenario.record({
     codexClients: recording.clients,
     codexBinaryPath: "codex",
     environment: withoutAgentShellVariables(process.env),
   });
-  const workspace = yield* scenario.record(harness);
 
   const machine = readMachineIdentity();
   const replacements = recordingReplacements({ workspace, playsteadHome: harness.home, machine });
@@ -187,7 +247,11 @@ const program = Effect.gen(function* () {
       version,
       capturedAt: DateTime.formatIso(yield* DateTime.now).slice(0, 10),
       scenario: scenarioName,
-      metadata: { ...scenario.metadata, recorder: "apps/server/scripts/record-codex-replay.ts" },
+      metadata: {
+        ...scenario.metadata,
+        nativeThreadId: startedThreadId(entries),
+        recorder: "apps/server/scripts/record-codex-replay.ts",
+      },
     },
     entries,
   });

@@ -15,6 +15,7 @@ import * as Stream from "effect/Stream";
 import { makeTestServerConfig } from "../testUtils/testServer.ts";
 import type { ClaudeAgentSdkQueryRunner } from "./Adapters/ClaudeAdapterV2.ts";
 import { makeClaudeReplay } from "./Adapters/ClaudeAdapterV2.testkit.ts";
+import { makeCodexReplay } from "./Adapters/CodexAdapterV2.testkit.ts";
 import { makeOrchestrationHarness } from "./testkit/OrchestratorHarness.ts";
 import {
   FILE_CREATE_IDS,
@@ -22,6 +23,7 @@ import {
   sendFileCreateMessage,
 } from "./testkit/fixtures/fileCreate.ts";
 import {
+  CODEX_RESTART_RESUME_SCENARIO,
   RESTART_RESUME_IDS,
   RESTART_RESUME_SCENARIO,
   runFirstTurn,
@@ -241,6 +243,47 @@ describe("Survive a restart", () => {
         assert.deepStrictEqual(
           projection.providerThreads.map((thread) => thread.nativeThreadRef?.nativeId),
           [recorded.header.metadata?.["nativeSessionId"]],
+        );
+      }).pipe(Effect.scoped),
+    );
+
+    it.effect("after a restart Codex resumes the thread's Codex thread and remembers it", () =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const config = yield* makeTestServerConfig();
+        const recorded = yield* readRecording("restart_resume.codex.ndjson");
+        const replay = yield* makeCodexReplay(
+          yield* materializeReplayWorkspace(recorded, path.join(config.baseDir, "resumed-game")),
+        );
+        const first = yield* Effect.scoped(
+          Effect.flatMap(makeOrchestrationHarness({ codexClients: replay.clients, config }), (h) =>
+            runFirstTurn(h, CODEX_RESTART_RESUME_SCENARIO),
+          ),
+        );
+        assert.strictEqual(first.run.status, "completed");
+
+        const restarted = yield* makeOrchestrationHarness({
+          codexClients: replay.clients,
+          config,
+          recoverOnStartup: true,
+        });
+        const second = yield* runSecondTurn(restarted, CODEX_RESTART_RESUME_SCENARIO);
+
+        // The replay holds the second app-server's `thread/resume` of the
+        // first one's thread: the restarted server does not start a new one.
+        yield* replay.assertComplete;
+        assert.strictEqual(second.status, "completed");
+        const projection = Option.getOrThrow(
+          yield* restarted.orchestrator.getThreadProjection(RESTART_RESUME_IDS.threadId),
+        );
+        const replies = projection.messages.filter((message) => message.role === "assistant");
+        assert.match(
+          replies.at(-1)?.text ?? "",
+          new RegExp(CODEX_RESTART_RESUME_SCENARIO.codeWord, "i"),
+        );
+        assert.deepStrictEqual(
+          projection.providerThreads.map((thread) => thread.nativeThreadRef?.nativeId),
+          [recorded.header.metadata?.["nativeThreadId"]],
         );
       }).pipe(Effect.scoped),
     );

@@ -71,9 +71,14 @@ import { codexClientInfo, spawnCodexAppServer } from "../../provider/CodexProvid
  *   recording. An interrupt stops waiting without answering: Codex drops
  *   the request itself when the turn ends.
  *
- * Absent: resuming a thread after a restart; and, as in the slice as a
- * whole, MCP, plans, reasoning, collaboration modes, subagents, goals,
- * approvals and usage. A server request nobody handles gets "method not
+ * - A thread that has talked to Codex before, as after a restart, resumes
+ *   its Codex thread (`thread/resume` with `excludeTurns`, T3 Code's
+ *   `resumeThread`) instead of starting one, so Codex keeps the
+ *   conversation.
+ *
+ * Absent: unarchiving a Codex thread that refuses to resume because it is
+ * archived, as T3 Code does; and, as in the slice as a whole, MCP, plans,
+ * reasoning, collaboration modes, subagents, goals, approvals and usage. A server request nobody handles gets "method not
  * found" from the client, so an unexpected approval fails loudly.
  */
 
@@ -658,12 +663,17 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (input: 
         ensureThread: ({ providerThread }) =>
           Effect.gen(function* () {
             const started = yield* Ref.get(nativeThreadId);
+            const runtimeParams = { cwd: open.runtimePolicy.cwd, model: open.modelSelection.model };
             const id =
               started ??
-              (yield* client.request("thread/start", {
-                cwd: open.runtimePolicy.cwd,
-                model: open.modelSelection.model,
-              })).thread.id;
+              (open.initialNativeThreadId === undefined
+                ? (yield* client.request("thread/start", runtimeParams)).thread.id
+                : // Codex's earlier turns stay in Codex; Playstead keeps its own.
+                  (yield* client.request("thread/resume", {
+                    threadId: open.initialNativeThreadId,
+                    excludeTurns: true,
+                    ...runtimeParams,
+                  })).thread.id);
             yield* Ref.set(nativeThreadId, id);
             return { ...providerThread, nativeThreadRef: { driver: CODEX, nativeId: id } };
           }).pipe(Effect.mapError(adapterError("ensure-thread"))),
