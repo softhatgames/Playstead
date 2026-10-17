@@ -115,6 +115,23 @@ export function ListFilterIcon({ className }: IconProps) {
   );
 }
 
+export function SearchIcon({ className }: IconProps) {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true" className={className} {...strokeProps}>
+      <circle cx="11" cy="11" r="7" />
+      <path d="m20 20-4-4" />
+    </svg>
+  );
+}
+
+export function XIcon({ className }: IconProps) {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true" className={className} {...strokeProps}>
+      <path d="M18 6 6 18M6 6l12 12" />
+    </svg>
+  );
+}
+
 export function ChevronRightIcon({ className }: IconProps) {
   return (
     <svg viewBox="0 0 24 24" aria-hidden="true" className={className} {...strokeProps}>

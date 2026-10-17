@@ -1,11 +1,20 @@
 import type { ProjectId, ThreadId } from "@playstead/contracts/baseSchemas";
 import type { OrchestrationV2ThreadShell } from "@playstead/contracts/orchestrationV2";
 import { Link, useNavigate, useParams } from "@tanstack/react-router";
-import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  type KeyboardEvent as ReactKeyboardEvent,
+  type ReactNode,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 
 import { useClientSettings } from "../clientSettings.ts";
 import { openCommandPalette } from "../commandPaletteBus.ts";
 import { usePrimaryConnectionState } from "../connection/runtime.ts";
+import { useThreadSearch } from "../connection/useThreadSearch.ts";
 import { createDraft } from "../drafts.ts";
 import { useBulkThreadMenu } from "../hooks/useBulkThreadMenu.ts";
 import { useThreadActionMenu } from "../hooks/useThreadActionMenu.ts";
@@ -49,7 +58,17 @@ import {
   type SidebarSection,
   threadAfterPark,
 } from "./Sidebar.inbox.logic.ts";
-import { isTrailingDoubleClick } from "./Sidebar.logic.ts";
+import {
+  isTrailingDoubleClick,
+  moveSearchHighlight,
+  searchSidebarThreads,
+} from "./Sidebar.logic.ts";
+import {
+  SEARCH_RESULTS_ID,
+  SidebarSearchField,
+  SidebarSearchResultRow,
+  searchResultId,
+} from "./sidebar/SidebarThreadSearch.tsx";
 import { ThreadStatusIndicator, useThreadRename } from "./sidebar/SidebarThreadParts.tsx";
 
 type SidebarThread = OrchestrationV2ThreadShell;
@@ -95,10 +114,12 @@ function useStoredBoolean(key: string, initial: boolean) {
  * the pin, rename on double-click and open the thread menu on right-click.
  * Mod-click and shift-click select several rows for the bulk menu. Unpin,
  * settle and archive show **Undo** below it (`AppSidebarLayout`).
+ * **Search threads** in the header replaces the list with the threads whose
+ * title or messages hold the query, chosen with the arrow keys and Enter.
  *
  * Seams for the slice's later tickets: **Snoozed** goes between Working and
- * Settled (#38), thread search in the header (#41), dragging between and
- * within sections (#40), and **New thread in…** from the palette (#42).
+ * Settled (#38), dragging between and within sections (#40), and **New
+ * thread in…** from the palette (#42).
  */
 export function Sidebar() {
   const state = usePrimaryConnectionState();
@@ -225,6 +246,65 @@ export function Sidebar() {
     settleThreads,
   });
 
+  const searchInputRef = useRef<HTMLInputElement>(null);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [activeResultIndex, setActiveResultIndex] = useState(0);
+  const isSearching = searchQuery.trim().length > 0;
+  const threadSearch = useThreadSearch(searchQuery);
+  const searchMatchById = useMemo(
+    () => new Map(threadSearch.matches.map((match) => [match.threadId as string, match])),
+    [threadSearch.matches],
+  );
+  // Every thread in scope, folded shelves included, in the sidebar's order.
+  const searchResults = useMemo(
+    () =>
+      searchSidebarThreads(
+        [...sections.pinned, ...sections.active, ...sections.working, ...sections.settled],
+        searchQuery,
+        new Set(searchMatchById.keys()),
+      ),
+    [sections, searchQuery, searchMatchById],
+  );
+  const searchResultOrder = searchResults.map((thread) => thread.id).join(" ");
+  useEffect(() => setActiveResultIndex(0), [searchResultOrder]);
+  useEffect(() => {
+    if (!isSearching) return;
+    document
+      .getElementById(searchResultId(activeResultIndex))
+      ?.scrollIntoView({ block: "nearest" });
+  }, [activeResultIndex, isSearching, searchResultOrder]);
+  const clearSearch = useCallback(() => {
+    setSearchQuery("");
+    setActiveResultIndex(0);
+  }, []);
+  const selectSearchResult = (thread: SidebarThread) => {
+    clearSearch();
+    openProject(thread.projectId);
+    void navigate({ to: "/threads/$threadId", params: { threadId: thread.id } });
+  };
+  const onSearchKeyDown = (event: ReactKeyboardEvent<HTMLInputElement>) => {
+    if (event.nativeEvent.isComposing) return;
+    if (event.key === "Escape" && isSearching) {
+      event.preventDefault();
+      // The layout's Escape would clear the selection too.
+      event.stopPropagation();
+      clearSearch();
+      return;
+    }
+    if (searchResults.length === 0) return;
+    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+      event.preventDefault();
+      const direction = event.key === "ArrowDown" ? "down" : "up";
+      setActiveResultIndex((index) => moveSearchHighlight(index, searchResults.length, direction));
+      return;
+    }
+    if (event.key === "Enter") {
+      event.preventDefault();
+      const result = searchResults[activeResultIndex];
+      if (result !== undefined) selectSearchResult(result);
+    }
+  };
+
   const startNewThread = () => {
     // T3 Code opens **New thread in…** with several projects unless Shift
     // is held; until the palette has that mode (#42), it starts in the
@@ -268,9 +348,19 @@ export function Sidebar() {
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <div className="flex items-center gap-1 px-2 pb-1">
-        <span className="min-w-0 flex-1 truncate pl-2 text-xs font-medium text-neutral-500 dark:text-neutral-400">
-          {scopedGroup === null ? "Threads" : scopedGroup.displayName}
-        </span>
+        <SidebarSearchField
+          inputRef={searchInputRef}
+          query={searchQuery}
+          onQueryChange={(value) => {
+            setSearchQuery(value);
+            setActiveResultIndex(0);
+          }}
+          onKeyDown={onSearchKeyDown}
+          isSearching={isSearching}
+          resultCount={searchResults.length}
+          activeIndex={activeResultIndex}
+          onClear={clearSearch}
+        />
         {groups.length > 0 ? (
           <>
             <ProjectScopeMenu groups={groups} scopedGroup={scopedGroup} />
@@ -287,7 +377,41 @@ export function Sidebar() {
         </HeaderButton>
       </div>
       <nav aria-label="Threads" className="flex min-h-0 flex-1 flex-col overflow-y-auto px-2 pb-2">
-        {total === 0 ? (
+        {isSearching ? (
+          searchResults.length > 0 ? (
+            <ul
+              id={SEARCH_RESULTS_ID}
+              role="listbox"
+              aria-label="Thread search results"
+              className="flex flex-col gap-px"
+            >
+              {searchResults.map((thread, index) => (
+                <SidebarSearchResultRow
+                  key={thread.id}
+                  thread={thread}
+                  index={index}
+                  isSettled={settledIdsRef.current.has(thread.id)}
+                  isHighlighted={index === activeResultIndex}
+                  isCurrent={thread.id === routeThreadId}
+                  projectName={
+                    scopedGroup === null ? (projectNameById.get(thread.projectId) ?? null) : null
+                  }
+                  match={searchMatchById.get(thread.id) ?? null}
+                  query={searchQuery}
+                  onHighlight={() => setActiveResultIndex(index)}
+                  onSelect={() => selectSearchResult(thread)}
+                />
+              ))}
+            </ul>
+          ) : (
+            <p
+              role="status"
+              className="px-2 py-6 text-center text-xs text-neutral-500 dark:text-neutral-400"
+            >
+              {threadSearch.isPending ? "Searching thread messages…" : "No threads found"}
+            </p>
+          )
+        ) : total === 0 ? (
           <div className="flex flex-col items-center gap-2 px-2 py-6 text-center text-xs text-neutral-500 dark:text-neutral-400">
             {projects.length === 0 ? (
               <>

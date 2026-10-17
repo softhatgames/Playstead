@@ -4,6 +4,7 @@ import {
 } from "@playstead/contracts/orchestrationV2";
 import { ProjectMutationError } from "@playstead/contracts/project";
 import { WS_METHODS, WsRpcGroup } from "@playstead/contracts/rpc";
+import { OrchestrationSearchThreadsError } from "@playstead/contracts/threadSearch";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import type * as Path from "effect/Path";
@@ -23,6 +24,7 @@ import {
   streamArchivedShell,
   streamShell,
 } from "./orchestration-v2/ShellStream.ts";
+import * as ThreadSearch from "./orchestration-v2/ThreadSearch.ts";
 import { streamThread } from "./orchestration-v2/ThreadStream.ts";
 import * as ProjectService from "./project/ProjectService.ts";
 import * as ProviderRegistry from "./provider/ProviderRegistry.ts";
@@ -47,6 +49,7 @@ const layerWsRpc = WsRpcGroup.toLayer(
     const settings = yield* ServerSettings.ServerSettingsService;
     const projects = yield* ProjectService.ProjectService;
     const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const threadSearch = yield* ThreadSearch.ThreadSearch;
     const context = yield* Effect.context<
       | Effect.Services<typeof streamShell>
       | Stream.Services<ReturnType<typeof streamThread>>
@@ -147,6 +150,14 @@ const layerWsRpc = WsRpcGroup.toLayer(
         getArchivedShellSnapshot.pipe(Effect.orDie, Effect.provideContext(context)),
       [ORCHESTRATION_V2_WS_METHODS.subscribeArchivedShell]: () =>
         streamArchivedShell.pipe(Stream.orDie, Stream.provideContext(context)),
+      [ORCHESTRATION_V2_WS_METHODS.searchThreads]: (input) =>
+        threadSearch
+          .search(input)
+          .pipe(
+            Effect.mapError(
+              () => new OrchestrationSearchThreadsError({ message: "Failed to search threads" }),
+            ),
+          ),
       // Mutations reach here only after startup: `/ws` waits at the readiness gate.
       [ORCHESTRATION_V2_WS_METHODS.dispatchCommand]: (command) =>
         orchestrator.dispatch(command).pipe(
